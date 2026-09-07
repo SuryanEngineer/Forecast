@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../lib/api';
-import { useTournamentsList } from '../lib/hooks';
-import { toNumber, type TournamentResponse } from '../lib/types';
+import { useTournamentCalendar, useTournamentsList } from '../lib/hooks';
+import { toNumber, type CalendarTournamentResponse, type TournamentResponse } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { HelpButton } from './HelpModal';
 
@@ -215,9 +215,102 @@ function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentRespon
   );
 }
 
+const TIER_LABELS: Record<string, string> = {
+  cash_cup: 'Cash Cup',
+  fncs_qualifier: 'FNCS Qualifier',
+  fncs_finals: 'FNCS Finals',
+  global_championship: 'Global / EWC',
+  major: 'Major',
+  other: 'Other',
+};
+
+function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
+  const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
+  const isLive = tournament.status === 'results_pending';
+  const dateLabel = tournament.start_time
+    ? new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'TBD';
+
+  return (
+    <button
+      onClick={onOpen}
+      className="w-full flex items-center gap-3 p-3.5 rounded-2xl border border-border text-left transition-colors hover:bg-white/[0.03]"
+      style={{ background: 'var(--card)' }}
+    >
+      <div className="flex flex-col items-center justify-center rounded-xl shrink-0" style={{ width: 52, height: 44, background: 'var(--muted)' }}>
+        <p className="font-mono font-bold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{dateLabel}</p>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournament.name}</p>
+          {isLive && (
+            <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
+              ● Live
+            </span>
+          )}
+        </div>
+        <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11.5 }}>
+          {TIER_LABELS[tournament.tournament_type] ?? tournament.tournament_type}
+          {tournament.region ? ` · ${tournament.region}` : ''}
+        </p>
+      </div>
+
+      <div className="text-right shrink-0">
+        {pool !== null && pool > 0 ? (
+          <>
+            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 10 }}>total dividend pool</p>
+          </>
+        ) : (
+          <p className="text-muted-foreground italic" style={{ fontSize: 11.5 }}>Pool TBD</p>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function TournamentCalendar({ openTournament }: { openTournament: (t: TournamentResponse) => void }) {
+  const { data: calendar, loading } = useTournamentCalendar();
+
+  if (loading && calendar.length === 0) {
+    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>;
+  }
+  if (calendar.length === 0) {
+    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments tracked yet — new ones are picked up automatically.</p>;
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <p className="text-muted-foreground" style={{ fontSize: 12 }}>
+        Updates automatically as tournaments are tracked and results come in.
+      </p>
+      {calendar.map(t => (
+        <CalendarRow
+          key={t.id}
+          tournament={t}
+          onOpen={() =>
+            openTournament({
+              id: t.id,
+              name: t.name,
+              tournament_type: t.tournament_type,
+              region: t.region,
+              start_time: t.start_time,
+              end_time: t.end_time,
+              prize_pool: null,
+              status: t.status,
+              created_at: t.start_time ?? new Date().toISOString(),
+            })
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 export function Tournaments({ openTournament }: Props) {
   const { data: tournaments, loading } = useTournamentsList();
-  const [tab, setTab] = useState<'upcoming' | 'results'>('upcoming');
+  const [tab, setTab] = useState<'upcoming' | 'calendar' | 'results'>('upcoming');
 
   const upcoming = tournaments.filter(t => t.status === 'scheduled' || t.status === 'results_pending');
   const finalized = tournaments.filter(t => t.status === 'finalized');
@@ -239,6 +332,7 @@ export function Tournaments({ openTournament }: Props) {
       <div className="flex rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
         {[
           { key: 'upcoming' as const, label: `⏳ Upcoming (${upcoming.length})` },
+          { key: 'calendar' as const, label: `📅 Calendar` },
           { key: 'results' as const, label: `🏁 Results (${finalized.length})` },
         ].map(t => (
           <button
@@ -265,7 +359,9 @@ export function Tournaments({ openTournament }: Props) {
         </div>
       )}
 
-      {loading && tournaments.length === 0 ? (
+      {tab === 'calendar' ? (
+        <TournamentCalendar openTournament={openTournament} />
+      ) : loading && tournaments.length === 0 ? (
         <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading tournaments…</p>
       ) : tab === 'upcoming' ? (
         <div className="space-y-4">

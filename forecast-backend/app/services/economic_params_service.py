@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.engine.dividend_calculator import DEFAULT_PLACEMENT_CURVE
 from app.models.economic_params import DividendPlacementCurveEntry, PlatformParameter
+from app.models.tournament_classification import DEFAULT_REGION_KEY, RegionMultiplier
 
 # key -> (default value, human-readable description)
 DEFAULTS: dict[str, tuple[Decimal, str]] = {
@@ -212,6 +213,71 @@ def get_all_params(db: Session) -> list[PlatformParameter]:
         get_param(db, key)
     db.flush()
     return db.query(PlatformParameter).order_by(PlatformParameter.key).all()
+
+
+# Default per-region payout scale factor, applied on top of a tournament
+# tier's fixed dividend pool (see FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE)
+# before it's split among shareholders. EU and NAC are the two largest
+# competitive Fortnite regions and default to full payout (1.0); every
+# other region scales down roughly with relative competitive scene size.
+# DEFAULT_REGION_KEY is the fallback used for a region string with no row
+# of its own (including tournaments with no region set at all) -- see
+# get_region_multiplier below. All admin-adjustable via
+# GET/POST /admin/region-multipliers, same pattern as the placement curve.
+DEFAULT_REGION_MULTIPLIERS: dict[str, Decimal] = {
+    "EU": Decimal("1.00"),
+    "NAC": Decimal("1.00"),
+    "NAW": Decimal("0.90"),
+    "BR": Decimal("0.75"),
+    "ASIA": Decimal("0.60"),
+    "OCE": Decimal("0.55"),
+    "ME": Decimal("0.45"),
+    DEFAULT_REGION_KEY: Decimal("0.50"),
+}
+
+
+def get_region_multipliers(db: Session) -> dict[str, Decimal]:
+    """Ensures every default region row exists (seeding any missing ones
+    the first time this is called, same pattern as get_placement_curve),
+    then returns all of them keyed by region string."""
+    rows = db.query(RegionMultiplier).all()
+    existing = {row.region for row in rows}
+    missing = [r for r in DEFAULT_REGION_MULTIPLIERS if r not in existing]
+    if missing:
+        for region in missing:
+            db.add(RegionMultiplier(region=region, multiplier=DEFAULT_REGION_MULTIPLIERS[region]))
+        db.flush()
+        rows = db.query(RegionMultiplier).all()
+    return {row.region: row.multiplier for row in rows}
+
+
+def get_region_multiplier(db: Session, region: str | None) -> Decimal:
+    """Resolves ONE region's scale factor. No region at all (blank, or a
+    multi-region field Osirion couldn't split by region -- see
+    osirion_service.auto_track_new_tournaments) is treated as "unscoped"
+    and pays the full, unscaled pool (1.0) rather than being silently
+    penalized for missing data. A region string that IS present but not
+    recognized in the table falls back to DEFAULT_REGION_KEY's row
+    instead."""
+    if not region:
+        return Decimal("1.0")
+    multipliers = get_region_multipliers(db)
+    normalized = region.strip().upper()
+    if normalized in multipliers:
+        return multipliers[normalized]
+    return multipliers.get(DEFAULT_REGION_KEY, Decimal("1.0"))
+
+
+def set_region_multiplier(db: Session, region: str, multiplier: Decimal) -> RegionMultiplier:
+    normalized = region.strip().upper()
+    row = db.get(RegionMultiplier, normalized)
+    if row is None:
+        row = RegionMultiplier(region=normalized, multiplier=multiplier)
+        db.add(row)
+    else:
+        row.multiplier = multiplier
+    db.flush()
+    return row
 
 
 def get_placement_curve(db: Session) -> dict[int, Decimal]:

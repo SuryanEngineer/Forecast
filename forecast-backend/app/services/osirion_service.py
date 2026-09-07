@@ -16,6 +16,14 @@ Three admin-facing operations (see app/api/v1/admin.py):
    a tracked tournament and (once its window has ended) finalize it. Also
    runs automatically -- see app/main.py's `_osirion_sync_loop`, gated on
    settings.OSIRION_SYNC_ENABLED.
+4. `auto_track_new_tournaments` -- runs automatically on the same loop,
+   just before the sync pass above (gated on
+   settings.OSIRION_AUTO_TRACK_ENABLED): classifies every currently-open
+   Osirion window via tournament_classification_service and calls
+   `track_tournament` for anything that matches a wanted tier, so an admin
+   no longer has to manually browse/pick windows for the tournaments this
+   covers. Manual tracking via the three functions above still works for
+   anything auto-tracking doesn't recognize.
 
 Player matching (see `_match_player`): Osirion identifies players by an
 opaque Epic `accountId` plus a `username` that may be null (privacy) and
@@ -45,7 +53,7 @@ from app.integrations.osirion_client import OsirionApiError
 from app.models.osirion import OsirionPlayerMapping, OsirionTournamentMapping
 from app.models.player import Player
 from app.models.tournament import ResultSource, Tournament, TournamentStatus, TournamentType
-from app.services import tournament_service
+from app.services import player_service, tournament_classification_service, tournament_service
 
 logger = logging.getLogger("forecast.osirion")
 
@@ -183,6 +191,8 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
             return db.get(Player, existing.player_id)
 
     if not username:
+        # Nothing to display and nothing to match on -- genuinely can't
+        # create a placeholder without at least a gamertag to show.
         return None
 
     # Escape SQL LIKE wildcards (% and _) that could theoretically appear
@@ -190,8 +200,34 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
     # pattern characters instead of literal ones.
     escaped_username = username.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
     player = db.query(Player).filter(Player.gamertag.ilike(escaped_username, escape="\\")).one_or_none()
+
     if player is None:
-        return None
+        # No existing Player has this gamertag -- rather than silently
+        # dropping this competitor (which produces gaps in the
+        # leaderboard, e.g. "50th place" then "52nd place"), auto-create
+        # a placeholder with ZERO total_shares_outstanding. That one value
+        # flows through every existing formula with no special-casing
+        # needed elsewhere:
+        #   - execute_quick_order's max_synthetic_quantity cap on the
+        #     House's real inventory is 0 for this player, so a BUY quick
+        #     order cleanly raises NoLiquidityError instead of a
+        #     nonsensical fill; a SELL requires shares nobody can hold.
+        #   - dividend_service.create_payout_for_placement snapshots
+        #     shares_outstanding_snapshot=0 on the payout, and
+        #     compute_dividend_distribution's explicit
+        #     `shares_outstanding <= 0` guard returns a clean $0.00/no
+        #     holders result instead of silently paying the House 100% of
+        #     the pool (the House still holds a Position row for this
+        #     player, same as any new IPO, but its quantity is 0 too).
+        #     The frontend shows "No available shares" for exactly this
+        #     case (shares_outstanding_snapshot == 0) instead of a
+        #     misleading dollar figure -- see TournamentDetailModal.tsx.
+        # An admin who recognizes a name worth actually listing can
+        # always "promote" it later by giving it real shares (there's no
+        # dedicated endpoint for that yet -- it'd mean directly updating
+        # total_shares_outstanding, which isn't exposed for editing today).
+        player = player_service.create_player(db, gamertag=username, total_shares_outstanding=0)
+        logger.info("Auto-created placeholder player '%s' for an unmatched Osirion competitor", username)
 
     if account_id:
         db.add(
@@ -314,6 +350,120 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
             db.rollback()
             result.error = f"sync succeeded but finalize failed: {exc}"
             logger.exception("Finalizing tournament %s failed unexpectedly", tournament.id)
+
+    return result
+
+
+def _season_quarter_key(when: datetime) -> str:
+    """A calendar-quarter stand-in for "competitive season" (Osirion gives
+    us no explicit season/chapter identifier to key off of) -- e.g.
+    2026-07-15 and 2026-09-01 both map to "2026-Q3". Good enough to decide
+    "has a Basic FNCS Finals (or a Globals event) already been tracked
+    around the same time as this window", which is the only thing
+    auto_track_new_tournaments needs it for."""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    quarter = (when.month - 1) // 3 + 1
+    return f"{when.year}-Q{quarter}"
+
+
+def _has_tournament_in_quarter(db: Session, tournament_type: TournamentType, quarter_key: str) -> bool:
+    rows = db.query(Tournament.start_time).filter(Tournament.tournament_type == tournament_type).all()
+    for (start_time,) in rows:
+        if start_time is not None and _season_quarter_key(start_time) == quarter_key:
+            return True
+    return False
+
+
+@dataclass
+class AutoTrackResult:
+    windows_seen: int = 0
+    tracked: int = 0
+    skipped_already_tracked: int = 0
+    skipped_unclassified: int = 0
+    skipped_season_dedup: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
+    """Runs once per background sync pass (see app/main.py's
+    _osirion_sync_loop, gated on settings.OSIRION_AUTO_TRACK_ENABLED):
+    checks every window Osirion currently has open, classifies it via
+    tournament_classification_service.classify (admin-editable rules --
+    see GET/POST /admin/osirion/classification-rules), and calls
+    track_tournament for every match that isn't already tracked. A window
+    that matches no rule, or an explicit "exclude" rule (Victory Cups,
+    skin cups, etc.), is left alone -- see that module's docstring for why
+    this is a whitelist, not a blocklist.
+
+    Basic FNCS Finals (TournamentType.FNCS_FINALS) gets one extra check:
+    the user's rule is "once per season, except during a Globals season"
+    -- approximated here as "once per calendar quarter, and never in a
+    quarter that already has a Global Championship / EWC tracked" (see
+    _season_quarter_key). This is a heuristic, not a guarantee, since
+    Osirion has no real season/chapter field to key off of and a Globals
+    window for the same quarter might not have appeared yet when this
+    runs -- documented here rather than silently assumed to be perfect.
+
+    Region: an Osirion tournament's `regions` list is shared across every
+    round/window under it (Osirion doesn't expose a per-window region
+    breakdown -- see list_available_windows), so this only assigns a
+    specific region (for the payout region-multiplier -- see
+    economic_params_service.get_region_multiplier) when the window has
+    EXACTLY one region. A genuinely cross-region window (e.g. an "any
+    region" Cash Cup lobby with several regions listed) is tracked with
+    region=None, which resolves to the full, unscaled pool -- treating a
+    mixed/unclear region as "don't penalize" rather than guessing which
+    single region's multiplier should apply.
+    """
+    result = AutoTrackResult()
+    try:
+        windows = list_available_windows()
+    except OsirionApiError as exc:
+        result.errors.append(str(exc))
+        return result
+
+    tracked_keys = {
+        (m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()
+    }
+
+    for window in windows:
+        result.windows_seen += 1
+        key = (window.leaderboard_event_id, window.leaderboard_event_window_id)
+        if not window.leaderboard_event_id or not window.leaderboard_event_window_id or key in tracked_keys:
+            result.skipped_already_tracked += 1
+            continue
+
+        tournament_type = tournament_classification_service.classify(db, window.display_name)
+        if tournament_type is None:
+            result.skipped_unclassified += 1
+            continue
+
+        if tournament_type == TournamentType.FNCS_FINALS:
+            quarter_key = _season_quarter_key(window.begin_time or datetime.now(timezone.utc))
+            already_has_globals = _has_tournament_in_quarter(db, TournamentType.GLOBAL_CHAMPIONSHIP, quarter_key)
+            already_has_fncs_finals = _has_tournament_in_quarter(db, TournamentType.FNCS_FINALS, quarter_key)
+            if already_has_globals or already_has_fncs_finals:
+                result.skipped_season_dedup += 1
+                continue
+
+        region = window.regions[0] if len(window.regions) == 1 else None
+        try:
+            track_tournament(
+                db,
+                name=window.display_name,
+                tournament_type=tournament_type,
+                region=region,
+                window=window,
+                created_by_admin_id=None,
+            )
+            tracked_keys.add(key)
+            result.tracked += 1
+            logger.info("Auto-tracked new tournament '%s' as %s", window.display_name, tournament_type.value)
+        except Exception as exc:  # noqa: BLE001 -- one bad window must not abort the whole pass
+            db.rollback()
+            result.errors.append(f"{window.display_name}: {exc}")
+            logger.exception("Auto-track failed for window %s", window.display_name)
 
     return result
 

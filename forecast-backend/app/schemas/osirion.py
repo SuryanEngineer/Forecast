@@ -71,6 +71,15 @@ class SyncResultResponse(BaseModel):
     error: str | None
 
 
+class AutoTrackResultResponse(BaseModel):
+    windows_seen: int
+    tracked: int
+    skipped_already_tracked: int
+    skipped_unclassified: int
+    skipped_season_dedup: int
+    errors: list[str]
+
+
 class LiveLeaderboardEntry(BaseModel):
     player_id: uuid.UUID
     gamertag: str

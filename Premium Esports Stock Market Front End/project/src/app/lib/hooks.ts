@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { LeaderboardEntry, LiveLeaderboardResponse, MarketSnapshot, PositionResponse, TournamentResponse } from './types';
+import type { CalendarTournamentResponse, LeaderboardEntry, LiveLeaderboardResponse, MarketSnapshot, PositionResponse, TournamentResponse } from './types';
 
 interface FetchState<T> {
   data: T;
@@ -66,6 +66,15 @@ export function useMyPositions() {
 
 export function useTournamentsList() {
   return usePolledFetch<TournamentResponse[]>('/tournaments', []);
+}
+
+// The upcoming-tournaments calendar (GET /tournaments/calendar) -- 45s
+// polling matches the backend's OSIRION_SYNC_INTERVAL_SECONDS, i.e. this
+// refreshes at the same cadence new tournaments get auto-tracked and
+// standings get pulled, so the calendar's status/payout figures update on
+// their own with no admin action needed.
+export function useTournamentCalendar() {
+  return usePolledFetch<CalendarTournamentResponse[]>('/tournaments/calendar', [], 45_000);
 }
 
 export function useLeaderboard() {

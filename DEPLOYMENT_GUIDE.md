@@ -146,49 +146,69 @@ Instead:
 
 ---
 
-## Step 6 — Track your first live tournament
+## Step 6 — Tournaments are tracked automatically (usually nothing to do here)
 
-There's no custom admin dashboard for this yet — you use the backend's
-built-in interactive API docs instead, which is a real, no-extra-setup
-way to call any endpoint from your browser:
+As of this version, you don't need to manually pick and track
+tournaments any more. Every ~45 seconds (see
+`OSIRION_SYNC_INTERVAL_SECONDS` in `render.yaml`), the backend:
 
-1. Go to `https://<your-backend-url>/docs` — this is FastAPI's automatic
-   Swagger UI, always available at that path.
-2. Expand **POST /api/v1/auth/login**, click **Try it out**, enter your
-   admin email/password, execute it, and copy the `access_token` from
-   the response.
-3. Click the **Authorize** button near the top of the page, paste
-   `Bearer <your token>` (with the word "Bearer" and a space before the
-   token), and click Authorize. Every admin call below now uses it
-   automatically.
-4. Expand **GET /api/v1/admin/osirion/available-tournaments**, click
-   **Try it out**, and execute it (leave the filters blank to see
-   everything). You'll get back a list of trackable tournament windows —
-   each one has `leaderboard_event_id`, `leaderboard_event_window_id`,
-   `begin_time`, `end_time`, and a `display_name` to help you pick the
-   right one.
-5. Copy one whole window object, then expand
-   **POST /api/v1/admin/osirion/track-tournament**, click **Try it out**,
-   and paste it into the request body — but add three fields Osirion
-   doesn't know about and only you can decide: `name` (what you want to
-   call it in your app), `tournament_type` (one of `cash_cup`,
-   `fncs_qualifier`, `fncs_finals`, `global_championship`, `major`,
-   `other`), and `region` (optional). Execute it.
-6. That's it — your backend now automatically re-checks that
-   tournament's standings every 45 seconds (see
-   `OSIRION_SYNC_INTERVAL_SECONDS` in `render.yaml`) and pays out
-   dividends automatically once the window's end time passes. You'll
-   see it appear live on your site's Dashboard and Tournaments page,
-   with a "last updated Xs ago" indicator.
-7. To check on it (or force an immediate sync instead of waiting), use
-   **GET /api/v1/admin/osirion/tracked-tournaments** and
-   **POST /api/v1/admin/osirion/tournaments/{tournament_id}/sync-now**
-   the same way.
+1. Checks every tournament window Osirion currently has open.
+2. Classifies each one against a set of admin-editable rules (see
+   `app/services/tournament_classification_service.py`) — by default:
+   **Cash Cup tier** = Reload Cash Cup Finals + FNCS Division practice
+   finals (any region); **Global tier** = EWC (Esports World Cup) + FNCS
+   Global Championship; **Basic FNCS tier** = plain FNCS Finals, tracked
+   once per season and skipped entirely during a season that already has
+   a Globals event. Anything that looks like a Victory Cup, a skin-themed
+   promotional cup, or doesn't match a rule at all is left alone — never
+   auto-tracked.
+3. Starts tracking every match automatically (creating the internal
+   Tournament for you), then syncs standings and pays out dividends the
+   same way it always did once each window's end time passes.
 
-You can still enter tournaments manually the old way too
-(`POST /api/v1/admin/tournaments` + `.../results` + `.../finalize`, also
-in the same `/docs` page) for anything Osirion doesn't have — the two
-approaches coexist fine.
+You'll see new tournaments simply appear on the Dashboard and the
+Tournaments page's **📅 Calendar** tab (ordered soonest-first, each with
+its total dividend pool) with no admin action needed. A
+"last synced Xs ago" indicator shows the auto-sync is alive.
+
+**If you ever want to adjust the rules or payouts (all via `/docs` —
+Swagger UI, same login/Authorize steps as before: log in via
+**POST /api/v1/auth/login**, copy `access_token`, paste the raw token
+(no "Bearer" prefix) into **Authorize**):**
+
+- **GET/POST `/api/v1/admin/osirion/classification-rules`** — see or
+  change which name patterns map to which tier, or add an exclusion (a
+  rule with no `tournament_type` means "never track a match").
+- **GET/POST `/api/v1/admin/economic-parameters`** — the dollar amount
+  each tier's dividend pool pays (`dividend.cash_cup_pool`,
+  `dividend.fncs_pool`, `dividend.global_pool` — already set so Cash Cup
+  pays least, FNCS pays more, and Global/EWC pays the most).
+- **GET/POST `/api/v1/admin/region-multipliers`** — a per-region scale
+  factor on top of a tier's pool (e.g. an EU or NAC Cash Cup pays the
+  full pool; a smaller region's Cash Cup pays a scaled-down amount of the
+  same pool). EU and NAC default to full payout; other regions default
+  lower, roughly by relative competitive scene size.
+- **POST `/api/v1/admin/osirion/auto-track-now`** — run the
+  classify-and-track pass immediately instead of waiting for the next
+  45-second cycle (handy right after changing a rule).
+
+Set `OSIRION_AUTO_TRACK_ENABLED=false` in Render's environment variables
+to go back to the old fully-manual flow, which still exists if you ever
+need it:
+
+1. **GET /api/v1/admin/osirion/available-tournaments** — every trackable
+   window, each with `leaderboard_event_id`, `leaderboard_event_window_id`,
+   `begin_time`, `end_time`, and a `display_name`.
+2. Copy one whole window object into
+   **POST /api/v1/admin/osirion/track-tournament**, adding `name` and
+   `tournament_type` yourself (`region` is optional).
+3. **GET /api/v1/admin/osirion/tracked-tournaments** and
+   **POST /api/v1/admin/osirion/tournaments/{tournament_id}/sync-now** to
+   check on or force-refresh a specific one.
+
+You can also still enter tournaments fully manually
+(`POST /api/v1/admin/tournaments` + `.../results` + `.../finalize`) for
+anything Osirion doesn't have — every approach coexists fine.
 
 ---
 
@@ -243,7 +263,11 @@ SMTP-based email provider would silently fail there.)
 ## Everything that runs automatically once deployed
 
 - **Bot trading** — background liquidity, ticking every 20 seconds
-- **Osirion tournament sync** — checks tracked tournaments every 45
+- **Osirion tournament auto-tracking** — classifies and starts tracking
+  new Cash Cup / FNCS / Global tournaments every 45 seconds, per
+  admin-editable rules (see Step 6) — set `OSIRION_AUTO_TRACK_ENABLED=false`
+  to disable and go back to fully manual
+- **Osirion tournament sync** — checks every tracked tournament every 45
   seconds, finalizes + pays dividends automatically once a window ends
 - **Live price feed** — pushed to connected browsers over WebSocket
 - **Database migrations** — run automatically on every deploy, as part
@@ -258,12 +282,15 @@ SMTP-based email provider would silently fail there.)
   the `/admin` path prefix in `/docs`, it's grouped under the "players"
   tag — or ask me to build a proper admin UI for this later if typing
   JSON into `/docs` gets old)
-- Tracking a new Osirion tournament (Step 6 above) — this is deliberate,
-  since Osirion has no reliable way to auto-classify FNCS vs. Cash Cup
-  vs. Global Championship, so a human picks that each time
+- Tracking a tournament that doesn't match any classification rule (e.g.
+  a genuinely new tournament format Osirion adds later) — add a new rule
+  via `POST /api/v1/admin/osirion/classification-rules`, or track it
+  manually the old way (Step 6's fallback flow)
 - Manually entering results for a tournament Osirion doesn't cover
-- Adjusting economic parameters (fees, dividend curve, starting balance)
-  via `GET/POST /api/v1/admin/economic-parameters`
+- Adjusting economic parameters (fees, dividend curve, starting balance,
+  per-tier dividend pools) via `GET/POST /api/v1/admin/economic-parameters`,
+  and per-region payout scale factors via
+  `GET/POST /api/v1/admin/region-multipliers`
 
 ---
 

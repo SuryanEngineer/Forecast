@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -8,9 +9,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.osirion import OsirionTournamentMapping
 from app.models.player import Player
-from app.models.tournament import PlacementResult, Tournament
+from app.models.tournament import PlacementResult, Tournament, TournamentStatus
 from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
-from app.schemas.tournament import PlacementResultResponse, TournamentResponse
+from app.schemas.tournament import CalendarTournamentResponse, PlacementResultResponse, TournamentResponse
+from app.services import economic_params_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
@@ -18,6 +20,57 @@ router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 @router.get("", response_model=list[TournamentResponse])
 def list_tournaments(db: Session = Depends(get_db)) -> list[TournamentResponse]:
     return db.query(Tournament).order_by(Tournament.created_at.desc()).limit(200).all()
+
+
+@router.get("/calendar", response_model=list[CalendarTournamentResponse])
+def get_tournament_calendar(db: Session = Depends(get_db)) -> list[CalendarTournamentResponse]:
+    """Every tournament that hasn't finished yet (SCHEDULED or
+    RESULTS_PENDING), soonest first, with a total-dividend-pool figure for
+    each -- meant to be polled every ~45s (see this response's docstring)
+    so the frontend calendar updates on its own as tournaments move from
+    scheduled -> in progress -> finalized, with no admin action needed.
+    Registered ABOVE /{tournament_id} on purpose -- otherwise FastAPI
+    would try to parse "calendar" as a tournament_id UUID and 422 first."""
+    tournaments = (
+        db.query(Tournament)
+        .filter(Tournament.status != TournamentStatus.FINALIZED)
+        .order_by(Tournament.start_time.asc().nulls_last(), Tournament.created_at.asc())
+        .limit(200)
+        .all()
+    )
+    mappings_by_tournament = {
+        m.tournament_id: m
+        for m in db.query(OsirionTournamentMapping)
+        .filter(OsirionTournamentMapping.tournament_id.in_([t.id for t in tournaments]))
+        .all()
+    }
+
+    rows: list[CalendarTournamentResponse] = []
+    for tournament in tournaments:
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+        if fixed_pool is not None:
+            region_multiplier = economic_params_service.get_region_multiplier(db, tournament.region)
+            total_pool: Decimal | None = fixed_pool * region_multiplier
+        else:
+            total_pool = tournament.prize_pool
+
+        mapping = mappings_by_tournament.get(tournament.id)
+        rows.append(
+            CalendarTournamentResponse(
+                id=tournament.id,
+                name=tournament.name,
+                tournament_type=tournament.tournament_type,
+                region=tournament.region,
+                start_time=tournament.start_time,
+                end_time=tournament.end_time,
+                status=tournament.status,
+                total_dividend_pool=total_pool,
+                is_osirion_tracked=mapping is not None,
+                last_synced_at=mapping.last_synced_at if mapping else None,
+            )
+        )
+    db.commit()
+    return rows
 
 
 @router.get("/{tournament_id}", response_model=TournamentResponse)

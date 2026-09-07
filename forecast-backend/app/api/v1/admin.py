@@ -25,8 +25,14 @@ from app.schemas.economic_params import (
     DividendCurveEntryUpdateRequest,
     PlatformParameterResponse,
     PlatformParameterUpdateRequest,
+    RegionMultiplierResponse,
+    RegionMultiplierUpdateRequest,
+    TournamentClassificationRuleCreateRequest,
+    TournamentClassificationRuleResponse,
+    TournamentClassificationRuleUpdateRequest,
 )
 from app.schemas.osirion import (
+    AutoTrackResultResponse,
     AvailableWindowResponse,
     SyncResultResponse,
     TrackedTournamentResponse,
@@ -34,10 +40,19 @@ from app.schemas.osirion import (
 )
 from app.schemas.tournament import PlacementResultRequest, PlacementResultResponse, TournamentCreateRequest, TournamentResponse
 from app.schemas.treasury import TreasuryInstrumentResponse, TreasuryRateUpdateRequest
-from app.services import auction_service, bot_trading_service, economic_params_service, osirion_service, tournament_service, treasury_service
+from app.services import (
+    auction_service,
+    bot_trading_service,
+    economic_params_service,
+    osirion_service,
+    tournament_classification_service,
+    tournament_service,
+    treasury_service,
+)
 from app.integrations.osirion_client import OsirionApiError
 from app.models.osirion import OsirionTournamentMapping
 from app.models.tournament import Tournament
+from app.models.tournament_classification import RegionMultiplier
 from app.services.exceptions import ServiceError
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -207,6 +222,111 @@ def sync_osirion_tournament_now(
         finalized=result.finalized,
         error=result.error,
     )
+
+
+@router.post("/osirion/auto-track-now", response_model=AutoTrackResultResponse)
+def auto_track_osirion_tournaments_now(admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> AutoTrackResultResponse:
+    """Runs the same auto-classification/auto-tracking pass the
+    background loop already runs every OSIRION_SYNC_INTERVAL_SECONDS (see
+    app/main.py), immediately -- useful right after changing a
+    classification rule, without waiting for the next scheduled pass."""
+    result = osirion_service.auto_track_new_tournaments(db)
+    db.commit()
+    return AutoTrackResultResponse(
+        windows_seen=result.windows_seen,
+        tracked=result.tracked,
+        skipped_already_tracked=result.skipped_already_tracked,
+        skipped_unclassified=result.skipped_unclassified,
+        skipped_season_dedup=result.skipped_season_dedup,
+        errors=result.errors,
+    )
+
+
+# --- Tournament auto-classification rules (see
+# app/services/tournament_classification_service.py). Pattern is a
+# case-insensitive substring match against the Osirion window's display
+# name; tournament_type=null means "exclude" (never auto-track a match).
+# Lower `priority` is checked first, first match wins. ---
+
+@router.get("/osirion/classification-rules", response_model=list[TournamentClassificationRuleResponse])
+def list_classification_rules(admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[TournamentClassificationRuleResponse]:
+    rules = tournament_classification_service.get_all_rules(db)
+    db.commit()
+    return rules
+
+
+@router.post("/osirion/classification-rules", response_model=TournamentClassificationRuleResponse, status_code=status.HTTP_201_CREATED)
+def create_classification_rule(
+    payload: TournamentClassificationRuleCreateRequest, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)
+) -> TournamentClassificationRuleResponse:
+    rule = tournament_classification_service.create_rule(
+        db,
+        pattern=payload.pattern,
+        tournament_type=payload.tournament_type,
+        priority=payload.priority,
+        is_active=payload.is_active,
+        description=payload.description,
+    )
+    db.commit()
+    return rule
+
+
+@router.post("/osirion/classification-rules/{rule_id}", response_model=TournamentClassificationRuleResponse)
+def update_classification_rule(
+    rule_id: uuid.UUID,
+    payload: TournamentClassificationRuleUpdateRequest,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> TournamentClassificationRuleResponse:
+    try:
+        rule = tournament_classification_service.update_rule(
+            db,
+            rule_id,
+            pattern=payload.pattern,
+            tournament_type=payload.tournament_type,
+            clear_tournament_type=payload.clear_tournament_type,
+            priority=payload.priority,
+            is_active=payload.is_active,
+            description=payload.description,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return rule
+
+
+@router.delete("/osirion/classification-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_classification_rule(rule_id: uuid.UUID, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> None:
+    try:
+        tournament_classification_service.delete_rule(db, rule_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# --- Per-region dividend payout scale factor (see
+# economic_params_service.get_region_multiplier) -- applied on top of a
+# tournament tier's fixed pool (cash_cup_pool/fncs_pool/global_pool,
+# already adjustable via /admin/economic-parameters) whenever a tracked
+# tournament has exactly one region set. ---
+
+@router.get("/region-multipliers", response_model=list[RegionMultiplierResponse])
+def list_region_multipliers(admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[RegionMultiplierResponse]:
+    economic_params_service.get_region_multipliers(db)  # ensure defaults are seeded
+    rows = db.query(RegionMultiplier).order_by(RegionMultiplier.region.asc()).all()
+    db.commit()
+    return rows
+
+
+@router.post("/region-multipliers", response_model=RegionMultiplierResponse)
+def set_region_multiplier(
+    payload: RegionMultiplierUpdateRequest, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)
+) -> RegionMultiplierResponse:
+    row = economic_params_service.set_region_multiplier(db, payload.region, payload.multiplier)
+    db.commit()
+    return row
 
 
 @router.post("/auctions", response_model=AuctionRoundResponse, status_code=status.HTTP_201_CREATED)

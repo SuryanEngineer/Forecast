@@ -37,6 +37,15 @@ def create_payout_for_placement(
     # Tournament.prize_pool. Either way, an exact per-player `prize_won`
     # entered by an admin always takes precedence over both.
     fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+    if fixed_pool is not None:
+        # Region scale factor: an EU/NAC Cash Cup pays the full fixed pool;
+        # a smaller region's Cash Cup pays a scaled-down amount of that same
+        # pool (see economic_params_service.DEFAULT_REGION_MULTIPLIERS).
+        # Only applies to the fixed synthetic pools -- an admin-entered
+        # prize_pool (MAJOR/OTHER types) is already a real, region-specific
+        # number and isn't rescaled.
+        region_multiplier = economic_params_service.get_region_multiplier(db, tournament.region)
+        fixed_pool = fixed_pool * region_multiplier
     effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
 
     pool = compute_player_pool(

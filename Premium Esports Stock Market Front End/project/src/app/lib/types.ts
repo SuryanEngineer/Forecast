@@ -95,6 +95,24 @@ export interface TournamentResponse {
   created_at: string;
 }
 
+// GET /tournaments/calendar -- every tournament that hasn't finalized yet,
+// soonest first, with a projected (or, once results start coming in,
+// still-projected-until-finalized) total dividend pool. Polled every 45s
+// to match the backend's OSIRION_SYNC_INTERVAL_SECONDS, so this updates on
+// its own as tournaments get auto-tracked, start, and pay out.
+export interface CalendarTournamentResponse {
+  id: string;
+  name: string;
+  tournament_type: 'cash_cup' | 'fncs_qualifier' | 'fncs_finals' | 'global_championship' | 'major' | 'other';
+  region: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: 'scheduled' | 'results_pending' | 'finalized';
+  total_dividend_pool: Money | null;
+  is_osirion_tracked: boolean;
+  last_synced_at: string | null;
+}
+
 export interface LiveLeaderboardEntry {
   player_id: string;
   gamertag: string;

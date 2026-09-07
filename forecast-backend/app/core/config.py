@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     # leaderboard page). Keep this well above 1 request/sec if you end up
     # tracking many tournaments at once.
     OSIRION_SYNC_INTERVAL_SECONDS: int = 45
+    # When true (default), every sync pass also calls
+    # osirion_service.auto_track_new_tournaments FIRST: classifies every
+    # currently-open Osirion window (via the admin-editable
+    # TournamentClassificationRule table -- see
+    # app/services/tournament_classification_service.py) and starts
+    # tracking anything that matches a wanted tier, with no admin action
+    # needed. Set to false to go back to the old fully-manual flow (POST
+    # /admin/osirion/track-tournament for every tournament).
+    OSIRION_AUTO_TRACK_ENABLED: bool = True
 
     # --- Bot trading loop (app/services/bot_trading_service.py) ---
     # This is operational config (is the loop running at all, how often),

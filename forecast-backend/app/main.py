@@ -57,11 +57,25 @@ async def _bot_tick_loop() -> None:
 
 def _run_one_osirion_sync() -> None:
     """Runs on a worker thread, its own plain SessionLocal() -- same
-    pattern as `_run_one_bot_tick` above. A no-op (queries zero mappings,
-    returns immediately) until an admin has tracked at least one
-    tournament via POST /admin/osirion/track-tournament."""
+    pattern as `_run_one_bot_tick` above. Auto-tracks any newly-eligible
+    tournament first (see osirion_service.auto_track_new_tournaments,
+    gated on settings.OSIRION_AUTO_TRACK_ENABLED), then syncs standings
+    for everything currently tracked -- a no-op sync (queries zero
+    mappings) until at least one tournament is tracked, whether that
+    happened automatically or via the manual admin endpoint."""
     db = SessionLocal()
     try:
+        if settings.OSIRION_AUTO_TRACK_ENABLED:
+            auto_track_result = osirion_service.auto_track_new_tournaments(db)
+            if auto_track_result.tracked or auto_track_result.errors:
+                osirion_logger.info(
+                    "Osirion auto-track: seen=%d tracked=%d skipped_already=%d skipped_unclassified=%d "
+                    "skipped_season_dedup=%d errors=%s",
+                    auto_track_result.windows_seen, auto_track_result.tracked,
+                    auto_track_result.skipped_already_tracked, auto_track_result.skipped_unclassified,
+                    auto_track_result.skipped_season_dedup, auto_track_result.errors,
+                )
+
         results = osirion_service.sync_all_tracked(db)
         for result in results:
             if result.error:

@@ -16,3 +16,4 @@ from app.models.auction import AuctionRound, AuctionParticipant, AuctionBid, Auc
 from app.models.bot import BotProfile  # noqa: F401
 from app.models.password_reset import PasswordResetToken  # noqa: F401
 from app.models.osirion import OsirionTournamentMapping, OsirionPlayerMapping  # noqa: F401
+from app.models.tournament_classification import TournamentClassificationRule, RegionMultiplier  # noqa: F401
