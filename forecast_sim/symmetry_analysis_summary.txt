@@ -1,0 +1,58 @@
+BOT/HUMAN SYMMETRY -- 100-RUN STATISTICAL ANALYSIS
+======================================================================
+100 full-scale runs (200 players, 40 events, spec economics: $300k/$1.5M/$3M dividend tiers, 0.25% transaction fee, $10,000 flat auction fee, 0.02%/event cash yield, no new-entrant growth).
+Grid: 5 population-wide strategy-mix presets x 4 bot:human ratios x 5 seeds.
+
+Comparison is ORIGINAL-cohort humans (n=50, present since t=0) vs. bots
+(n=100-500 depending on ratio) -- same tenure, same strategy-draw
+distribution. Under the fix (bots draw strategies identically to humans),
+the expected gap is 0 in the long run; any nonzero mean here should be
+explainable as sampling noise (bots are a MUCH larger sample than the 50
+original humans, so bot averages are less noisy -- that alone does not
+imply bias, just that the human side of the comparison is noisier).
+
+1) OVERALL (all 100 runs pooled)
+----------------------------------------------------------------------
+   mean ELO gap (orig human - bot): -3.14  (std 20.29, SE 2.03)
+   one-sample t-test vs 0: t=-1.55, p=0.122  -> NOT significantly different from 0 (consistent with no systematic bias)
+   mean ROI gap (orig human - bot): -0.16pp  t=-1.86, p=0.063  -> not significant
+
+2) BY STRATEGY MIX (n=20 runs each, pooled across bot:human ratio)
+----------------------------------------------------------------------
+   chaos_heavy           mean gap=  -2.37 (SE  2.74)  t=-0.86  p=0.388 
+   default               mean gap=  -2.88 (SE  3.12)  t=-0.92  p=0.357 
+   fundamentals_heavy    mean gap= -10.06 (SE  7.56)  t=-1.33  p=0.183 
+   liquidity_heavy       mean gap=  -0.92 (SE  4.43)  t=-0.21  p=0.836 
+   momentum_heavy        mean gap=  +0.53 (SE  3.12)  t=+0.17  p=0.865 
+
+3) BY BOT:HUMAN RATIO (n=25 runs each, pooled across strategy mix)
+----------------------------------------------------------------------
+   bot_heavy_500bots      (n_bots=500)  mean gap=  -3.46 (SE  4.64)  t=-0.75  p=0.456 
+   bot_light_100bots      (n_bots=100)  mean gap=  -4.33 (SE  4.59)  t=-0.94  p=0.346 
+   one_to_one_200bots     (n_bots=200)  mean gap=  -4.61 (SE  3.54)  t=-1.30  p=0.193 
+   spec_default_300bots   (n_bots=300)  mean gap=  -0.16 (SE  3.51)  t=-0.05  p=0.964 
+
+4) PER-CELL DETAIL (n=5 seeds each -- low statistical power, descriptive only)
+----------------------------------------------------------------------
+   FLAG: chaos_heavy          x bot_light_100bots       mean gap=  -9.37 (SE  4.65, z=-2.02)
+
+5) CLOSEST LOOK: fundamentals_heavy mix (largest pooled |mean gap| of the 5 mixes)
+----------------------------------------------------------------------
+   All 20 fundamentals_heavy runs: mean gap -10.06 (SE 7.56), individual run gaps range -63.0 to +47.1.
+   Variance is much higher under this mix (~30-44 SD per cell) than any other -- fundamentals_heavy concentrates weight on only 5 strategies (value_investor/dividend_hunter/smart_money/index_investor/news_trader), which makes individual-run outcomes noisier (fewer distinct behaviors to average over within each 50-human sample), not necessarily biased.
+
+6) ECONOMY HEALTH ACROSS THE GRID
+----------------------------------------------------------------------
+   Success-criteria pass count (of 7): mean 3.32, range 2-5.
+   By bot:human ratio (mean across all mixes/seeds):
+     - bot_heavy_500bots      cash_ratio= 17.4%  inflation= +23.7%  volume%mcap=0.089%  success=3.8/7
+     - bot_light_100bots      cash_ratio= 22.9%  inflation= +83.9%  volume%mcap=0.083%  success=2.8/7
+     - one_to_one_200bots     cash_ratio= 19.9%  inflation= +50.5%  volume%mcap=0.082%  success=3.2/7
+     - spec_default_300bots   cash_ratio= 18.4%  inflation= +36.2%  volume%mcap=0.081%  success=3.5/7
+
+   By strategy mix (mean across all ratios/seeds):
+     - chaos_heavy          cash_ratio= 20.0%  inflation= +49.1%  success=3.5/7
+     - default              cash_ratio= 18.8%  inflation= +48.1%  success=3.7/7
+     - fundamentals_heavy   cash_ratio= 21.9%  inflation= +49.8%  success=3.0/7
+     - liquidity_heavy      cash_ratio= 18.2%  inflation= +47.9%  success=3.4/7
+     - momentum_heavy       cash_ratio= 19.4%  inflation= +48.0%  success=3.0/7

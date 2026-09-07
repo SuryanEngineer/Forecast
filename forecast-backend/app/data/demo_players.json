@@ -1,0 +1,30 @@
+{
+  "_disclaimer": "Static, point-in-time sample data for DEMO MODE ONLY. These are real competitive Fortnite player gamertags used purely as illustrative/recognizable examples so a demo market feels real -- team/region fields are a rough snapshot and are NOT kept up to date, will drift out of accuracy over time, and should never be treated as current or authoritative. This file is never used by the real (non-demo) product.",
+  "_power_rating_note": "Added alongside app/models/player.py's power_rating column so demo-mode IPO prices actually differentiate by skill tier (see player_service.ipo_price_for_rating) instead of every player starting at the same flat price. Rough, illustrative tiers only (90s = long-standing elite/major-winning competitors, 80s-high-70s = consistently strong competitors, low-70s/60s = solid journeymen) -- not a rigorous ranking.",
+  "players": [
+    { "gamertag": "Bugha", "real_name": "Kyle Giersdorf", "team": "Sentinels", "region": "NA East", "power_rating": 97 },
+    { "gamertag": "Mongraal", "real_name": "Kyle Jackson", "team": "Team Liquid", "region": "EU", "power_rating": 95 },
+    { "gamertag": "MrSavage", "real_name": "Martin Foss Andersen", "team": "Elevate", "region": "EU", "power_rating": 94 },
+    { "gamertag": "Clix", "real_name": "Cody Conrod", "team": "NRG", "region": "NA East", "power_rating": 93 },
+    { "gamertag": "Benjyfishy", "real_name": "Benjy Fish", "team": "NRG", "region": "EU", "power_rating": 92 },
+    { "gamertag": "Zayt", "real_name": "Williams Aubin", "team": "Free Agent", "region": "NA East", "power_rating": 91 },
+    { "gamertag": "Aqua", "real_name": "David Wang", "team": "Free Agent", "region": "NA East", "power_rating": 90 },
+    { "gamertag": "Mitr0", "real_name": "Mitr0", "team": "Spacestation", "region": "NA East", "power_rating": 88 },
+    { "gamertag": "Bizzle", "real_name": "Timothy Miller", "team": "Spacestation", "region": "NA East", "power_rating": 85 },
+    { "gamertag": "EpikWhale", "real_name": "Ted Milbourn", "team": "Guild", "region": "NA East", "power_rating": 83 },
+    { "gamertag": "Kinstaar", "real_name": "Kinstaar", "team": "Free Agent", "region": "EU", "power_rating": 82 },
+    { "gamertag": "Nayte", "real_name": "Nate Steinkamp", "team": "Free Agent", "region": "NA East", "power_rating": 81 },
+    { "gamertag": "Chapix", "real_name": "Chapix", "team": "Free Agent", "region": "EU", "power_rating": 80 },
+    { "gamertag": "Peterbot", "real_name": "Peter Sarkozi", "team": "Free Agent", "region": "EU", "power_rating": 78 },
+    { "gamertag": "Setty", "real_name": "Setty", "team": "Free Agent", "region": "EU", "power_rating": 77 },
+    { "gamertag": "Khanada", "real_name": "Khanada", "team": "Free Agent", "region": "NA East", "power_rating": 76 },
+    { "gamertag": "Rojo", "real_name": "Rojo", "team": "Free Agent", "region": "NA East", "power_rating": 75 },
+    { "gamertag": "Mero", "real_name": "Mero", "team": "Free Agent", "region": "EU", "power_rating": 74 },
+    { "gamertag": "Th0masHD", "real_name": "Thomas", "team": "Free Agent", "region": "EU", "power_rating": 73 },
+    { "gamertag": "Reet", "real_name": "Reet", "team": "Free Agent", "region": "NA East", "power_rating": 72 },
+    { "gamertag": "Edgey", "real_name": "Edgey", "team": "Free Agent", "region": "EU", "power_rating": 71 },
+    { "gamertag": "Riggby", "real_name": "Riggby", "team": "Free Agent", "region": "NA East", "power_rating": 70 },
+    { "gamertag": "Veno", "real_name": "Veno", "team": "Free Agent", "region": "NA East", "power_rating": 68 },
+    { "gamertag": "Acorn", "real_name": "Acorn", "team": "Free Agent", "region": "NA East", "power_rating": 66 }
+  ]
+}

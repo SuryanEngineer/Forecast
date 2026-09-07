@@ -1,0 +1,104 @@
+# Render Blueprint for Forecast -- deploys the FastAPI backend as a free
+# web service and the React frontend as a free static site, in one shot.
+#
+# HOW TO USE THIS FILE (see the deployment guide doc for the full
+# step-by-step, including the non-Render steps like creating the
+# Supabase database first): push this repo to GitHub, then in the Render
+# dashboard choose "New +" -> "Blueprint" and point it at this repo.
+# Render reads this file and creates both services below automatically.
+#
+# A few values are deliberately left blank (`sync: false`) -- Render will
+# prompt you for these in its dashboard during setup instead of storing
+# them in this file, since they're either secrets or only knowable after
+# the other service exists (a classic chicken-and-egg between the two
+# services' URLs).
+#
+# This intentionally runs WITHOUT Redis and WITHOUT a background worker
+# (see REDIS_ENABLED=false below) -- Render's free tier has no free
+# background-worker plan, and a single web-service instance doesn't need
+# one anyway (see forecast-backend/app/core/config.py's REDIS_ENABLED
+# comment for exactly what that trades away, which is nothing on a
+# single instance).
+
+services:
+  - type: web
+    name: forecast-backend
+    runtime: python
+    plan: free
+    rootDir: forecast-backend
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # --- Paste your Supabase "Session Pooler" connection string here
+      # once you've created the database (see the deployment guide) ---
+      - key: DATABASE_URL
+        sync: false
+
+      # --- No Redis for a single free instance -- see config.py ---
+      - key: REDIS_ENABLED
+        value: "false"
+      - key: REDIS_URL
+        value: "redis://unused-single-instance-deploy:6379/0"
+
+      # --- Real production behavior, not the local demo sandbox ---
+      - key: DEMO_MODE
+        value: "false"
+      - key: ENV
+        value: "production"
+
+      # --- Auth: Render generates a real secret for you ---
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+
+      # --- Forgot-password email: "console" just logs the reset link
+      # server-side (Render dashboard -> Logs) until you set this to
+      # "resend" and add RESEND_API_KEY -- see the deployment guide's
+      # "Turning on real password-reset emails" section. ---
+      - key: EMAIL_PROVIDER
+        value: "console"
+      # --- Set this to your frontend's real URL once you know it (see
+      # the deployment guide) -- used to build the link inside reset
+      # emails, e.g. https://forecast-frontend.onrender.com ---
+      - key: FRONTEND_BASE_URL
+        sync: false
+
+      # --- Set this to your frontend's real URL too, no trailing slash
+      # -- restricts which site is allowed to call this API. ---
+      - key: CORS_ORIGINS
+        sync: false
+
+      # --- Bot trading + Osirion live tournament sync -- both on by
+      # default in production. ---
+      - key: BOT_TRADING_ENABLED
+        value: "true"
+      - key: BOT_TICK_INTERVAL_SECONDS
+        value: "20"
+      - key: OSIRION_SYNC_ENABLED
+        value: "true"
+      - key: OSIRION_SYNC_INTERVAL_SECONDS
+        value: "45"
+
+      - key: DEFAULT_TREASURY_ANNUAL_RATE
+        value: "0.01"
+
+  - type: web
+    name: forecast-frontend
+    runtime: static
+    rootDir: Premium Esports Stock Market Front End/project
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # --- Set this to your backend's real URL + /api/v1 once you know
+      # it (see the deployment guide), e.g.
+      # https://forecast-backend.onrender.com/api/v1 ---
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

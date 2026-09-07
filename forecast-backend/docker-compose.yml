@@ -1,0 +1,33 @@
+# Optional: run Postgres + Redis locally on your own machine instead of
+# signing up for Supabase/Neon/Upstash right away. Useful for a first
+# local test of the whole system before you set up the free cloud
+# services you'll actually deploy against. Requires Docker Desktop
+# installed (see README_SETUP.md).
+#
+# Start with:   docker compose up -d
+# Then set, in your .env file:
+#   DATABASE_URL=postgresql+psycopg2://forecast:forecast@localhost:5432/forecast
+#   REDIS_URL=redis://localhost:6379/0
+# (those are already the defaults in .env.example)
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forecast
+      POSTGRES_PASSWORD: forecast
+      POSTGRES_DB: forecast
+    ports:
+      - "5432:5432"
+    volumes:
+      - forecast_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  forecast_postgres_data:

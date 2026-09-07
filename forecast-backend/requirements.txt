@@ -1,0 +1,34 @@
+# --- Web framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- Database ---
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# --- Redis / background jobs ---
+redis==5.2.1
+rq==2.1.0
+
+# --- Outbound HTTP (Resend email API, Osirion tournament-data API) ---
+httpx==0.28.1
+
+# --- Auth ---
+pyjwt==2.10.1
+# passlib 1.7.4 (last release, effectively unmaintained) reads bcrypt's
+# internal __about__.__version__ attribute just to log a version string at
+# import time -- bcrypt >=4.1 removed that attribute, so passlib logs a
+# harmless "(trapped) error reading bcrypt version" and moves on. Pinning
+# bcrypt below 4.1 avoids the noisy traceback entirely; hashing behavior
+# itself is unaffected either way.
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# --- Settings / validation ---
+pydantic==2.10.4
+pydantic-settings==2.7.1
+email-validator==2.2.0
+
+# --- Testing (optional, for the pure-engine unit tests) ---
+pytest==8.3.4
