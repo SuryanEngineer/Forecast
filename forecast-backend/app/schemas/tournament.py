@@ -77,5 +77,22 @@ class CalendarTournamentResponse(BaseModel):
     total_dividend_pool: Decimal | None
     is_osirion_tracked: bool
     last_synced_at: datetime | None
+    # How many players are known to have qualified for this tournament
+    # ahead of results (see osirion_service.TournamentEntrant / GET
+    # /tournaments/{id}/entrants) -- 0 until a sibling qualifier/heat
+    # round has concluded and been synced, or once real results exist
+    # (at that point entrants are superseded by actual placements).
+    entrant_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class TournamentEntrantResponse(BaseModel):
+    """One player known to have qualified for a tournament, before real
+    placement results exist for it -- see
+    app/models/tournament.TournamentEntrant."""
+
+    player_id: uuid.UUID
+    gamertag: str
 
     model_config = {"from_attributes": True}

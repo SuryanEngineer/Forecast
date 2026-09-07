@@ -32,6 +32,11 @@ interface DividendPayout {
   shares_outstanding_snapshot: number;
 }
 
+interface TournamentEntrant {
+  player_id: string;
+  gamertag: string;
+}
+
 function placementBadgeStyle(placement: number) {
   if (placement === 1) return { background: 'rgba(251,191,36,0.2)', color: '#fbbf24' };
   if (placement === 2) return { background: 'rgba(156,163,175,0.15)', color: '#9ca3af' };
@@ -60,6 +65,22 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
   const [results, setResults] = useState<PlacementResult[] | null>(null);
   const [payoutsByPlayer, setPayoutsByPlayer] = useState<Record<string, DividendPayout>>({});
   const [loading, setLoading] = useState(false);
+  const [entrants, setEntrants] = useState<TournamentEntrant[] | null>(null);
+
+  // Before any placement results exist, show who's already qualified (see
+  // GET /tournaments/{id}/entrants -- populated from a sibling
+  // heat/qualifier round's leaderboard once that heat concluded, see
+  // osirion_service.py's _seed_entrants_from_heat_windows) instead of a
+  // flat "no results yet" placeholder.
+  useEffect(() => {
+    if (tournament.status === 'finalized') return;
+    let cancelled = false;
+    api
+      .get<TournamentEntrant[]>(`/tournaments/${tournament.id}/entrants`)
+      .then(r => { if (!cancelled) setEntrants(r); })
+      .catch(() => { if (!cancelled) setEntrants([]); });
+    return () => { cancelled = true; };
+  }, [tournament.id, tournament.status]);
 
   useEffect(() => {
     if (tournament.status !== 'finalized') return;
@@ -148,7 +169,33 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
         </div>
 
         <div className="px-5 pb-5 pt-4">
-          {tournament.status === 'scheduled' ? (
+          {tournament.status === 'scheduled' && entrants && entrants.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
+                Qualified entrants ({entrants.length})
+              </p>
+              <p className="text-muted-foreground" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                These players have already qualified for this event. Results and dividend payouts appear here once it's played.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {entrants.map(e => {
+                  const market = marketById.get(e.player_id);
+                  const gamertag = market ? (market.real_name || market.gamertag) : e.gamertag;
+                  return (
+                    <button
+                      key={e.player_id}
+                      onClick={() => onOpenPlayer(e.player_id)}
+                      className="flex items-center gap-2.5 p-2.5 rounded-xl text-left hover:bg-white/[0.03] transition-colors"
+                      style={{ background: 'var(--muted)' }}
+                    >
+                      <PlayerAvatar name={gamertag} color={colorForId(e.player_id)} size={28} />
+                      <p className="text-foreground font-semibold truncate" style={{ fontSize: 12.5 }}>{gamertag}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : tournament.status === 'scheduled' ? (
             <div className="rounded-2xl border border-border p-6 text-center" style={{ background: 'var(--muted)' }}>
               <p style={{ fontSize: 24 }}>⏳</p>
               <p className="text-muted-foreground mt-2" style={{ fontSize: 13, lineHeight: 1.6 }}>
@@ -170,6 +217,13 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                 const payout = payoutsByPlayer[r.player_id];
                 const perShare = payout?.per_share_amount != null ? toNumber(payout.per_share_amount) : null;
                 const poolAmount = payout ? toNumber(payout.total_pool_amount) : r.prize_won !== null ? toNumber(r.prize_won) : null;
+                // A payout with zero shares outstanding means this player
+                // was auto-added to fill a leaderboard gap (an Osirion
+                // competitor nobody's IPO'd yet) -- there's no one to pay
+                // a dividend to, so show that plainly instead of a
+                // misleading dollar amount (see osirion_service.py's
+                // _match_player for where these get created).
+                const noSharesAvailable = payout != null && payout.shares_outstanding_snapshot === 0;
                 return (
                   <button
                     key={r.id}
@@ -191,7 +245,11 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                         {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}
                       </p>
                     </div>
-                    {poolAmount !== null && poolAmount > 0 && (
+                    {noSharesAvailable ? (
+                      <div className="text-right shrink-0">
+                        <p className="text-muted-foreground italic" style={{ fontSize: 11 }}>No available shares</p>
+                      </div>
+                    ) : poolAmount !== null && poolAmount > 0 && (
                       <div className="text-right shrink-0">
                         <p className="font-mono font-bold" style={{ fontSize: 13, color: 'var(--gain)' }}>${poolAmount.toLocaleString()}</p>
                         <p className="text-muted-foreground" style={{ fontSize: 10 }}>

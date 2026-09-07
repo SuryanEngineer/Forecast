@@ -101,3 +101,27 @@ class PlacementResult(Base):
 
     tournament: Mapped["Tournament"] = relationship(back_populates="placement_results")
     player: Mapped["Player"] = relationship(back_populates="placement_results")
+
+
+class TournamentEntrant(Base):
+    """A player known to have qualified for / be competing in a tournament
+    BEFORE any placement results exist for it -- populated by
+    app/services/osirion_service.py's `_seed_entrants_from_heat_windows`
+    from a sibling heat/qualifier window's leaderboard once that heat has
+    concluded, so the frontend can show a real field of competitors ahead
+    of Finals day instead of a blank "no results yet" leaderboard. Once
+    real PlacementResult rows exist for the tournament, those are the
+    authoritative roster -- this table is only meaningful pre-results."""
+
+    __tablename__ = "tournament_entrants"
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "player_id", name="uq_tournament_entrant"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    tournament_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+    player_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    tournament: Mapped["Tournament"] = relationship()
+    player: Mapped["Player"] = relationship()

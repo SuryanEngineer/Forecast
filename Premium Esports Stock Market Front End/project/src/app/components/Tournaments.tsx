@@ -227,9 +227,12 @@ const TIER_LABELS: Record<string, string> = {
 function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
   const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
   const isLive = tournament.status === 'results_pending';
-  const dateLabel = tournament.start_time
-    ? new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    : 'TBD';
+  // No explicit `timeZone` option -- Date/toLocaleDateString/toLocaleTimeString
+  // default to the browser's own local timezone, so this automatically
+  // shows each viewer their own local date/time with no extra plumbing.
+  const startDate = tournament.start_time ? new Date(tournament.start_time) : null;
+  const dateLabel = startDate ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD';
+  const timeLabel = startDate ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
 
   return (
     <button
@@ -237,8 +240,9 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
       className="w-full flex items-center gap-3 p-3.5 rounded-2xl border border-border text-left transition-colors hover:bg-white/[0.03]"
       style={{ background: 'var(--card)' }}
     >
-      <div className="flex flex-col items-center justify-center rounded-xl shrink-0" style={{ width: 52, height: 44, background: 'var(--muted)' }}>
-        <p className="font-mono font-bold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{dateLabel}</p>
+      <div className="flex flex-col items-center justify-center rounded-xl shrink-0" style={{ width: 60, height: 44, background: 'var(--muted)' }}>
+        <p className="font-mono font-bold" style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.2 }}>{dateLabel}</p>
+        {timeLabel && <p className="font-mono" style={{ fontSize: 9.5, color: 'var(--muted-foreground)', lineHeight: 1.2 }}>{timeLabel}</p>}
       </div>
 
       <div className="flex-1 min-w-0">
@@ -253,6 +257,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11.5 }}>
           {TIER_LABELS[tournament.tournament_type] ?? tournament.tournament_type}
           {tournament.region ? ` · ${tournament.region}` : ''}
+          {tournament.entrant_count > 0 ? ` · ${tournament.entrant_count} qualified` : ''}
         </p>
       </div>
 

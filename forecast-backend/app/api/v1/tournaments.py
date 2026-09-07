@@ -4,14 +4,20 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.osirion import OsirionTournamentMapping
 from app.models.player import Player
-from app.models.tournament import PlacementResult, Tournament, TournamentStatus
+from app.models.tournament import PlacementResult, Tournament, TournamentEntrant, TournamentStatus
 from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
-from app.schemas.tournament import CalendarTournamentResponse, PlacementResultResponse, TournamentResponse
+from app.schemas.tournament import (
+    CalendarTournamentResponse,
+    PlacementResultResponse,
+    TournamentEntrantResponse,
+    TournamentResponse,
+)
 from app.services import economic_params_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
@@ -34,16 +40,29 @@ def get_tournament_calendar(db: Session = Depends(get_db)) -> list[CalendarTourn
     tournaments = (
         db.query(Tournament)
         .filter(Tournament.status != TournamentStatus.FINALIZED)
-        .order_by(Tournament.start_time.asc().nulls_last(), Tournament.created_at.asc())
         .limit(200)
         .all()
     )
+    # Sorted in Python rather than via SQL nulls-handling -- cheap at this
+    # size (capped at 200 rows) and guarantees a stable, dialect-independent
+    # chronological order with every null start_time pushed to the end,
+    # instead of relying on ORDER BY ... NULLS LAST behavior.
+    tournaments.sort(key=lambda t: (t.start_time is None, t.start_time, t.created_at))
+
+    tournament_ids = [t.id for t in tournaments]
     mappings_by_tournament = {
         m.tournament_id: m
-        for m in db.query(OsirionTournamentMapping)
-        .filter(OsirionTournamentMapping.tournament_id.in_([t.id for t in tournaments]))
-        .all()
+        for m in db.query(OsirionTournamentMapping).filter(OsirionTournamentMapping.tournament_id.in_(tournament_ids)).all()
     }
+    entrant_counts: dict = {}
+    if tournament_ids:
+        for tournament_id, count in (
+            db.query(TournamentEntrant.tournament_id, func.count(TournamentEntrant.id))
+            .filter(TournamentEntrant.tournament_id.in_(tournament_ids))
+            .group_by(TournamentEntrant.tournament_id)
+            .all()
+        ):
+            entrant_counts[tournament_id] = count
 
     rows: list[CalendarTournamentResponse] = []
     for tournament in tournaments:
@@ -67,10 +86,30 @@ def get_tournament_calendar(db: Session = Depends(get_db)) -> list[CalendarTourn
                 total_dividend_pool=total_pool,
                 is_osirion_tracked=mapping is not None,
                 last_synced_at=mapping.last_synced_at if mapping else None,
+                entrant_count=entrant_counts.get(tournament.id, 0),
             )
         )
     db.commit()
     return rows
+
+
+@router.get("/{tournament_id}/entrants", response_model=list[TournamentEntrantResponse])
+def get_tournament_entrants(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> list[TournamentEntrantResponse]:
+    """Players known to have qualified for this tournament, pulled from a
+    sibling heat/qualifier round's leaderboard once that heat concluded
+    (see osirion_service.auto_track_new_tournaments /
+    _seed_entrants_from_heat_windows) -- meaningful only BEFORE real
+    placement results exist. Once GET /tournaments/{id}/results has real
+    rows, prefer those; this is just for showing a field of competitors
+    ahead of Finals day instead of a blank leaderboard."""
+    rows = (
+        db.query(TournamentEntrant, Player)
+        .join(Player, Player.id == TournamentEntrant.player_id)
+        .filter(TournamentEntrant.tournament_id == tournament_id)
+        .order_by(Player.gamertag.asc())
+        .all()
+    )
+    return [TournamentEntrantResponse(player_id=player.id, gamertag=player.gamertag) for _, player in rows]
 
 
 @router.get("/{tournament_id}", response_model=TournamentResponse)

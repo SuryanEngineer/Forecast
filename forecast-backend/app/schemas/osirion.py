@@ -77,6 +77,8 @@ class AutoTrackResultResponse(BaseModel):
     skipped_already_tracked: int
     skipped_unclassified: int
     skipped_season_dedup: int
+    skipped_not_finals: int
+    entrants_seeded: int
     errors: list[str]
 
 

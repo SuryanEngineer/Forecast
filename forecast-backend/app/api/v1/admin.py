@@ -238,6 +238,8 @@ def auto_track_osirion_tournaments_now(admin: User = Depends(get_current_admin),
         skipped_already_tracked=result.skipped_already_tracked,
         skipped_unclassified=result.skipped_unclassified,
         skipped_season_dedup=result.skipped_season_dedup,
+        skipped_not_finals=result.skipped_not_finals,
+        entrants_seeded=result.entrants_seeded,
         errors=result.errors,
     )
 

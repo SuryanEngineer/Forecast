@@ -291,6 +291,10 @@ SMTP-based email provider would silently fail there.)
   per-tier dividend pools) via `GET/POST /api/v1/admin/economic-parameters`,
   and per-region payout scale factors via
   `GET/POST /api/v1/admin/region-multipliers`
+- Cleaning up any leftover test data if `scripts/smoke_test.py` is ever
+  run against the real DATABASE_URL by mistake (it's meant for a
+  scratch/dev database) -- `python3 scripts/cleanup_smoke_test_data.py`
+  finds it (dry run by default; add `--confirm` to actually delete)
 
 ---
 

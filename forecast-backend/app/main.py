@@ -67,13 +67,14 @@ def _run_one_osirion_sync() -> None:
     try:
         if settings.OSIRION_AUTO_TRACK_ENABLED:
             auto_track_result = osirion_service.auto_track_new_tournaments(db)
-            if auto_track_result.tracked or auto_track_result.errors:
+            if auto_track_result.tracked or auto_track_result.entrants_seeded or auto_track_result.errors:
                 osirion_logger.info(
                     "Osirion auto-track: seen=%d tracked=%d skipped_already=%d skipped_unclassified=%d "
-                    "skipped_season_dedup=%d errors=%s",
+                    "skipped_season_dedup=%d skipped_not_finals=%d entrants_seeded=%d errors=%s",
                     auto_track_result.windows_seen, auto_track_result.tracked,
                     auto_track_result.skipped_already_tracked, auto_track_result.skipped_unclassified,
-                    auto_track_result.skipped_season_dedup, auto_track_result.errors,
+                    auto_track_result.skipped_season_dedup, auto_track_result.skipped_not_finals,
+                    auto_track_result.entrants_seeded, auto_track_result.errors,
                 )
 
         results = osirion_service.sync_all_tracked(db)

@@ -111,6 +111,15 @@ export interface CalendarTournamentResponse {
   total_dividend_pool: Money | null;
   is_osirion_tracked: boolean;
   last_synced_at: string | null;
+  entrant_count: number;
+}
+
+// GET /tournaments/{id}/entrants -- players known to have qualified for a
+// tournament before real placement results exist (see the backend's
+// TournamentEntrant model). Meaningful only pre-results.
+export interface TournamentEntrantResponse {
+  player_id: string;
+  gamertag: string;
 }
 
 export interface LiveLeaderboardEntry {
