@@ -37,6 +37,18 @@ services:
     buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # --- Pin the Python version explicitly. Without this, Render
+      # defaults to whatever its newest available Python is (as of this
+      # writing, 3.14) -- but pydantic-core (a compiled/Rust dependency
+      # of pydantic, which fastapi requires) only ships prebuilt wheels
+      # for Python versions that existed when it was released, so pip
+      # falls back to compiling it from source via Rust/maturin, which
+      # fails outright in Render's build sandbox (its Cargo cache
+      # directory is read-only). 3.11 has prebuilt wheels for every
+      # pinned dependency in requirements.txt -- no compiling needed.
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
       # --- Paste your Supabase "Session Pooler" connection string here
       # once you've created the database (see the deployment guide) ---
       - key: DATABASE_URL
