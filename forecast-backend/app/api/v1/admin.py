@@ -296,7 +296,7 @@ def update_classification_rule(
     return rule
 
 
-@router.delete("/osirion/classification-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/osirion/classification-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_classification_rule(rule_id: uuid.UUID, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> None:
     try:
         tournament_classification_service.delete_rule(db, rule_id)
