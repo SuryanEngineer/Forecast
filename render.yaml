@@ -19,6 +19,14 @@
 # one anyway (see forecast-backend/app/core/config.py's REDIS_ENABLED
 # comment for exactly what that trades away, which is nothing on a
 # single instance).
+#
+# Migrations run as part of buildCommand (`alembic upgrade head`), not
+# preDeployCommand -- preDeployCommand is a paid-tier-only Render feature,
+# not available on the free plan used here. Running it during the build
+# step instead has the same effect for a single-instance deploy: it still
+# runs once per actual deploy (not on every free-tier spin-down/wake-up,
+# since a wake-up restarts the existing built image rather than rerunning
+# the build), and it still completes before startCommand ever runs.
 
 services:
   - type: web
@@ -26,8 +34,7 @@ services:
     runtime: python
     plan: free
     rootDir: forecast-backend
-    buildCommand: pip install -r requirements.txt
-    preDeployCommand: alembic upgrade head
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       # --- Paste your Supabase "Session Pooler" connection string here

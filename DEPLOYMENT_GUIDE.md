@@ -246,9 +246,11 @@ SMTP-based email provider would silently fail there.)
 - **Osirion tournament sync** — checks tracked tournaments every 45
   seconds, finalizes + pays dividends automatically once a window ends
 - **Live price feed** — pushed to connected browsers over WebSocket
-- **Database migrations** — run automatically on every deploy, before
-  the new code starts (`preDeployCommand: alembic upgrade head` in
-  `render.yaml`)
+- **Database migrations** — run automatically on every deploy, as part
+  of the build step (`alembic upgrade head` chained onto `buildCommand`
+  in `render.yaml` — Render's free tier doesn't support the separate
+  `preDeployCommand` field, so this runs it during build instead, which
+  has the same effect: once per deploy, always before the new code starts)
 
 ## Everything that still needs a manual admin action
 
