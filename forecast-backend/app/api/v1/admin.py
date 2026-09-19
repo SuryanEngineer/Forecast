@@ -35,6 +35,7 @@ from app.schemas.osirion import (
     AutoTrackResultResponse,
     AvailableWindowResponse,
     SyncResultResponse,
+    TournamentResultArchiveResponse,
     TrackedTournamentResponse,
     TrackTournamentRequest,
 )
@@ -51,7 +52,7 @@ from app.services import (
 )
 from app.integrations.osirion_client import OsirionApiError
 from app.models.osirion import OsirionTournamentMapping
-from app.models.tournament import Tournament
+from app.models.tournament import Tournament, TournamentResultArchive
 from app.models.tournament_classification import RegionMultiplier
 from app.services.exceptions import ServiceError
 
@@ -222,6 +223,22 @@ def sync_osirion_tournament_now(
         finalized=result.finalized,
         error=result.error,
     )
+
+
+@router.get("/osirion/tournaments/{tournament_id}/archive", response_model=TournamentResultArchiveResponse)
+def get_osirion_tournament_archive(
+    tournament_id: uuid.UUID, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)
+) -> TournamentResultArchiveResponse:
+    """The full raw Osirion data captured for this tournament (see
+    app/models/tournament.TournamentResultArchive) -- the ground-truth
+    blob underneath the structured PlacementResult rows, kept specifically
+    so this app never depends on Osirion's public beta API still having
+    the data later. Meant for future statistics/research tooling and
+    manual investigation, not the regular player-facing UI."""
+    archive = db.query(TournamentResultArchive).filter(TournamentResultArchive.tournament_id == tournament_id).one_or_none()
+    if archive is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No archive captured for this tournament yet")
+    return archive
 
 
 @router.post("/osirion/auto-track-now", response_model=AutoTrackResultResponse)

@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { useMarkets } from '../lib/hooks';
 import { toNumber, type TournamentResponse } from '../lib/types';
 import { colorForId } from '../lib/colors';
+import { placementBadgeStyle } from '../lib/placement';
 import { PlayerAvatar } from './Dashboard';
 
 interface Props {
@@ -21,6 +22,7 @@ interface PlacementResult {
   points: string | number | null;
   prize_won: string | number | null;
   eliminations: number | null;
+  team_id?: string | null;
 }
 
 interface DividendPayout {
@@ -35,13 +37,6 @@ interface DividendPayout {
 interface TournamentEntrant {
   player_id: string;
   gamertag: string;
-}
-
-function placementBadgeStyle(placement: number) {
-  if (placement === 1) return { background: 'rgba(251,191,36,0.2)', color: '#fbbf24' };
-  if (placement === 2) return { background: 'rgba(156,163,175,0.15)', color: '#9ca3af' };
-  if (placement === 3) return { background: 'rgba(205,127,50,0.15)', color: '#cd7f32' };
-  return { background: 'rgba(255,255,255,0.06)', color: 'var(--muted-foreground)' };
 }
 
 /** Full "details" view for a single tournament: every placement entered,
@@ -116,6 +111,27 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
   const marketById = new Map(markets.map(m => [m.id, m]));
   const prizePool = toNumber(tournament.prize_pool);
   const sorted = results ? [...results].sort((a, b) => a.placement - b.placement) : [];
+
+  // Osirion's leaderboard is per-TEAM (duos/squads share one placement --
+  // see forecast-backend's osirion_service.py module docstring), and each
+  // PlacementResult now carries that same team_id (see PlacementResult's
+  // backend docstring for why it was added). Group same-team rows into
+  // one card here so a duo/squad placement reads as one entry instead of
+  // two unrelated-looking rows that just happen to share a rank. A null
+  // team_id (manually/CSV-entered results predate this field, or a solo
+  // format) falls back to its own row id, so it never merges with anyone.
+  const groups: { placement: number; rows: PlacementResult[] }[] = [];
+  const groupIndexByKey = new Map<string, number>();
+  for (const r of sorted) {
+    const key = r.team_id ? `${r.placement}:${r.team_id}` : r.id;
+    const existingIndex = groupIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      groups[existingIndex].rows.push(r);
+    } else {
+      groupIndexByKey.set(key, groups.length);
+      groups.push({ placement: r.placement, rows: [r] });
+    }
+  }
 
   return (
     <div
@@ -211,53 +227,83 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
               <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
                 Placements &amp; dividend payouts
               </p>
-              {sorted.map(r => {
-                const market = marketById.get(r.player_id);
-                const gamertag = market ? (market.real_name || market.gamertag) : 'Unknown player';
-                const payout = payoutsByPlayer[r.player_id];
-                const perShare = payout?.per_share_amount != null ? toNumber(payout.per_share_amount) : null;
-                const poolAmount = payout ? toNumber(payout.total_pool_amount) : r.prize_won !== null ? toNumber(r.prize_won) : null;
-                // A payout with zero shares outstanding means this player
-                // was auto-added to fill a leaderboard gap (an Osirion
-                // competitor nobody's IPO'd yet) -- there's no one to pay
-                // a dividend to, so show that plainly instead of a
-                // misleading dollar amount (see osirion_service.py's
-                // _match_player for where these get created).
-                const noSharesAvailable = payout != null && payout.shares_outstanding_snapshot === 0;
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => onOpenPlayer(r.player_id)}
-                    className="w-full flex items-center gap-3 p-3 rounded-2xl text-left hover:bg-white/[0.03] transition-colors"
-                    style={{ background: 'var(--muted)' }}
-                  >
-                    <div
-                      className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-                      style={{ fontSize: 12, ...placementBadgeStyle(r.placement) }}
+              {groups.map(group => {
+                const isTeam = group.rows.length > 1;
+                const rowContent = (r: PlacementResult) => {
+                  const market = marketById.get(r.player_id);
+                  const gamertag = market ? (market.real_name || market.gamertag) : 'Unknown player';
+                  const payout = payoutsByPlayer[r.player_id];
+                  const perShare = payout?.per_share_amount != null ? toNumber(payout.per_share_amount) : null;
+                  const poolAmount = payout ? toNumber(payout.total_pool_amount) : r.prize_won !== null ? toNumber(r.prize_won) : null;
+                  // A payout with zero shares outstanding means this player
+                  // was auto-added to fill a leaderboard gap (an Osirion
+                  // competitor nobody's IPO'd yet) -- there's no one to pay
+                  // a dividend to, so show that plainly instead of a
+                  // misleading dollar amount (see osirion_service.py's
+                  // _match_player for where these get created).
+                  const noSharesAvailable = payout != null && payout.shares_outstanding_snapshot === 0;
+                  return (
+                    <button
+                      key={r.id}
+                      onClick={() => onOpenPlayer(r.player_id)}
+                      className={`w-full flex items-center gap-3 text-left hover:bg-white/[0.03] transition-colors ${isTeam ? 'py-1.5' : 'p-3 rounded-2xl'}`}
+                      style={isTeam ? undefined : { background: 'var(--muted)' }}
                     >
-                      #{r.placement}
-                    </div>
-                    <PlayerAvatar name={gamertag} color={colorForId(r.player_id)} size={36} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{gamertag}</p>
-                      <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-                        {r.eliminations !== null ? `${r.eliminations} elims` : ''}
-                        {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}
-                      </p>
-                    </div>
-                    {noSharesAvailable ? (
-                      <div className="text-right shrink-0">
-                        <p className="text-muted-foreground italic" style={{ fontSize: 11 }}>No available shares</p>
-                      </div>
-                    ) : poolAmount !== null && poolAmount > 0 && (
-                      <div className="text-right shrink-0">
-                        <p className="font-mono font-bold" style={{ fontSize: 13, color: 'var(--gain)' }}>${poolAmount.toLocaleString()}</p>
-                        <p className="text-muted-foreground" style={{ fontSize: 10 }}>
-                          {perShare !== null ? `$${perShare.toFixed(2)}/share` : 'paid to shareholders'}
+                      {!isTeam && (
+                        <div
+                          className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
+                          style={{ fontSize: 12, ...placementBadgeStyle(r.placement) }}
+                        >
+                          #{r.placement}
+                        </div>
+                      )}
+                      <PlayerAvatar name={gamertag} color={colorForId(r.player_id)} size={isTeam ? 30 : 36} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}</p>
+                        <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+                          {r.eliminations !== null ? `${r.eliminations} elims` : ''}
+                          {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}
                         </p>
                       </div>
-                    )}
-                  </button>
+                      {noSharesAvailable ? (
+                        <div className="text-right shrink-0">
+                          <p className="text-muted-foreground italic" style={{ fontSize: 11 }}>No available shares</p>
+                        </div>
+                      ) : poolAmount !== null && poolAmount > 0 && (
+                        <div className="text-right shrink-0">
+                          <p className="font-mono font-bold" style={{ fontSize: 13, color: 'var(--gain)' }}>${poolAmount.toLocaleString()}</p>
+                          <p className="text-muted-foreground" style={{ fontSize: 10 }}>
+                            {perShare !== null ? `$${perShare.toFixed(2)}/share` : 'paid to shareholders'}
+                          </p>
+                        </div>
+                      )}
+                    </button>
+                  );
+                };
+
+                if (!isTeam) return rowContent(group.rows[0]);
+
+                // A duo/squad that placed together -- one card, one
+                // placement badge, teammates stacked underneath (each
+                // still individually clickable/payable, since dividends
+                // are per-player-holding, not per-team).
+                return (
+                  <div key={`${group.placement}-${group.rows[0].team_id}`} className="rounded-2xl p-3" style={{ background: 'var(--muted)' }}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div
+                        className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
+                        style={{ fontSize: 12, ...placementBadgeStyle(group.placement) }}
+                      >
+                        #{group.placement}
+                      </div>
+                      <p className="text-muted-foreground uppercase" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
+                        {group.rows.length === 2 ? 'Duo' : 'Squad'}
+                      </p>
+                    </div>
+                    <div className="space-y-0.5" style={{ paddingLeft: 40 }}>
+                      {group.rows.map(rowContent)}
+                    </div>
+                  </div>
                 );
               })}
             </div>

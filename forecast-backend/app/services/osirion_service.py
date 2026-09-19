@@ -52,7 +52,14 @@ from app.integrations import osirion_client
 from app.integrations.osirion_client import OsirionApiError
 from app.models.osirion import OsirionPlayerMapping, OsirionTournamentMapping
 from app.models.player import Player
-from app.models.tournament import ResultSource, Tournament, TournamentEntrant, TournamentStatus, TournamentType
+from app.models.tournament import (
+    ResultSource,
+    Tournament,
+    TournamentEntrant,
+    TournamentResultArchive,
+    TournamentStatus,
+    TournamentType,
+)
 from app.services import player_service, tournament_classification_service, tournament_service
 
 logger = logging.getLogger("forecast.osirion")
@@ -98,6 +105,15 @@ class AvailableWindow:
     top_cash_amount: Decimal = Decimal("0")
     is_zero_build: bool = False
     event_group: str = ""
+    # The original, unflattened Osirion dicts this window came from --
+    # kept only so track_tournament can hand them to
+    # TournamentResultArchive at track time (see that model's docstring
+    # for why: a permanent record of Osirion's own tournament metadata in
+    # case their API ever purges/rotates it). Not used for any actual
+    # classification/tracking decision -- those all go through the typed
+    # fields above.
+    raw_tournament: dict = field(default_factory=dict)
+    raw_event_window: dict = field(default_factory=dict)
 
     @property
     def classification_text(self) -> str:
@@ -218,6 +234,8 @@ def list_available_windows(region: str | None = None, include_historic_data: boo
                     top_cash_amount=top_cash_amount,
                     is_zero_build=is_zero_build,
                     event_group=tournament.get("eventGroup") or "",
+                    raw_tournament=tournament,
+                    raw_event_window=event_window,
                 )
             )
 
@@ -261,12 +279,49 @@ def track_tournament(
         window_end_time=window.end_time,
     )
     db.add(mapping)
+
+    # Permanently archive Osirion's own raw tournament/window metadata
+    # right now, while we have it -- see TournamentResultArchive's
+    # docstring for why. raw_leaderboard_entries gets filled in by the
+    # first successful sync (see sync_tournament's _archive_raw_results
+    # call); nothing to put there yet.
+    if window.raw_tournament or window.raw_event_window:
+        db.add(
+            TournamentResultArchive(
+                id=uuid.uuid4(),
+                tournament_id=tournament.id,
+                raw_tournament_metadata={
+                    "tournament": window.raw_tournament,
+                    "event_window": window.raw_event_window,
+                },
+            )
+        )
+
     db.commit()
     db.refresh(mapping)
     return mapping
 
 
 def _match_player(db: Session, osirion_player: dict) -> Player | None:
+    """Finds (or creates) the Player for one Osirion competitor -- used
+    both for entrants discovered ahead of Finals (via a concluded heat's
+    leaderboard, see `_seed_entrants_from_heat_windows`) and for anyone
+    who only shows up once real placement results come in.
+
+    Historical note: this used to create a ZERO-share placeholder stock
+    ("nothing to trade, no time left to IPO them") for anyone discovered
+    only in final results, distinct from a separate `_ensure_real_player`
+    helper that gave qualified-ahead-of-time entrants a real stock. Per
+    explicit product direction, that distinction is gone -- ANYONE found
+    in ANY tracked (real cash-payout) tournament, whether discovered via a
+    pre-Finals qualifying heat or only in the Finals results themselves,
+    now gets a real, tradeable stock at the normal base IPO
+    price/share count (player_service.create_player's defaults). An admin
+    can still hand-adjust an individual player's share count/price later
+    if a specific listing warrants it -- there's no dedicated endpoint for
+    that, it means directly updating total_shares_outstanding/ipo_price.
+    Someone already known (existing accountId mapping or gamertag match)
+    is reused as-is, never re-IPO'd or given a second stock."""
     account_id = osirion_player.get("accountId")
     username = osirion_player.get("username")
 
@@ -281,7 +336,7 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
 
     if not username:
         # Nothing to display and nothing to match on -- genuinely can't
-        # create a placeholder without at least a gamertag to show.
+        # create a player without at least a gamertag to show.
         return None
 
     # Escape SQL LIKE wildcards (% and _) that could theoretically appear
@@ -291,80 +346,8 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
     player = db.query(Player).filter(Player.gamertag.ilike(escaped_username, escape="\\")).one_or_none()
 
     if player is None:
-        # No existing Player has this gamertag -- rather than silently
-        # dropping this competitor (which produces gaps in the
-        # leaderboard, e.g. "50th place" then "52nd place"), auto-create
-        # a placeholder with ZERO total_shares_outstanding. That one value
-        # flows through every existing formula with no special-casing
-        # needed elsewhere:
-        #   - execute_quick_order's max_synthetic_quantity cap on the
-        #     House's real inventory is 0 for this player, so a BUY quick
-        #     order cleanly raises NoLiquidityError instead of a
-        #     nonsensical fill; a SELL requires shares nobody can hold.
-        #   - dividend_service.create_payout_for_placement snapshots
-        #     shares_outstanding_snapshot=0 on the payout, and
-        #     compute_dividend_distribution's explicit
-        #     `shares_outstanding <= 0` guard returns a clean $0.00/no
-        #     holders result instead of silently paying the House 100% of
-        #     the pool (the House still holds a Position row for this
-        #     player, same as any new IPO, but its quantity is 0 too).
-        #     The frontend shows "No available shares" for exactly this
-        #     case (shares_outstanding_snapshot == 0) instead of a
-        #     misleading dollar figure -- see TournamentDetailModal.tsx.
-        # An admin who recognizes a name worth actually listing can
-        # always "promote" it later by giving it real shares (there's no
-        # dedicated endpoint for that yet -- it'd mean directly updating
-        # total_shares_outstanding, which isn't exposed for editing today).
-        player = player_service.create_player(db, gamertag=username, total_shares_outstanding=0)
-        logger.info("Auto-created placeholder player '%s' for an unmatched Osirion competitor", username)
-
-    if account_id:
-        db.add(
-            OsirionPlayerMapping(
-                id=uuid.uuid4(), osirion_account_id=account_id, osirion_username=username, player_id=player.id
-            )
-        )
-        db.flush()
-
-    return player
-
-
-def _ensure_real_player(db: Session, osirion_player: dict) -> Player | None:
-    """Like `_match_player` above, but for a competitor discovered via a
-    qualifier/heat leaderboard BEFORE the Finals happen (see
-    `_seed_entrants_from_heat_windows`) -- these get a real, tradeable
-    stock at the normal base IPO price/share count
-    (player_service.create_player's defaults), not the zero-share
-    placeholder `_match_player` uses. The two cases are handled
-    differently on purpose: `_match_player`'s zero-share placeholder exists
-    only to avoid a leaderboard GAP for a name nobody's ever heard of that
-    shows up in FINAL results after the fact (nothing to trade, no time
-    left to IPO them); this one is discovered ahead of the event
-    specifically so users CAN trade on them before it happens. Someone
-    already known (existing accountId mapping or gamertag match,
-    including a previous zero-share placeholder) is reused as-is, never
-    re-IPO'd or given a second stock."""
-    account_id = osirion_player.get("accountId")
-    username = osirion_player.get("username")
-
-    if account_id:
-        existing = (
-            db.query(OsirionPlayerMapping)
-            .filter(OsirionPlayerMapping.osirion_account_id == account_id)
-            .one_or_none()
-        )
-        if existing is not None:
-            return db.get(Player, existing.player_id)
-
-    if not username:
-        return None
-
-    escaped_username = username.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
-    player = db.query(Player).filter(Player.gamertag.ilike(escaped_username, escape="\\")).one_or_none()
-
-    if player is None:
         player = player_service.create_player(db, gamertag=username)
-        logger.info("Auto-created a real tradeable stock for qualified entrant '%s'", username)
+        logger.info("Auto-created a real tradeable stock for Osirion competitor '%s'", username)
 
     if account_id:
         db.add(
@@ -382,11 +365,11 @@ def _seed_entrants_from_heat_windows(db: Session, tournament: Tournament, heat_w
     sibling heat/qualifier window (same event, but has_cash_payout=False)
     that has ALREADY ended, so the roster of who qualified is known before
     the Finals themselves are played. Each competitor found gets a real
-    tradeable stock (see `_ensure_real_player`) and a TournamentEntrant
-    row, so the frontend can show "players qualified for this tournament"
-    instead of a blank leaderboard while everyone waits for Finals day.
-    Safe to call repeatedly -- skips heats that haven't ended yet, and
-    skips a competitor already recorded as an entrant."""
+    tradeable stock (see `_match_player`) and a TournamentEntrant row, so
+    the frontend can show "players qualified for this tournament" instead
+    of a blank leaderboard while everyone waits for Finals day. Safe to
+    call repeatedly -- skips heats that haven't ended yet, and skips a
+    competitor already recorded as an entrant."""
     seeded = 0
     now = datetime.now(timezone.utc)
     for heat in heat_windows:
@@ -406,7 +389,7 @@ def _seed_entrants_from_heat_windows(db: Session, tournament: Tournament, heat_w
                 total_pages = leaderboard.get("totalPages") or 1
                 for entry in leaderboard.get("entries", []):
                     for osirion_player in entry.get("players", []):
-                        player = _ensure_real_player(db, osirion_player)
+                        player = _match_player(db, osirion_player)
                         if player is None:
                             continue
                         exists = (
@@ -436,6 +419,50 @@ def _to_decimal(value) -> Decimal | None:
         return None
 
 
+# Osirion's trackedStats key naming isn't documented/guaranteed stable
+# across seasons/modes -- try each candidate per session and use whichever
+# one is actually present, rather than assuming one fixed name forever.
+_ELIMINATION_STAT_KEYS = ("TEAM_ELIMS_STAT_INDEX", "PLAYER_ELIMS_STAT_INDEX", "Eliminations", "eliminations")
+
+
+def _extract_eliminations(entry: dict) -> int | None:
+    """Best-effort total eliminations for one leaderboard entry, summed
+    across every session in its sessionHistory (a window can span more
+    than one game). Returns None (not 0) when sessionHistory is empty or
+    carries no recognizable elimination stat, so the UI/DB can tell "no
+    data available" apart from "genuinely zero eliminations"."""
+    sessions = entry.get("sessionHistory") or []
+    if not sessions:
+        return None
+    total = 0
+    found_any = False
+    for session in sessions:
+        stats = session.get("trackedStats") or {}
+        for key in _ELIMINATION_STAT_KEYS:
+            if key in stats:
+                try:
+                    total += int(stats[key])
+                    found_any = True
+                except (TypeError, ValueError):
+                    pass
+                break
+    return total if found_any else None
+
+
+def _archive_raw_results(db: Session, tournament_id: uuid.UUID, entries: list[dict]) -> None:
+    """Upserts this tournament's TournamentResultArchive with the raw
+    leaderboard entries just fetched -- see that model's docstring for
+    why. Safe to call every sync pass: each call simply replaces the
+    previous snapshot with the latest, more-complete one, and once the
+    tournament finalizes, sync_tournament stops running for it entirely --
+    so whatever's stored here at that point is permanent."""
+    archive = db.query(TournamentResultArchive).filter_by(tournament_id=tournament_id).one_or_none()
+    if archive is None:
+        archive = TournamentResultArchive(id=uuid.uuid4(), tournament_id=tournament_id)
+        db.add(archive)
+    archive.raw_leaderboard_entries = entries
+
+
 @dataclass
 class SyncResult:
     tournament_id: uuid.UUID
@@ -455,18 +482,23 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
     try:
         page = 0
         total_pages = 1
+        all_entries: list[dict] = []
         while page < total_pages:
             leaderboard = osirion_client.get_leaderboard_page(
                 mapping.leaderboard_event_id, mapping.leaderboard_event_window_id, page=page
             )
             total_pages = leaderboard.get("totalPages") or 1
             entries = leaderboard.get("entries", [])
+            all_entries.extend(entries)
 
             for entry in entries:
                 rank = entry.get("rank")
                 if not rank or rank <= 0:
                     continue
                 points = _to_decimal(entry.get("pointsEarned"))
+                team_id = entry.get("teamId")
+                percentile = _to_decimal(entry.get("percentile"))
+                eliminations = _extract_eliminations(entry)
                 for osirion_player in entry.get("players", []):
                     result.entries_seen += 1
                     player = _match_player(db, osirion_player)
@@ -480,10 +512,19 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
                         player_id=player.id,
                         placement=rank,
                         points=points,
+                        eliminations=eliminations,
+                        team_id=team_id,
+                        percentile=percentile,
+                        raw_stats=entry,
                     )
                     result.matched += 1
 
             page += 1
+
+        # Permanently capture the full raw response too -- see
+        # TournamentResultArchive's docstring. Includes entries that never
+        # matched a Player, unlike the PlacementResult rows above.
+        _archive_raw_results(db, tournament.id, all_entries)
 
         mapping.last_synced_at = datetime.now(timezone.utc)
         db.commit()

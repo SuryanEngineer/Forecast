@@ -47,6 +47,10 @@ class PlacementResultResponse(BaseModel):
     points: Decimal | None
     prize_won: Decimal | None
     eliminations: int | None
+    # Osirion-only (see app/models/tournament.py's PlacementResult
+    # docstring) -- null for a manually/CSV-entered result.
+    team_id: str | None = None
+    percentile: Decimal | None = None
 
     model_config = {"from_attributes": True}
 

@@ -5,7 +5,7 @@ app/core/config.py and .env.example). Use `get_db` as a FastAPI dependency
 """
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -20,6 +20,20 @@ if settings.DATABASE_URL.startswith("sqlite"):
     # is fine at demo scale. pool_pre_ping is skipped too -- it only
     # matters for a network database that can idle-timeout you.
     engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False}, future=True)
+
+    # SQLite ignores every model's ondelete="CASCADE" (see
+    # app/models/tournament.py, app/models/osirion.py, etc.) unless FK
+    # enforcement is explicitly turned on per-connection -- Postgres (the
+    # real production/Supabase database) always enforces this at the
+    # engine level regardless, so this only matters for demo mode, but
+    # without it, deleting e.g. a Tournament in demo mode silently leaves
+    # its PlacementResult/OsirionTournamentMapping/TournamentEntrant rows
+    # behind instead of cleaning them up.
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 else:
     # pool_pre_ping avoids "server closed the connection unexpectedly" errors
     # from free-tier Postgres providers (Supabase/Neon) that idle-timeout

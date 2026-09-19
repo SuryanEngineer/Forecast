@@ -127,6 +127,7 @@ export interface LiveLeaderboardEntry {
   gamertag: string;
   placement: number;
   points: Money | null;
+  eliminations: number | null;
 }
 
 export interface LiveLeaderboardResponse {

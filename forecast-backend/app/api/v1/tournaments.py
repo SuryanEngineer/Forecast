@@ -164,7 +164,13 @@ def get_live_leaderboard(tournament_id: uuid.UUID, db: Session = Depends(get_db)
         window_end_time=mapping.window_end_time if mapping else None,
         last_synced_at=mapping.last_synced_at if mapping else None,
         entries=[
-            LiveLeaderboardEntry(player_id=player.id, gamertag=player.gamertag, placement=result.placement, points=result.points)
+            LiveLeaderboardEntry(
+                player_id=player.id,
+                gamertag=player.gamertag,
+                placement=result.placement,
+                points=result.points,
+                eliminations=result.eliminations,
+            )
             for result, player in rows
         ],
     )

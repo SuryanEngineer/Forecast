@@ -62,11 +62,21 @@ def upsert_placement_result(
     eliminations: int | None = None,
     raw_notes: str | None = None,
     entered_by_admin_id: uuid.UUID | None = None,
+    team_id: str | None = None,
+    percentile: Decimal | None = None,
+    raw_stats: dict | None = None,
 ) -> PlacementResult:
     """Create or update one player's placement in a tournament. Safe to
     call repeatedly while an admin is still entering results (e.g.
     correcting a typo) -- it's only `finalize_tournament` that locks
-    things in and triggers dividend payouts."""
+    things in and triggers dividend payouts.
+
+    `team_id`/`percentile`/`raw_stats` are Osirion-only (see
+    osirion_service.sync_tournament) -- always None for a manually/CSV
+    entered result. `raw_stats` in particular is the full raw per-team
+    Osirion leaderboard entry, kept so nothing is lost even if this
+    function's other explicit columns don't happen to cover some future
+    stats need (see PlacementResult's own docstring)."""
     existing = (
         db.query(PlacementResult)
         .filter(PlacementResult.tournament_id == tournament_id, PlacementResult.player_id == player_id)
@@ -79,6 +89,9 @@ def upsert_placement_result(
         existing.eliminations = eliminations
         existing.raw_notes = raw_notes
         existing.entered_by_admin_id = entered_by_admin_id
+        existing.team_id = team_id
+        existing.percentile = percentile
+        existing.raw_stats = raw_stats
         result = existing
     else:
         result = PlacementResult(
@@ -91,6 +104,9 @@ def upsert_placement_result(
             eliminations=eliminations,
             raw_notes=raw_notes,
             entered_by_admin_id=entered_by_admin_id,
+            team_id=team_id,
+            percentile=percentile,
+            raw_stats=raw_stats,
         )
         db.add(result)
     db.flush()

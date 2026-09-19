@@ -295,6 +295,24 @@ SMTP-based email provider would silently fail there.)
   run against the real DATABASE_URL by mistake (it's meant for a
   scratch/dev database) -- `python3 scripts/cleanup_smoke_test_data.py`
   finds it (dry run by default; add `--confirm` to actually delete)
+- Cleaning up tournaments tracked before the Finals-only/no-Zero-Build
+  auto-track logic existed (wrong names, heats/practice rounds/ZB
+  variants that never should have been tracked, stuck forever showing
+  "upcoming") -- `python3 scripts/reconcile_stale_tournaments.py` finds
+  and reports them, and re-syncs any genuinely valid but stuck ones live
+  (dry run by default; add `--confirm` to actually delete the invalid
+  ones). Safe to re-run any time -- see the script's own docstring.
+- Inspecting a tournament's full raw Osirion data (every leaderboard
+  entry, plus the original tournament/window metadata) via
+  `GET /admin/osirion/tournaments/{id}/archive` -- this is captured
+  automatically on every sync and kept permanently in this app's own
+  database (see `TournamentResultArchive` in
+  `app/models/tournament.py`), specifically so historical results and
+  stats survive even if Osirion's public beta API ever purges or rotates
+  old tournament data. `PlacementResult` rows also now carry `team_id`,
+  `percentile`, and a full `raw_stats` blob per player for the same
+  reason -- this is the foundation for any future "player performance
+  history" or research/statistics feature, not just a display detail.
 
 ---
 

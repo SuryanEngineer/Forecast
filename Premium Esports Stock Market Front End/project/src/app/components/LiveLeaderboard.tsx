@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Trophy } from 'lucide-react';
 import { useLiveLeaderboard } from '../lib/hooks';
 import { toNumber } from '../lib/types';
+import { colorForId } from '../lib/colors';
+import { placementBadgeStyle, placementRowTint } from '../lib/placement';
+import { PlayerAvatar } from './Dashboard';
 
 // Shows a tournament's current standings, polling
 // GET /tournaments/{id}/live-leaderboard every 8s (see lib/hooks.ts's
@@ -21,10 +25,14 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
   }, []);
 
   if (loading && !data) {
-    return <p className="text-muted-foreground" style={{ fontSize: 12 }}>Loading standings…</p>;
+    return <LeaderboardSkeleton rows={compact ? 4 : 6} />;
   }
   if (error || !data) {
-    return <p className="text-muted-foreground" style={{ fontSize: 12 }}>Standings aren't available right now.</p>;
+    return (
+      <div className="text-center py-4">
+        <p className="text-muted-foreground" style={{ fontSize: 12 }}>Standings aren't available right now.</p>
+      </div>
+    );
   }
 
   const isFinal = data.tournament_status === 'finalized';
@@ -32,19 +40,28 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="flex items-center gap-2 min-w-0">
           <span
-            className="px-1.5 py-0.5 rounded font-bold tracking-wide"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded font-bold tracking-wide shrink-0"
             style={{
               fontSize: 9,
               background: isFinal ? 'rgba(255,255,255,0.08)' : 'rgba(255,71,87,0.15)',
               color: isFinal ? 'var(--muted-foreground)' : '#ff4757',
             }}
           >
-            {isFinal ? 'FINAL' : '● LIVE'}
+            {!isFinal && (
+              <span className="relative flex shrink-0" style={{ width: 6, height: 6 }}>
+                <span
+                  className="animate-ping absolute inline-flex h-full w-full rounded-full"
+                  style={{ background: '#ff4757', opacity: 0.6 }}
+                />
+                <span className="relative inline-flex rounded-full" style={{ width: 6, height: 6, background: '#ff4757' }} />
+              </span>
+            )}
+            {isFinal ? 'FINAL' : 'LIVE'}
           </span>
-          <p className="font-semibold truncate" style={{ fontSize: 13, color: 'var(--foreground)', maxWidth: 220 }}>
+          <p className="font-semibold truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>
             {data.tournament_name}
           </p>
         </div>
@@ -52,29 +69,64 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
       </div>
 
       {entries.length === 0 ? (
-        <p className="text-muted-foreground" style={{ fontSize: 12 }}>No results posted yet.</p>
+        <div className="text-center py-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <p className="text-muted-foreground" style={{ fontSize: 12 }}>No results posted yet.</p>
+        </div>
       ) : (
         <div className="space-y-1">
-          {entries.map(entry => (
-            <div key={entry.player_id} className="flex items-center justify-between px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className="font-mono font-bold shrink-0 text-center"
-                  style={{ fontSize: 12, width: 20, color: entry.placement <= 3 ? 'var(--accent)' : 'var(--muted-foreground)' }}
+          {entries.map(entry => {
+            const badge = placementBadgeStyle(entry.placement);
+            const subline = [
+              entry.eliminations != null ? `${entry.eliminations} elim${entry.eliminations === 1 ? '' : 's'}` : null,
+              entry.points !== null ? `${toNumber(entry.points).toFixed(0)} pts` : null,
+            ].filter(Boolean).join(' · ');
+            return (
+              <div
+                key={entry.player_id}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-lg"
+                style={{ background: placementRowTint(entry.placement) }}
+              >
+                <div
+                  className="flex items-center justify-center shrink-0 rounded-lg font-mono font-bold"
+                  style={{ width: 22, height: 22, fontSize: 11, ...badge }}
                 >
-                  #{entry.placement}
-                </span>
-                <span className="truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>{entry.gamertag}</span>
+                  {entry.placement === 1 ? <Trophy style={{ width: 12, height: 12 }} /> : entry.placement}
+                </div>
+                <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={compact ? 22 : 26} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{entry.gamertag}</p>
+                  {subline && !compact && (
+                    <p className="truncate" style={{ fontSize: 10.5, color: 'var(--muted-foreground)' }}>{subline}</p>
+                  )}
+                </div>
+                {compact && entry.points !== null && (
+                  <span className="font-mono shrink-0" style={{ fontSize: 11.5, color: 'var(--muted-foreground)' }}>
+                    {toNumber(entry.points).toFixed(0)} pts
+                  </span>
+                )}
               </div>
-              {entry.points !== null && (
-                <span className="font-mono shrink-0" style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-                  {toNumber(entry.points).toFixed(0)} pts
-                </span>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
+    </div>
+  );
+}
+
+function LeaderboardSkeleton({ rows }: { rows: number }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="h-3.5 rounded animate-pulse" style={{ width: 140, background: 'rgba(255,255,255,0.06)' }} />
+        <div className="h-3 rounded animate-pulse" style={{ width: 60, background: 'rgba(255,255,255,0.06)' }} />
+      </div>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+          <div className="rounded-lg animate-pulse shrink-0" style={{ width: 22, height: 22, background: 'rgba(255,255,255,0.06)' }} />
+          <div className="rounded-full animate-pulse shrink-0" style={{ width: 26, height: 26, background: 'rgba(255,255,255,0.06)' }} />
+          <div className="h-3 rounded animate-pulse flex-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+        </div>
+      ))}
     </div>
   );
 }

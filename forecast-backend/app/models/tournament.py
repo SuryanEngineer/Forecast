@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.db.types import GUID
+from app.db.types import GUID, JSONType
 
 MONEY = Numeric(18, 4)
 
@@ -96,6 +96,24 @@ class PlacementResult(Base):
     prize_won: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     eliminations: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Osirion-only fields (null for manual/CSV-entered results) ---
+    # `team_id` groups duos/squads (Osirion's leaderboard is per-TEAM, one
+    # entry can produce more than one PlacementResult -- see
+    # osirion_service.py's module docstring); `percentile` is Osirion's
+    # own field, kept for display/future ranking-quality analysis.
+    # `raw_stats` is the FULL per-team Osirion leaderboard entry (score,
+    # sessionHistory, trackedStats -- damage/accuracy/time-alive/etc, not
+    # all of which have a dedicated column here) captured verbatim at sync
+    # time, specifically so nothing is lost if a future stats feature
+    # wants a field this table doesn't have a column for yet, or if
+    # Osirion's public beta API ever purges/rotates this tournament's data
+    # (see app/models/tournament.py's TournamentResultArchive for the
+    # equivalent tournament-level, not per-player, raw archive).
+    team_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    percentile: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
+    raw_stats: Mapped[dict | None] = mapped_column(JSONType(), nullable=True)
+
     entered_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -125,3 +143,43 @@ class TournamentEntrant(Base):
 
     tournament: Mapped["Tournament"] = relationship()
     player: Mapped["Player"] = relationship()
+
+
+class TournamentResultArchive(Base):
+    """Permanent, one-row-per-tournament snapshot of the raw Osirion data
+    behind a tracked tournament -- upserted on every successful sync (see
+    osirion_service.sync_tournament) and at track time, so it always holds
+    the most complete data captured so far. Once a tournament finalizes,
+    syncing stops touching it, so whatever's here at that point is locked
+    in forever.
+
+    This exists specifically because Osirion's public beta API gives no
+    data-retention guarantee -- PlacementResult rows are already this
+    app's own operational/structured view of results (used by dividends
+    and the UI), but they only have columns for what we knew to capture
+    when they were written. This table is the full ground-truth blob
+    underneath them: if a future statistics/research feature needs a
+    field nobody thought to add a column for yet, or Osirion's data for
+    this tournament becomes unavailable, it can always be re-derived from
+    here without ever calling Osirion again.
+
+    `raw_tournament_metadata` is the original Osirion tournament + event
+    window dict (display data, prize info, eventGroup, regions) captured
+    once at track_tournament time. `raw_leaderboard_entries` is every
+    entry from every page of the leaderboard as of the last successful
+    sync (including entries for usernames that never matched a Player --
+    unlike PlacementResult, which only has rows for matched players)."""
+
+    __tablename__ = "tournament_result_archives"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    tournament_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    raw_tournament_metadata: Mapped[dict | None] = mapped_column(JSONType(), nullable=True)
+    raw_leaderboard_entries: Mapped[list | None] = mapped_column(JSONType(), nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tournament: Mapped["Tournament"] = relationship()

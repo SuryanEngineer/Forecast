@@ -107,7 +107,7 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
     # for exactly which simulator strategies were kept, dropped, or
     # simplified, and why.
     "bots.population_size": (
-        Decimal("40"),
+        Decimal("100"),
         "Target number of bot trader accounts to maintain. Each admin-triggered or scheduled tick tops "
         "the population up to this count if any bots are missing, but never removes existing bots.",
     ),

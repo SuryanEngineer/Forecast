@@ -87,6 +87,7 @@ class LiveLeaderboardEntry(BaseModel):
     gamertag: str
     placement: int
     points: Decimal | None
+    eliminations: int | None = None
 
 
 class LiveLeaderboardResponse(BaseModel):
@@ -97,3 +98,18 @@ class LiveLeaderboardResponse(BaseModel):
     window_end_time: datetime | None
     last_synced_at: datetime | None
     entries: list[LiveLeaderboardEntry]
+
+
+class TournamentResultArchiveResponse(BaseModel):
+    """The full raw Osirion data behind a tracked tournament -- see
+    app/models/tournament.TournamentResultArchive's docstring. Admin-only:
+    this is the ground-truth blob for future statistics/research tooling
+    and disaster recovery, not something the regular player-facing UI
+    needs to render."""
+
+    tournament_id: uuid.UUID
+    raw_tournament_metadata: dict | None
+    raw_leaderboard_entries: list | None
+    captured_at: datetime
+
+    model_config = {"from_attributes": True}
