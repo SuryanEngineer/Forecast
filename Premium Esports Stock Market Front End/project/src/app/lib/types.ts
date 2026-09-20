@@ -130,6 +130,10 @@ export interface LiveLeaderboardEntry {
   eliminations: number | null;
 }
 
+// `entries` is just one page -- some real tournaments place thousands of
+// competitors (a big-field Cash Cup, not just a small curated lobby), so
+// the backend always paginates (default page_size 100) rather than
+// shipping everyone at once. See useLiveLeaderboard's page/pageSize args.
 export interface LiveLeaderboardResponse {
   tournament_id: string;
   tournament_name: string;
@@ -137,7 +141,34 @@ export interface LiveLeaderboardResponse {
   is_osirion_tracked: boolean;
   window_end_time: string | null;
   last_synced_at: string | null;
+  total_entries: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
   entries: LiveLeaderboardEntry[];
+}
+
+// GET /tournaments/{id}/results -- also paginated, same reasoning as
+// LiveLeaderboardResponse above (a finalized tournament can have just as
+// many recorded placements as a live one did).
+export interface PlacementResultResponse {
+  id: string;
+  tournament_id: string;
+  player_id: string;
+  placement: number;
+  points: Money | null;
+  prize_won: Money | null;
+  eliminations: number | null;
+  team_id: string | null;
+  percentile: Money | null;
+}
+
+export interface PaginatedPlacementResultResponse {
+  items: PlacementResultResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export interface LeaderboardEntry {

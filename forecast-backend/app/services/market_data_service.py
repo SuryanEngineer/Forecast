@@ -91,12 +91,103 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
     }
 
 
+def _bulk_latest_prices(
+    db: Session, player_ids: list[uuid.UUID], before: datetime | None = None
+) -> dict[uuid.UUID, Decimal]:
+    """Each player's most recent PriceSnapshot price (optionally as of
+    some cutoff time) in ONE query, instead of one query per player --
+    see list_market_snapshots' docstring for why this matters. Uses
+    ROW_NUMBER() OVER (PARTITION BY player_id ...) rather than a plain
+    GROUP BY MAX(recorded_at), since what's needed is the PRICE at that
+    latest timestamp, not just the timestamp itself. Window functions
+    work the same way on Postgres and on SQLite (supported there since
+    3.25, released 2018), so this is safe in both real and demo mode."""
+    if not player_ids:
+        return {}
+    row_number = func.row_number().over(
+        partition_by=PriceSnapshot.player_id,
+        order_by=PriceSnapshot.recorded_at.desc(),
+    ).label("rn")
+    ranked = db.query(PriceSnapshot.player_id, PriceSnapshot.price, row_number).filter(
+        PriceSnapshot.player_id.in_(player_ids)
+    )
+    if before is not None:
+        ranked = ranked.filter(PriceSnapshot.recorded_at <= before)
+    ranked_subquery = ranked.subquery()
+
+    rows = db.query(ranked_subquery.c.player_id, ranked_subquery.c.price).filter(ranked_subquery.c.rn == 1).all()
+    return {player_id: price for player_id, price in rows}
+
+
+def _bulk_volume_since(db: Session, player_ids: list[uuid.UUID], since: datetime) -> dict[uuid.UUID, int]:
+    """Each player's total traded quantity since `since` in ONE query --
+    see list_market_snapshots' docstring."""
+    if not player_ids:
+        return {}
+    rows = (
+        db.query(Trade.player_id, func.coalesce(func.sum(Trade.quantity), 0))
+        .filter(Trade.player_id.in_(player_ids), Trade.executed_at >= since)
+        .group_by(Trade.player_id)
+        .all()
+    )
+    return {player_id: int(total or 0) for player_id, total in rows}
+
+
 def list_market_snapshots(db: Session, active_only: bool = True) -> list[dict]:
+    """Batch-computed equivalent of calling get_market_snapshot() once per
+    player. That naive per-player loop meant THREE separate DB
+    round-trips per player (last price, price-24h-ago, 24h volume) -- for
+    a roster in the hundreds, that's 450+ sequential queries on every
+    single GET /markets request. Beyond just being slow, that's a real
+    risk of the request timing out under load or right after a cold
+    start on a single free-tier instance -- which surfaces to users as a
+    generic, confusing "Failed to fetch" with no HTTP status to point to,
+    since the connection gets dropped before any response is sent. This
+    does the exact same three lookups, but as three bulk queries total,
+    no matter how large the roster is."""
     query = db.query(Player)
     if active_only:
         query = query.filter(Player.is_active.is_(True))
     players = query.order_by(Player.gamertag.asc()).all()
-    return [get_market_snapshot(db, p) for p in players]
+    if not players:
+        return []
+
+    player_ids = [p.id for p in players]
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+
+    last_prices = _bulk_latest_prices(db, player_ids)
+    prev_prices = _bulk_latest_prices(db, player_ids, before=day_ago)
+    volumes = _bulk_volume_since(db, player_ids, day_ago)
+
+    snapshots: list[dict] = []
+    for player in players:
+        last_price = last_prices.get(player.id, player.ipo_price)
+        # Same "never traded before the 24h window" fallback as
+        # get_market_snapshot above: treat the reference price as the
+        # current price (0% change) rather than comparing against a
+        # possibly arbitrarily-old IPO price.
+        prev_close = prev_prices.get(player.id, last_price)
+        change = last_price - prev_close
+        change_pct = (change / prev_close * 100) if prev_close > 0 else Decimal("0")
+        snapshots.append(
+            {
+                "id": player.id,
+                "gamertag": player.gamertag,
+                "real_name": player.real_name,
+                "team": player.team,
+                "region": player.region,
+                "total_shares_outstanding": player.total_shares_outstanding,
+                "ipo_price": player.ipo_price,
+                "last_price": last_price,
+                "prev_close": prev_close,
+                "change": change,
+                "change_pct": change_pct,
+                "volume_24h": volumes.get(player.id, 0),
+                "market_cap": last_price * player.total_shares_outstanding,
+            }
+        )
+    return snapshots
 
 
 def get_price_history(db: Session, player_id: uuid.UUID, limit: int = 200) -> list[PriceSnapshot]:

@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react';
 import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../lib/api';
 import { useTournamentCalendar, useTournamentsList } from '../lib/hooks';
-import { toNumber, type CalendarTournamentResponse, type TournamentResponse } from '../lib/types';
+import {
+  toNumber,
+  type CalendarTournamentResponse,
+  type PaginatedPlacementResultResponse,
+  type PlacementResultResponse,
+  type TournamentResponse,
+} from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { HelpButton } from './HelpModal';
 
@@ -11,15 +17,12 @@ interface Props {
   openTournament: (tournament: TournamentResponse) => void;
 }
 
-interface PlacementResult {
-  id: string;
-  tournament_id: string;
-  player_id: string;
-  placement: number;
-  points: string | number | null;
-  prize_won: string | number | null;
-  eliminations: number | null;
-}
+// Only a handful of rows are worth showing inline before nudging people to
+// the full per-tournament page -- a big-field Cash Cup can place thousands
+// of competitors, and this card is just a quick-glance preview, not the
+// place to render all of them (see TournamentDetailModal for the real
+// paginated view).
+const INLINE_RESULTS_PREVIEW_COUNT = 10;
 
 function useCountdown(targetDate: string | null) {
   const [t, setT] = useState({ d: 0, h: 0, m: 0, s: 0 });
@@ -140,22 +143,30 @@ function UpcomingSmall({ tournament, onOpen }: { tournament: TournamentResponse;
 
 function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentResponse; onOpenDetail: () => void }) {
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<PlacementResult[] | null>(null);
+  const [results, setResults] = useState<PlacementResultResponse[] | null>(null);
+  const [total, setTotal] = useState(0);
 
   async function toggle() {
     const next = !open;
     setOpen(next);
     if (next && results === null) {
       try {
-        const r = await api.get<PlacementResult[]>(`/tournaments/${tournament.id}/results`);
-        setResults(r);
+        // Just the first page -- this card is a quick-glance preview, not
+        // the full paginated leaderboard (that lives behind "Full details").
+        const r = await api.get<PaginatedPlacementResultResponse>(
+          `/tournaments/${tournament.id}/results?page=1&page_size=${INLINE_RESULTS_PREVIEW_COUNT}`
+        );
+        setResults(r.items);
+        setTotal(r.total);
       } catch {
         setResults([]);
+        setTotal(0);
       }
     }
   }
 
   const prizePool = toNumber(tournament.prize_pool);
+  const hiddenCount = Math.max(0, total - (results?.length ?? 0));
 
   return (
     <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
@@ -207,7 +218,9 @@ function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentRespon
             className="w-full text-center py-2 rounded-xl font-semibold transition-colors hover:bg-white/[0.03]"
             style={{ fontSize: 12.5, color: 'var(--primary)' }}
           >
-            Full details &amp; per-share dividend payouts →
+            {hiddenCount > 0
+              ? `See all ${total.toLocaleString()} placements & per-share dividend payouts →`
+              : 'Full details & per-share dividend payouts →'}
           </button>
         </div>
       )}
@@ -356,9 +369,17 @@ export function Tournaments({ openTournament }: Props) {
           <p className="font-bold mb-3" style={{ fontSize: 15, color: '#ff4757' }}>● Happening Now</p>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {inProgress.map(t => (
-              <div key={t.id} className="rounded-2xl border border-border p-4" style={{ background: 'var(--card)' }}>
-                <LiveLeaderboard tournamentId={t.id} />
-              </div>
+              <button
+                key={t.id}
+                onClick={() => openTournament(t)}
+                className="text-left rounded-2xl border border-border p-4 transition-colors hover:bg-white/[0.03]"
+                style={{ background: 'var(--card)' }}
+              >
+                <LiveLeaderboard tournamentId={t.id} compact />
+                <p className="text-center mt-2" style={{ fontSize: 11, color: 'var(--primary)' }}>
+                  View full leaderboard →
+                </p>
+              </button>
             ))}
           </div>
         </div>

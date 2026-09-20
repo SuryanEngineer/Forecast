@@ -48,9 +48,10 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.integrations import osirion_client
 from app.integrations.osirion_client import OsirionApiError
-from app.models.osirion import OsirionPlayerMapping, OsirionTournamentMapping
+from app.models.osirion import OsirionPlayerMapping, OsirionSeededHeatWindow, OsirionTournamentMapping
 from app.models.player import Player
 from app.models.tournament import (
     ResultSource,
@@ -379,6 +380,26 @@ def _seed_entrants_from_heat_windows(db: Session, tournament: Tournament, heat_w
         if end_time >= now:
             continue  # this heat hasn't happened yet -- nothing to learn
 
+        # A heat's results can never change once it has ended -- if we've
+        # already walked this exact leaderboard to completion before (any
+        # tournament, any earlier pass), there's nothing new to learn by
+        # fetching it again. Before this check existed, every 45s sync
+        # pass re-fetched every ended heat's ENTIRE leaderboard forever,
+        # for as long as its Finals tournament stayed un-finalized -- pure
+        # waste against Osirion's shared rate-limit budget (see
+        # osirion_client.py) and a real contributor to syncs getting
+        # starved/rate-limited.
+        already_seeded = (
+            db.query(OsirionSeededHeatWindow)
+            .filter_by(
+                leaderboard_event_id=heat.leaderboard_event_id,
+                leaderboard_event_window_id=heat.leaderboard_event_window_id,
+            )
+            .one_or_none()
+        )
+        if already_seeded is not None:
+            continue
+
         try:
             page = 0
             total_pages = 1
@@ -401,6 +422,13 @@ def _seed_entrants_from_heat_windows(db: Session, tournament: Tournament, heat_w
                             db.add(TournamentEntrant(id=uuid.uuid4(), tournament_id=tournament.id, player_id=player.id))
                             seeded += 1
                 page += 1
+            db.add(
+                OsirionSeededHeatWindow(
+                    id=uuid.uuid4(),
+                    leaderboard_event_id=heat.leaderboard_event_id,
+                    leaderboard_event_window_id=heat.leaderboard_event_window_id,
+                )
+            )
             db.commit()
         except Exception:  # noqa: BLE001 -- a bad heat leaderboard must not block tracking/syncing the real Finals
             db.rollback()
@@ -479,11 +507,43 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
     if tournament is None or tournament.status == TournamentStatus.FINALIZED:
         return result
 
+    now = datetime.now(timezone.utc)
+
+    # SQLite (demo mode) drops tzinfo on DateTime(timezone=True) columns on
+    # read-back -- see password_reset_service.confirm_reset for the same
+    # fix and why a naive value here is always UTC, never local time.
+    # No-op on Postgres, where these are already tz-aware.
+    begin_time = mapping.window_begin_time
+    if begin_time is not None and begin_time.tzinfo is None:
+        begin_time = begin_time.replace(tzinfo=timezone.utc)
+    if begin_time is not None and begin_time > now:
+        # The window hasn't started -- there's nothing to fetch yet, and
+        # every request here counts against Osirion's shared rate-limit
+        # budget (see osirion_client.py), so don't spend one on a
+        # leaderboard that can only come back empty.
+        return result
+
+    end_time = mapping.window_end_time
+    if end_time is not None and end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    window_ended = end_time is not None and end_time < now
+
+    # While still in progress, cap how many pages one pass pulls for this
+    # ONE tournament so a single huge field can't monopolize the whole
+    # pass (and the shared rate limit) and starve every other tracked
+    # tournament of updates -- it just makes steady incremental progress
+    # across several 45s passes instead. Once the window has actually
+    # ended there's no "next pass will catch up" any more for THIS
+    # tournament's finalization -- walk every page no matter how long it
+    # takes, so finalizing is never based on a partial field.
+    max_pages = None if window_ended else settings.OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC
+
+    reached_end_of_leaderboard = False
     try:
         page = 0
         total_pages = 1
         all_entries: list[dict] = []
-        while page < total_pages:
+        while page < total_pages and (max_pages is None or page < max_pages):
             leaderboard = osirion_client.get_leaderboard_page(
                 mapping.leaderboard_event_id, mapping.leaderboard_event_window_id, page=page
             )
@@ -519,14 +579,32 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
                     )
                     result.matched += 1
 
+            # Commit after EVERY page, not just once at the very end. This
+            # is the actual fix for tournaments getting perpetually stuck
+            # "syncing" and never finalizing: previously, a rate-limited or
+            # network failure on (say) page 30 of 60 rolled back and threw
+            # away ALL 30 already-fetched pages' work, and the next pass
+            # would hit the exact same rate limit at the exact same spot --
+            # spinning in place forever instead of ever making forward
+            # progress. Committing per page means a later failure only
+            # costs the rest of THIS pass; everything already processed is
+            # safely persisted and the next pass resumes making progress
+            # rather than starting over.
+            mapping.last_synced_at = datetime.now(timezone.utc)
+            db.commit()
+
             page += 1
 
-        # Permanently capture the full raw response too -- see
-        # TournamentResultArchive's docstring. Includes entries that never
-        # matched a Player, unlike the PlacementResult rows above.
-        _archive_raw_results(db, tournament.id, all_entries)
+        reached_end_of_leaderboard = page >= total_pages
 
-        mapping.last_synced_at = datetime.now(timezone.utc)
+        # Permanently capture the raw response fetched so far too -- see
+        # TournamentResultArchive's docstring. Includes entries that never
+        # matched a Player, unlike the PlacementResult rows above. Safe to
+        # overwrite with a partial (page-capped) pull -- it's still the
+        # freshest snapshot of the top of the leaderboard, and gets
+        # replaced by a more complete one on a later pass.
+        _archive_raw_results(db, tournament.id, all_entries)
+        mapping.last_sync_complete = reached_end_of_leaderboard
         db.commit()
     except OsirionApiError as exc:
         db.rollback()
@@ -549,19 +627,13 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
         logger.exception("Osirion sync raised an unexpected error for tournament %s", tournament.id)
         return result
 
-    window_end_time = mapping.window_end_time
-    if window_end_time is not None and window_end_time.tzinfo is None:
-        # SQLite (demo mode) drops tzinfo on DateTime(timezone=True)
-        # columns on read-back -- see password_reset_service.confirm_reset
-        # for the same fix and why a naive value here is always UTC, never
-        # local time. No-op on Postgres, where this is already tz-aware.
-        window_end_time = window_end_time.replace(tzinfo=timezone.utc)
-
-    if (
-        window_end_time is not None
-        and window_end_time < datetime.now(timezone.utc)
-        and result.matched > 0
-    ):
+    # Only finalize once a pass has walked the ENTIRE leaderboard for a
+    # window that has actually ended -- never on a partial/page-capped
+    # pull. Finalizing on incomplete data would permanently lock in a
+    # missing tail of the field (finalize_tournament stops this
+    # tournament from ever syncing again), which is worse than just taking
+    # one more 45s pass to get a complete picture.
+    if reached_end_of_leaderboard and window_ended and result.matched > 0:
         try:
             tournament_service.finalize_tournament(db, tournament.id)
             result.finalized = True

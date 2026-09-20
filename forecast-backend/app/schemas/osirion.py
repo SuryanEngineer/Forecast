@@ -97,6 +97,16 @@ class LiveLeaderboardResponse(BaseModel):
     is_osirion_tracked: bool
     window_end_time: datetime | None
     last_synced_at: datetime | None
+    # `entries` is just this page -- some real tournaments have thousands
+    # of placed competitors (e.g. a single big-field Cash Cup that pays
+    # cash deep into the field, not a small curated LAN lobby), and
+    # shipping/rendering all of them at once was making the tournaments
+    # page unusably long and hammering the backend on every 8s poll. See
+    # GET /tournaments/{id}/live-leaderboard's page/page_size params.
+    total_entries: int
+    page: int
+    page_size: int
+    total_pages: int
     entries: list[LiveLeaderboardEntry]
 
 

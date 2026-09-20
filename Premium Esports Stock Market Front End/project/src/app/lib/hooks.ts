@@ -84,8 +84,11 @@ export function useLeaderboard() {
 // Polls the live standings for one tournament every 8s -- see
 // GET /tournaments/{id}/live-leaderboard in forecast-backend. `null`
 // tournamentId means "don't fetch yet" (e.g. no live tournament found).
-export function useLiveLeaderboard(tournamentId: string | null) {
-  const path = tournamentId ? `/tournaments/${tournamentId}/live-leaderboard` : null;
+// `pageSize` defaults small (10) since every caller today is a compact
+// preview widget -- pass a bigger one (and/or a page number) from a full
+// paginated view instead of ever relying on the backend's own default.
+export function useLiveLeaderboard(tournamentId: string | null, page = 1, pageSize = 10) {
+  const path = tournamentId ? `/tournaments/${tournamentId}/live-leaderboard?page=${page}&page_size=${pageSize}` : null;
   return usePolledFetch<LiveLeaderboardResponse | null>(path, null, 8_000);
 }
 

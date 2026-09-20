@@ -117,6 +117,27 @@ class Settings(BaseSettings):
     # leaderboard page). Keep this well above 1 request/sec if you end up
     # tracking many tournaments at once.
     OSIRION_SYNC_INTERVAL_SECONDS: int = 45
+    # Enforced client-side (see app/integrations/osirion_client.py's rate
+    # limiter) by pacing every outbound request to Osirion, not just hoped
+    # for -- this app used to fire every leaderboard page back-to-back
+    # with zero pacing, which was fine for a couple of small tournaments
+    # but started tripping Osirion's rate limit once a single big-field
+    # Cash Cup (thousands of entrants -> dozens of leaderboard pages) or
+    # several tournaments syncing in the same pass pushed well past
+    # 60/min. Kept safely below the documented cap since Osirion is a
+    # public beta API with no key -- the limit may be shared across every
+    # user of the API, not metered per-app.
+    OSIRION_MAX_REQUESTS_PER_MINUTE: int = 45
+    # A single sync pass fetches at most this many leaderboard pages for
+    # any ONE tournament that's still in progress, so one huge field can't
+    # monopolize the whole pass (and the shared rate-limit budget above)
+    # and starve every other tracked tournament of updates -- it just
+    # makes steady incremental progress across several passes instead.
+    # Not applied once a tournament's window has actually ended: that
+    # final settling pass always walks every page no matter how long it
+    # takes, so finalization is never based on an incomplete field. See
+    # osirion_service.sync_tournament.
+    OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC: int = 25
     # When true (default), every sync pass also calls
     # osirion_service.auto_track_new_tournaments FIRST: classifies every
     # currently-open Osirion window (via the admin-editable

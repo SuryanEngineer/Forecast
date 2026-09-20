@@ -55,6 +55,20 @@ class PlacementResultResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaginatedPlacementResultResponse(BaseModel):
+    """A page of a tournament's placement results, ordered by placement
+    ascending -- some real tournaments pay (and therefore record)
+    placements thousands deep, so GET /tournaments/{id}/results always
+    paginates rather than shipping every row in one response (see that
+    endpoint's docstring)."""
+
+    items: list[PlacementResultResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class CalendarTournamentResponse(BaseModel):
     """One row of the upcoming-tournaments calendar (GET
     /tournaments/calendar) -- meant to be polled every

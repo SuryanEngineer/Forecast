@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.models.tournament import PlacementResult, Tournament, TournamentEntrant
 from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
 from app.schemas.tournament import (
     CalendarTournamentResponse,
+    PaginatedPlacementResultResponse,
     PlacementResultResponse,
     TournamentEntrantResponse,
     TournamentResponse,
@@ -120,18 +121,37 @@ def get_tournament(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> T
     return tournament
 
 
-@router.get("/{tournament_id}/results", response_model=list[PlacementResultResponse])
-def get_tournament_results(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> list[PlacementResultResponse]:
-    return (
-        db.query(PlacementResult)
-        .filter(PlacementResult.tournament_id == tournament_id)
-        .order_by(PlacementResult.placement.asc())
-        .all()
+@router.get("/{tournament_id}/results", response_model=PaginatedPlacementResultResponse)
+def get_tournament_results(
+    tournament_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> PaginatedPlacementResultResponse:
+    """Paginated -- a real tournament can pay (and therefore record)
+    placements thousands deep (a big-field Cash Cup, not just a small
+    curated lobby), and shipping every row in one response was making the
+    tournaments page unusably long. Default page size 100, matching the
+    frontend's "more than 100 players -> paginate" rule."""
+    base_query = db.query(PlacementResult).filter(PlacementResult.tournament_id == tournament_id)
+    total = base_query.count()
+    rows = base_query.order_by(PlacementResult.placement.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    return PaginatedPlacementResultResponse(
+        items=rows,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=max(1, -(-total // page_size)),
     )
 
 
 @router.get("/{tournament_id}/live-leaderboard", response_model=LiveLeaderboardResponse)
-def get_live_leaderboard(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> LiveLeaderboardResponse:
+def get_live_leaderboard(
+    tournament_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> LiveLeaderboardResponse:
     """Current standings for one tournament, meant to be polled by the
     frontend while a tournament is in progress (see
     app/services/osirion_service.py -- results here reflect whatever the
@@ -139,7 +159,14 @@ def get_live_leaderboard(tournament_id: uuid.UUID, db: Session = Depends(get_db)
     is what lets the UI show an honest "updated Xs ago" instead of
     claiming to be live). Works the same whether the tournament's results
     come from Osirion or manual admin entry -- `is_osirion_tracked` and
-    `last_synced_at` are just null for the latter."""
+    `last_synced_at` are just null for the latter.
+
+    Paginated -- some real tournaments place (and get PlacementResult rows
+    for) thousands of competitors, not just a small curated lobby, and
+    shipping every one of them on every 8s poll was both making the page
+    unusably long and putting real load on the backend. Default page size
+    100, matching the frontend's "more than 100 players -> paginate" rule.
+    """
     tournament = db.get(Tournament, tournament_id)
     if tournament is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
@@ -148,11 +175,16 @@ def get_live_leaderboard(tournament_id: uuid.UUID, db: Session = Depends(get_db)
         db.query(OsirionTournamentMapping).filter(OsirionTournamentMapping.tournament_id == tournament_id).one_or_none()
     )
 
-    rows = (
+    base_query = (
         db.query(PlacementResult, Player)
         .join(Player, Player.id == PlacementResult.player_id)
         .filter(PlacementResult.tournament_id == tournament_id)
-        .order_by(PlacementResult.placement.asc())
+    )
+    total_entries = base_query.count()
+    rows = (
+        base_query.order_by(PlacementResult.placement.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
 
@@ -163,6 +195,10 @@ def get_live_leaderboard(tournament_id: uuid.UUID, db: Session = Depends(get_db)
         is_osirion_tracked=mapping is not None,
         window_end_time=mapping.window_end_time if mapping else None,
         last_synced_at=mapping.last_synced_at if mapping else None,
+        total_entries=total_entries,
+        page=page,
+        page_size=page_size,
+        total_pages=max(1, -(-total_entries // page_size)),
         entries=[
             LiveLeaderboardEntry(
                 player_id=player.id,

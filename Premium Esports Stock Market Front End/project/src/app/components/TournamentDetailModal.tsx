@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Calendar, Trophy, X } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Trophy, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../lib/api';
-import { useMarkets } from '../lib/hooks';
-import { toNumber, type TournamentResponse } from '../lib/types';
+import { useLiveLeaderboard, useMarkets } from '../lib/hooks';
+import {
+  toNumber,
+  type PaginatedPlacementResultResponse,
+  type PlacementResultResponse,
+  type TournamentResponse,
+} from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { placementBadgeStyle } from '../lib/placement';
 import { PlayerAvatar } from './Dashboard';
@@ -14,15 +19,111 @@ interface Props {
   onOpenPlayer: (id: string) => void;
 }
 
-interface PlacementResult {
-  id: string;
-  tournament_id: string;
-  player_id: string;
-  placement: number;
-  points: string | number | null;
-  prize_won: string | number | null;
-  eliminations: number | null;
-  team_id?: string | null;
+// This modal IS the "dedicated page" for one tournament's full leaderboard
+// (see Tournaments.tsx's compact previews, which link here) -- so it can
+// afford a much bigger page size than an inline card would.
+const DETAIL_PAGE_SIZE = 100;
+
+type PlacementResult = PlacementResultResponse;
+
+function PageControls({
+  page,
+  totalPages,
+  total,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPage: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between pt-1">
+      <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+        {total.toLocaleString()} total &middot; page {page} of {totalPages}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => onPage(page - 1)}
+          disabled={page <= 1}
+          className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
+          style={{ background: 'var(--muted)' }}
+        >
+          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+        </button>
+        <button
+          onClick={() => onPage(page + 1)}
+          disabled={page >= totalPages}
+          className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
+          style={{ background: 'var(--muted)' }}
+        >
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The dedicated full-leaderboard view for a tournament still in progress --
+// this is what a compact preview card (Tournaments.tsx's "Happening Now")
+// links to. Separate from the finalized-results branch below since a live
+// LiveLeaderboardEntry has no team_id/prize_won/percentile yet (those only
+// exist once PlacementResult rows are written at finalization).
+function LiveStandingsSection({
+  data,
+  loading,
+  page,
+  onPage,
+  onOpenPlayer,
+}: {
+  data: ReturnType<typeof useLiveLeaderboard>['data'];
+  loading: boolean;
+  page: number;
+  onPage: (p: number) => void;
+  onOpenPlayer: (id: string) => void;
+}) {
+  if (loading && !data) {
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading live standings…</p>;
+  }
+  if (!data || data.entries.length === 0) {
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings posted yet -- check back once the tournament is underway.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
+          Live standings ({data.total_entries.toLocaleString()})
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        {data.entries.map(entry => (
+          <button
+            key={entry.player_id}
+            onClick={() => onOpenPlayer(entry.player_id)}
+            className="w-full flex items-center gap-3 p-3 rounded-2xl text-left hover:bg-white/[0.03] transition-colors"
+            style={{ background: 'var(--muted)' }}
+          >
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
+              style={{ fontSize: 12, ...placementBadgeStyle(entry.placement) }}
+            >
+              #{entry.placement}
+            </div>
+            <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={36} />
+            <div className="flex-1 min-w-0">
+              <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{entry.gamertag}</p>
+              <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+                {entry.eliminations !== null ? `${entry.eliminations} elims` : ''}
+                {entry.points !== null ? `${entry.eliminations !== null ? ' · ' : ''}${toNumber(entry.points)} pts` : ''}
+              </p>
+            </div>
+          </button>
+        ))}
+      </div>
+      <PageControls page={page} totalPages={data.total_pages} total={data.total_entries} onPage={onPage} />
+    </div>
+  );
 }
 
 interface DividendPayout {
@@ -58,9 +159,24 @@ interface TournamentEntrant {
 export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Props) {
   const { data: markets } = useMarkets();
   const [results, setResults] = useState<PlacementResult[] | null>(null);
+  const [resultsTotal, setResultsTotal] = useState(0);
+  const [resultsTotalPages, setResultsTotalPages] = useState(1);
+  const [resultsPage, setResultsPage] = useState(1);
   const [payoutsByPlayer, setPayoutsByPlayer] = useState<Record<string, DividendPayout>>({});
   const [loading, setLoading] = useState(false);
   const [entrants, setEntrants] = useState<TournamentEntrant[] | null>(null);
+
+  // For a tournament still in progress, this modal IS the "click through to
+  // see the full leaderboard" dedicated view the compact preview cards link
+  // to -- so it polls the same live-leaderboard endpoint they do, just at a
+  // full page size with real pagination instead of a capped preview.
+  const [livePage, setLivePage] = useState(1);
+  const isLive = tournament.status === 'results_pending';
+  const { data: liveData, loading: liveLoading } = useLiveLeaderboard(
+    isLive ? tournament.id : null,
+    livePage,
+    DETAIL_PAGE_SIZE
+  );
 
   // Before any placement results exist, show who's already qualified (see
   // GET /tournaments/{id}/entrants -- populated from a sibling
@@ -82,15 +198,19 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
     let cancelled = false;
     setLoading(true);
     api
-      .get<PlacementResult[]>(`/tournaments/${tournament.id}/results`)
-      .then(async r => {
+      .get<PaginatedPlacementResultResponse>(
+        `/tournaments/${tournament.id}/results?page=${resultsPage}&page_size=${DETAIL_PAGE_SIZE}`
+      )
+      .then(async page => {
         if (cancelled) return;
-        setResults(r);
-        // One request per placed player to find this tournament's payout
-        // for them -- there's no bulk "dividends for this tournament"
-        // endpoint, so this is capped by however many players actually
-        // placed (bounded, not the whole roster).
-        const uniquePlayerIds = [...new Set(r.map(row => row.player_id))];
+        setResults(page.items);
+        setResultsTotal(page.total);
+        setResultsTotalPages(page.total_pages);
+        // One request per placed player (on this page only) to find this
+        // tournament's payout for them -- there's no bulk "dividends for
+        // this tournament" endpoint, so this is capped by however many
+        // players placed on the current page, not the whole field.
+        const uniquePlayerIds = [...new Set(page.items.map(row => row.player_id))];
         const settled = await Promise.allSettled(
           uniquePlayerIds.map(pid => api.get<DividendPayout[]>(`/dividends/player/${pid}`))
         );
@@ -106,7 +226,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
       .catch(() => { if (!cancelled) setResults([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [tournament.id, tournament.status]);
+  }, [tournament.id, tournament.status, resultsPage]);
 
   const marketById = new Map(markets.map(m => [m.id, m]));
   const prizePool = toNumber(tournament.prize_pool);
@@ -218,6 +338,14 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                 This one hasn't happened yet. Check back once it's underway or an admin has entered results.
               </p>
             </div>
+          ) : isLive ? (
+            <LiveStandingsSection
+              data={liveData}
+              loading={liveLoading}
+              page={livePage}
+              onPage={setLivePage}
+              onOpenPlayer={onOpenPlayer}
+            />
           ) : loading ? (
             <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading results…</p>
           ) : sorted.length === 0 ? (
@@ -306,6 +434,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                   </div>
                 );
               })}
+              <PageControls page={resultsPage} totalPages={resultsTotalPages} total={resultsTotal} onPage={setResultsPage} />
             </div>
           )}
         </div>

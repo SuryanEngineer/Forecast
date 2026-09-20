@@ -313,6 +313,84 @@ SMTP-based email provider would silently fail there.)
   `percentile`, and a full `raw_stats` blob per player for the same
   reason -- this is the foundation for any future "player performance
   history" or research/statistics feature, not just a display detail.
+- Any tournament with more than 100 players now paginates everywhere
+  (calendar cards, the live "Happening Now" widgets, and the finalized
+  results list) instead of rendering every entrant inline -- click a
+  tournament to open its own full, paginated leaderboard/results page.
+  See `GET /tournaments/{id}/results` and
+  `GET /tournaments/{id}/live-leaderboard`'s `page`/`page_size` query
+  params if you're calling either directly.
+- Osirion sync is now rate-limited and resilient by design (see
+  `app/integrations/osirion_client.py` and
+  `app/services/osirion_service.py`): every outbound request is paced
+  under `OSIRION_MAX_REQUESTS_PER_MINUTE` (default 45, comfortably under
+  Osirion's documented 60/min cap), retried with backoff on a 429 or
+  network blip, and each leaderboard page is committed to the database
+  as soon as it's fetched instead of only at the very end -- so a
+  rate-limited failure partway through a big tournament no longer
+  discards everything already pulled. A tournament still in progress
+  pulls at most `OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC` pages
+  (default 25) per ~45s pass so one huge-field Cash Cup can't starve
+  every other tracked tournament of updates -- it just catches up over
+  several passes. Once a tournament's window actually ends, that cap is
+  lifted so finalization is always based on the complete field, never a
+  partial pull. A heat/qualifier leaderboard is also now only ever
+  fetched once (recorded in the new `osirion_seeded_heat_windows` table)
+  instead of being re-pulled on every single pass for as long as its
+  Finals tournament stays untracked. **Run
+  `alembic upgrade head` again before redeploying this round** -- there's
+  a new migration (`b8e4d2f61c7a`) adding the tracking columns/table
+  these changes need.
+- `GET /markets` (the player market list) no longer does one query per
+  player for last price / 24h change / 24h volume -- with the roster
+  well past 100 players, that was hundreds of sequential DB round-trips
+  on every page load, which is slow at best and, on a free-tier instance
+  right after a cold start, a real cause of requests timing out before
+  any response comes back (see the Troubleshooting section below for
+  what that looks like to a user). It's now 3 bulk queries total,
+  regardless of roster size.
+
+---
+
+## Troubleshooting
+
+### "Couldn't reach the Forecast API (Failed to fetch)"
+
+This specific message means the browser's request never got an HTTP
+response at all -- not a 404, not a 500, nothing. In practice that's
+always one of these three things, roughly in order of likelihood:
+
+1. **The free backend was asleep.** See "the one tradeoff" at the top of
+   this guide -- the first request after 15 minutes of no traffic can
+   take up to about a minute to come back while the instance wakes up,
+   and depending on timing that first request can get dropped rather
+   than just delayed. Reloading the page after a few seconds usually
+   clears it. This is expected behavior on the free tier, not a bug.
+2. **`VITE_API_BASE_URL` wasn't actually baked into the frontend you're
+   looking at.** This is a *build-time* variable (Vite inlines it into
+   the static files at `npm run build`) -- setting or changing it in the
+   Render dashboard only takes effect after the resulting redeploy
+   finishes (Step 4 above). If it was ever blank when a build ran, the
+   deployed site silently falls back to `http://localhost:8000/api/v1`,
+   which will never work for anyone but you, on your own machine. Check
+   this by opening your live frontend, opening the browser's dev tools
+   Network tab, and confirming the failed request's URL points at your
+   real `*.onrender.com` backend, not `localhost`.
+3. **`CORS_ORIGINS` on the backend doesn't exactly match your frontend's
+   URL.** It needs to be the precise origin (`https://your-frontend.onrender.com`,
+   no trailing slash, right protocol) -- a mismatch makes the browser
+   silently block the response before your code ever sees it, which
+   looks identical to a network failure. Leaving `CORS_ORIGINS` at its
+   default (`*`) in production doesn't fix this either -- browsers
+   reject a wildcard origin combined with the credentialed requests this
+   app makes, for the same reason.
+
+If it's happening consistently (not just after idle periods) on one
+specific page rather than the whole site, that page's particular
+request is worth a look -- e.g. the player market list used to run
+hundreds of sequential DB queries per load (see above), which made it
+disproportionately likely to time out under exactly this kind of
+pressure.
 
 ---
 

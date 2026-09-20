@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,9 +60,46 @@ class OsirionTournamentMapping(Base):
     window_end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # True only when the most recent sync pass walked every page of this
+    # tournament's leaderboard (see osirion_service.sync_tournament's
+    # OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC cap) -- a big field can
+    # take several passes to fully refresh, so this is what actually gates
+    # finalization, not just "the window's end time has passed". Without
+    # this, a huge tournament could finalize on a partial pull and
+    # permanently miss however many entrants didn't fit in one pass's page
+    # budget.
+    last_sync_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tournament: Mapped["Tournament"] = relationship()
+
+
+class OsirionSeededHeatWindow(Base):
+    """Records that this heat/qualifier leaderboard (identified the same
+    way a tracked tournament's leaderboard is -- see
+    OsirionTournamentMapping.leaderboard_event_id/
+    leaderboard_event_window_id above) has already been walked
+    start-to-finish by osirion_service._seed_entrants_from_heat_windows.
+
+    A heat's results can't change once it has ended, so there is never a
+    reason to fetch it again -- but before this table existed, the sync
+    loop did exactly that anyway, every single ~45s pass, for the entire
+    remaining lifetime of any Finals tournament with open qualifier heats.
+    That was pure waste against Osirion's shared rate-limit budget (see
+    app/integrations/osirion_client.py), and a meaningful contributor to
+    real tournaments' syncs getting starved/rate-limited. One row per
+    heat, forever -- there's no cleanup job because there's no reason to
+    ever re-seed the same heat."""
+
+    __tablename__ = "osirion_seeded_heat_windows"
+    __table_args__ = (
+        UniqueConstraint("leaderboard_event_id", "leaderboard_event_window_id", name="uq_seeded_heat_window"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    leaderboard_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    leaderboard_event_window_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    seeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class OsirionPlayerMapping(Base):
