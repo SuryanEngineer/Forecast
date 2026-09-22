@@ -278,29 +278,24 @@ class MarketSnapshot:
     fair_value: dict[uuid.UUID, Decimal] = field(default_factory=dict)
 
 
-def _current_price(db: Session, player: Player) -> Decimal:
-    """Last traded price, falling back to IPO price -- deliberately kept
-    as its own small query here (rather than importing order_service's
-    private `_reference_price`) since it's cheap and avoids a cross-module
-    dependency on another service's underscore-prefixed helper."""
-    last = (
-        db.query(PriceSnapshot)
-        .filter(PriceSnapshot.player_id == player.id)
-        .order_by(PriceSnapshot.recorded_at.desc())
-        .first()
-    )
-    return last.price if last else player.ipo_price
-
-
 def _build_snapshot(db: Session) -> MarketSnapshot:
     players = db.query(Player).filter(Player.is_active.is_(True)).all()
     player_ids = [p.id for p in players]
-    price = {p.id: _current_price(db, p) for p in players}
+    ipo_price_by_id = {p.id: p.ipo_price for p in players}
 
     # Up to 20 most recent price points per player, for momentum/
-    # contrarian/value signals. One query for every player instead of one
-    # per player -- same prototype-scale trade-off leaderboard_service.py
-    # already makes and documents for itself.
+    # contrarian/value signals -- and, since it's already ordered
+    # newest-first per player, this same batched query also gives us the
+    # current price (bucket[0]) with zero extra round trips. One query for
+    # every player instead of one per player -- same prototype-scale
+    # trade-off leaderboard_service.py already makes and documents for
+    # itself. (This used to be two passes -- a per-player `_current_price`
+    # query plus this batched history query -- which meant one DB round
+    # trip per active player per tick; against a remote Supabase pooler
+    # that turned a few hundred players x a few hundred ticks into tens of
+    # thousands of sequential round trips and made kickstart_market.py
+    # look hung. Folding current-price into this single batched query
+    # fixes that.)
     history: dict[uuid.UUID, list[Decimal]] = {pid: [] for pid in player_ids}
     if player_ids:
         for row in (
@@ -313,6 +308,8 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             bucket = history.setdefault(row.player_id, [])
             if len(bucket) < 20:
                 bucket.append(row.price)
+
+    price = {pid: (history[pid][0] if history.get(pid) else ipo_price_by_id[pid]) for pid in player_ids}
 
     pct_change: dict[uuid.UUID, Decimal] = {}
     for pid, prices in history.items():
