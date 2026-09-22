@@ -26,7 +26,21 @@ router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
 @router.get("", response_model=list[TournamentResponse])
 def list_tournaments(db: Session = Depends(get_db)) -> list[TournamentResponse]:
-    return db.query(Tournament).order_by(Tournament.created_at.desc()).limit(200).all()
+    # Excludes is_historical_archive rows (see that column's docstring on
+    # Tournament) -- those are backfilled purely for their players'
+    # stock/career-history value and would otherwise flood this list (and
+    # the frontend's Finalized tab, which sources from this endpoint) with
+    # hundreds of already-decided historical results. A player's own
+    # backfilled history is still fully visible via
+    # GET /tournaments/players/{id}/history, which queries PlacementResult
+    # directly and isn't filtered by this flag.
+    return (
+        db.query(Tournament)
+        .filter(Tournament.is_historical_archive.is_(False))
+        .order_by(Tournament.created_at.desc())
+        .limit(200)
+        .all()
+    )
 
 
 @router.get("/calendar", response_model=list[CalendarTournamentResponse])

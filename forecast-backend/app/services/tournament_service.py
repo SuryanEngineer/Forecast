@@ -34,6 +34,7 @@ def create_tournament(
     end_time: datetime | None = None,
     created_by_admin_id: uuid.UUID | None = None,
     result_source: ResultSource = ResultSource.MANUAL,
+    is_historical_archive: bool = False,
 ) -> Tournament:
     tournament = Tournament(
         id=uuid.uuid4(),
@@ -46,6 +47,7 @@ def create_tournament(
         status=TournamentStatus.SCHEDULED,
         result_source=result_source,
         created_by_admin_id=created_by_admin_id,
+        is_historical_archive=is_historical_archive,
     )
     db.add(tournament)
     db.flush()

@@ -272,12 +272,19 @@ def track_tournament(
     region: str | None,
     window: AvailableWindow,
     created_by_admin_id: uuid.UUID | None,
+    is_historical_archive: bool = False,
 ) -> OsirionTournamentMapping:
     """Creates a new internal Tournament (result_source=API_IMPORT) plus
     its OsirionTournamentMapping, in one call. `name`/`tournament_type`
     are chosen by the admin -- Osirion has no typed FNCS-vs-Cash-Cup field
     to trust (see this module's docstring) -- everything else comes from
-    the picked `window` (see list_available_windows)."""
+    the picked `window` (see list_available_windows).
+
+    `is_historical_archive=True` (only ever passed by
+    backfill_historical_tournaments) marks this as an already-decided past
+    result being backfilled purely for its players' stock/career-history
+    value -- see Tournament.is_historical_archive's docstring for what
+    that flag actually changes."""
     tournament = tournament_service.create_tournament(
         db,
         name=name,
@@ -287,6 +294,7 @@ def track_tournament(
         end_time=window.end_time,
         created_by_admin_id=created_by_admin_id,
         result_source=ResultSource.API_IMPORT,
+        is_historical_archive=is_historical_archive,
     )
 
     mapping = OsirionTournamentMapping(
@@ -522,7 +530,20 @@ class SyncResult:
     error: str | None = None
 
 
-def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResult:
+def sync_tournament(db: Session, mapping: OsirionTournamentMapping, skip_finalize: bool = False) -> SyncResult:
+    """`skip_finalize=True` (only ever passed by backfill_historical_tournaments)
+    still does everything a normal sync does -- walks the full leaderboard,
+    matches/creates real Player stocks, writes real PlacementResult rows,
+    archives the raw results -- but once the window is fully synced, marks
+    the tournament FINALIZED directly instead of calling
+    tournament_service.finalize_tournament. That's the one and only thing
+    finalize_tournament does beyond flipping status: it creates
+    DividendPayout rows and enqueues real payouts to whoever currently
+    holds shares. For an already-decided historical result there was never
+    a "before the result was known" moment for a real payout to mean
+    anything, and paying one out anyway is exactly the exploit this app's
+    dividend design has to avoid -- see reconcile_stale_tournaments.py's
+    module docstring for a real incident this same gap caused."""
     result = SyncResult(tournament_id=mapping.tournament_id)
     tournament = db.get(Tournament, mapping.tournament_id)
     if tournament is None or tournament.status == TournamentStatus.FINALIZED:
@@ -655,22 +676,30 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping) -> SyncResul
     # tournament from ever syncing again), which is worse than just taking
     # one more 45s pass to get a complete picture.
     if reached_end_of_leaderboard and window_ended and result.matched > 0:
-        try:
-            tournament_service.finalize_tournament(db, tournament.id)
+        if skip_finalize:
+            # Historical backfill path: lock in FINALIZED (so nothing ever
+            # re-syncs or tries to finalize this again) WITHOUT creating a
+            # single DividendPayout row. See this function's docstring.
+            tournament.status = TournamentStatus.FINALIZED
+            db.commit()
             result.finalized = True
-        except ValueError as exc:
-            # e.g. every entry this pass was unmatched, so there are
-            # still zero placement results -- leave it for the next sync
-            # rather than crashing the whole loop.
-            logger.warning("Could not finalize tournament %s yet: %s", tournament.id, exc)
-        except Exception as exc:  # noqa: BLE001 -- same reasoning as the sync try/except above
-            # A finalize-time failure (e.g. a DB error while creating
-            # payouts) must not propagate out of sync_tournament either --
-            # the sync itself already succeeded and committed above; only
-            # the finalize step failed. Leave it for the next sync attempt.
-            db.rollback()
-            result.error = f"sync succeeded but finalize failed: {exc}"
-            logger.exception("Finalizing tournament %s failed unexpectedly", tournament.id)
+        else:
+            try:
+                tournament_service.finalize_tournament(db, tournament.id)
+                result.finalized = True
+            except ValueError as exc:
+                # e.g. every entry this pass was unmatched, so there are
+                # still zero placement results -- leave it for the next sync
+                # rather than crashing the whole loop.
+                logger.warning("Could not finalize tournament %s yet: %s", tournament.id, exc)
+            except Exception as exc:  # noqa: BLE001 -- same reasoning as the sync try/except above
+                # A finalize-time failure (e.g. a DB error while creating
+                # payouts) must not propagate out of sync_tournament either --
+                # the sync itself already succeeded and committed above; only
+                # the finalize step failed. Leave it for the next sync attempt.
+                db.rollback()
+                result.error = f"sync succeeded but finalize failed: {exc}"
+                logger.exception("Finalizing tournament %s failed unexpectedly", tournament.id)
 
     return result
 
@@ -864,6 +893,151 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
             db.rollback()
             result.errors.append(f"{window.display_name}: {exc}")
             logger.exception("Auto-track failed for window %s", window.display_name)
+
+    return result
+
+
+@dataclass
+class BackfillCandidate:
+    """One already-concluded, real cash-paying window that isn't tracked
+    yet -- everything find_historical_backfill_candidates needs to know to
+    let an admin preview it, and everything backfill_historical_tournaments
+    needs to actually track+sync it."""
+
+    window: AvailableWindow
+    tournament_type: TournamentType
+
+
+@dataclass
+class BackfillScanResult:
+    candidates: list[BackfillCandidate] = field(default_factory=list)
+    events_seen: int = 0
+    already_tracked: int = 0
+    skipped_not_eligible: int = 0  # heat/qualifier, Zero Build, no leaderboard ids, or not concluded yet
+    skipped_unclassified: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+def find_historical_backfill_candidates(db: Session) -> BackfillScanResult:
+    """Read-only scan (makes no Tournament/Player/etc. writes -- the one
+    exception is tournament_classification_service.classify's own
+    idempotent seed_default_rules() call, same as every other classify()
+    caller) over Osirion's full historical listing
+    (includeHistoricData=true), returning every already-decided, real
+    cash-paying, not-yet-tracked window -- i.e. exactly what
+    backfill_historical_tournaments would go on to track+sync, without
+    actually doing it. Meant for a dry-run preview (see
+    scripts/backfill_historical_market.py) before committing to what can
+    be a large, slow, many-Osirion-request operation.
+
+    Eligibility mirrors auto_track_new_tournaments (has_cash_payout, not
+    Zero Build, one window per event picked by top payout, must classify
+    to a real tier) with two differences: no season/region dedup (we want
+    every distinct past edition, not just one per season), and the window
+    must have actually ENDED -- anything still open belongs to the live
+    auto-track path, not history."""
+    scan = BackfillScanResult()
+    try:
+        windows = list_available_windows(include_historic_data=True)
+    except OsirionApiError as exc:
+        scan.errors.append(str(exc))
+        return scan
+
+    now = datetime.now(timezone.utc)
+    existing_keys = {
+        (m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()
+    }
+
+    windows_by_event: dict[str, list[AvailableWindow]] = {}
+    for w in windows:
+        windows_by_event.setdefault(w.event_id, []).append(w)
+
+    for event_id, group in windows_by_event.items():
+        eligible = [w for w in group if w.has_cash_payout and not w.is_zero_build]
+        if not eligible:
+            scan.skipped_not_eligible += len(group)
+            continue
+
+        window = max(eligible, key=lambda w: w.top_cash_amount)
+        scan.events_seen += 1
+
+        if not window.leaderboard_event_id or not window.leaderboard_event_window_id:
+            scan.skipped_not_eligible += 1
+            continue
+
+        key = (window.leaderboard_event_id, window.leaderboard_event_window_id)
+        if key in existing_keys:
+            scan.already_tracked += 1
+            continue
+
+        end_time = window.end_time
+        if end_time is not None and end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        if end_time is None or end_time >= now:
+            scan.skipped_not_eligible += 1
+            continue
+
+        tournament_type = tournament_classification_service.classify(db, window.classification_text)
+        if tournament_type is None:
+            scan.skipped_unclassified += 1
+            continue
+
+        scan.candidates.append(BackfillCandidate(window=window, tournament_type=tournament_type))
+
+    return scan
+
+
+@dataclass
+class BackfillResult:
+    tracked: int = 0
+    total_entries_seen: int = 0
+    total_matched: int = 0
+    tracked_details: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def backfill_historical_tournaments(db: Session, candidates: list[BackfillCandidate]) -> BackfillResult:
+    """Actually tracks+syncs the given (already-vetted, see
+    find_historical_backfill_candidates) historical windows: creates a
+    real tradeable Player stock for every competitor found (same
+    _match_player path as a live sync -- see that function's docstring),
+    writes real PlacementResult rows, permanently archives the raw
+    leaderboard (TournamentResultArchive), and marks each tournament
+    is_historical_archive=True + FINALIZED -- all via track_tournament +
+    sync_tournament(skip_finalize=True), so NO DividendPayout row is ever
+    created for a backfilled result. See sync_tournament's docstring for
+    exactly why that matters.
+
+    Caller (scripts/backfill_historical_market.py) decides how many
+    candidates to pass in one call -- each one walks a full paginated
+    leaderboard, so a huge batch is best worked through across several
+    calls rather than all at once."""
+    result = BackfillResult()
+    for candidate in candidates:
+        window = candidate.window
+        region = window.regions[0] if len(window.regions) == 1 else None
+        try:
+            mapping = track_tournament(
+                db,
+                name=window.display_name,
+                tournament_type=candidate.tournament_type,
+                region=region,
+                window=window,
+                created_by_admin_id=None,
+                is_historical_archive=True,
+            )
+            sync_result = sync_tournament(db, mapping, skip_finalize=True)
+            result.tracked += 1
+            result.total_entries_seen += sync_result.entries_seen
+            result.total_matched += sync_result.matched
+            result.tracked_details.append(
+                f"{window.display_name!r}: entries_seen={sync_result.entries_seen} "
+                f"matched={sync_result.matched} finalized={sync_result.finalized} error={sync_result.error!r}"
+            )
+        except Exception as exc:  # noqa: BLE001 -- one bad historical window must not abort the whole batch
+            db.rollback()
+            result.errors.append(f"{window.display_name}: {exc}")
+            logger.exception("Historical backfill failed for window %s", window.display_name)
 
     return result
 

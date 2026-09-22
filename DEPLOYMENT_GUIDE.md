@@ -301,7 +301,31 @@ SMTP-based email provider would silently fail there.)
   "upcoming") -- `python3 scripts/reconcile_stale_tournaments.py` finds
   and reports them, and re-syncs any genuinely valid but stuck ones live
   (dry run by default; add `--confirm` to actually delete the invalid
-  ones). Safe to re-run any time -- see the script's own docstring.
+  ones). Safe to re-run any time -- see the script's own docstring. As of
+  this fix, it also refuses to auto-delete any tournament that already
+  has DividendPayout rows (real or not) -- those get reported separately
+  as "needs manual review" instead.
+- Populating the market with real players/stocks from Osirion's *past*
+  (already-decided) tournament results, not just currently-open ones --
+  `python3 scripts/backfill_historical_market.py` finds every eligible
+  historical Finals window (real cash payout, not Zero Build, not already
+  tracked) and previews them (dry run by default; add `--confirm` to
+  actually track+sync up to `--limit` of them, default 20 per run --
+  re-run to keep going, already-tracked windows are skipped
+  automatically). Every backfilled tournament gets marked
+  `is_historical_archive=True` (excluded from the public tournament
+  list/calendar so it doesn't clutter the live Tournaments page) and is
+  finalized directly WITHOUT ever creating a DividendPayout row -- a
+  historical result is already decided, so paying a normal live dividend
+  for it would let someone buy shares right before the backfill and
+  collect a payout for a result that already happened. Each backfilled
+  player's results are still fully visible via
+  `GET /tournaments/players/{id}/history`, which is the intended hook
+  point for a future per-player research/statistics view. An optional
+  offline sanity check (`python3 scripts/_verify_backfill_offline.py`,
+  runs against a throwaway local SQLite file with Osirion mocked out,
+  touches production nothing) is included -- safe to run once for peace
+  of mind, safe to delete afterward.
 - Inspecting a tournament's full raw Osirion data (every leaderboard
   entry, plus the original tournament/window metadata) via
   `GET /admin/osirion/tournaments/{id}/archive` -- this is captured

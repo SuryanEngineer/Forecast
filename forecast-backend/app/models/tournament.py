@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -70,6 +70,17 @@ class Tournament(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # True only for a row created by osirion_service.backfill_historical_tournaments
+    # -- an already-decided past result, backfilled purely so its players
+    # have real stocks and real career history to research (see
+    # GET /tournaments/players/{id}/history), never so it can trigger a
+    # dividend payout (backfill always skips finalize_tournament -- see
+    # that function's docstring). Excluded from the public tournament
+    # list/calendar (see app/api/v1/tournaments.py's list_tournaments) so
+    # it never shows up as a live/finalized row on the Tournaments page --
+    # admin endpoints (GET /admin/osirion/tracked-tournaments) still show
+    # everything, unfiltered, for oversight.
+    is_historical_archive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # passive_deletes=True on both: without it, SQLAlchemy's ORM tries to
     # manage the delete-cascade itself by loading every related row and
