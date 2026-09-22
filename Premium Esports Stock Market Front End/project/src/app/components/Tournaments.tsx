@@ -239,7 +239,19 @@ const TIER_LABELS: Record<string, string> = {
 
 function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
   const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
-  const isLive = tournament.status === 'results_pending';
+  // status === 'results_pending' alone isn't enough to mean "happening
+  // right now" -- a tournament stays results_pending indefinitely until it
+  // fully finalizes, which can take a while (or get stuck) if its Osirion
+  // sync hits an error. Without checking end_time, a real-world event from
+  // over a year ago that's still catching up on syncing looked exactly
+  // like something currently live. Only call it Live while we're actually
+  // still inside (or don't yet know) its event window; once end_time has
+  // passed, it's really just waiting on results to finish syncing in.
+  const now = Date.now();
+  const endTime = tournament.end_time ? new Date(tournament.end_time).getTime() : null;
+  const hasEnded = endTime !== null && endTime < now;
+  const isLive = tournament.status === 'results_pending' && !hasEnded;
+  const isAwaitingResults = tournament.status === 'results_pending' && hasEnded;
   // No explicit `timeZone` option -- Date/toLocaleDateString/toLocaleTimeString
   // default to the browser's own local timezone, so this automatically
   // shows each viewer their own local date/time with no extra plumbing.
@@ -264,6 +276,11 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
           {isLive && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
               ● Live
+            </span>
+          )}
+          {isAwaitingResults && (
+            <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,171,64,0.15)', color: '#ffab40' }}>
+              ⏳ Awaiting Results
             </span>
           )}
         </div>

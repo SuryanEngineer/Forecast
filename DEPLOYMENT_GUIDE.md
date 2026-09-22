@@ -326,6 +326,17 @@ SMTP-based email provider would silently fail there.)
   runs against a throwaway local SQLite file with Osirion mocked out,
   touches production nothing) is included -- safe to run once for peace
   of mind, safe to delete afterward.
+- Getting real price discovery going quickly for a freshly backfilled
+  roster of players -- bot trading (`app/services/bot_trading_service.py`)
+  already runs automatically every `BOT_TICK_INTERVAL_SECONDS` and biases
+  its buy/sell targets toward whichever player is most mispriced relative
+  to a genuine expected-earnings estimate (every one of a player's real
+  PlacementResult rows run back through the same placement-payout curve
+  real dividends use, recency-weighted, normalized against the rest of
+  the roster), so it needs no separate "IPO auction" step -- but waiting
+  on the natural tick interval to work through a big freshly-backfilled
+  roster is slow. `python3 scripts/kickstart_market.py --ticks 300` runs
+  that same bot-tick logic back to back to fast-forward it.
 - Inspecting a tournament's full raw Osirion data (every leaderboard
   entry, plus the original tournament/window metadata) via
   `GET /admin/osirion/tournaments/{id}/archive` -- this is captured

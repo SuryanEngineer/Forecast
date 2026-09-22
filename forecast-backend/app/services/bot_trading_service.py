@@ -60,10 +60,11 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.engine.dividend_calculator import placement_payout_fraction
 from app.models.bot import BotProfile
 from app.models.order import Order, OrderSide, OrderStatus
 from app.models.player import Player, Position, PriceSnapshot
-from app.models.tournament import PlacementResult
+from app.models.tournament import PlacementResult, Tournament
 from app.models.user import User, UserRole
 from app.services import economic_params_service, order_service, wallet_service
 from app.services.exceptions import ServiceError
@@ -125,29 +126,117 @@ SELL_CONSIDERATION_PROBABILITY = 0.45
 # or pure randomness, with no persistent force tying price back to
 # skill. Two elite and journeyman players could random-walk to the same
 # price with nothing pulling them apart. `fair_value` (ipo_price scaled
-# by a bounded "recent form" multiplier) plus `_weighted_pick` below
-# fixes that: buy/sell target selection is now *biased* (never forced --
-# there's still real randomness) toward whichever candidates are most
-# mispriced relative to their own fair value.
-PLACEMENT_FORM_MAX_BONUS = 0.25
-PLACEMENT_FORM_MAX_PENALTY = -0.15
-PLACEMENT_FORM_NEUTRAL_PLACEMENT = 12
-PLACEMENT_FORM_SENSITIVITY = 60
+# by a performance multiplier) plus `_weighted_pick` below fixes that:
+# buy/sell target selection is now *biased* (never forced -- there's
+# still real randomness) toward whichever candidates are most mispriced
+# relative to their own fair value.
+#
+# The multiplier itself is a genuine expected-earnings estimate, not just
+# a glance at one result: for every PlacementResult a player has (their
+# full career, not only their most recent tournament -- this matters a
+# lot now that scripts/backfill_historical_market.py can give a player
+# dozens of historical results at once), it runs that exact placement
+# back through the SAME placement_payout_fraction curve real dividends
+# use, against that specific tournament's own field size and pool, to get
+# "what this result would have been worth as a dividend". Recent results
+# count for more than old ones (HISTORY_RECENCY_DECAY), so an improving
+# player's trajectory pulls their fair value up even if an old result was
+# weak, and vice versa. That per-player expected-value figure only means
+# anything relative to everyone else's, so it's normalized against the
+# roster's own median before becoming a bounded multiplier on ipo_price
+# -- this keeps fair values in the same sane, comparable dollar range
+# regardless of whether any one tournament's real-money pool was $300 or
+# $3,000,000, which is the actual point: bots should be comparing players
+# against EACH OTHER, not against an absolute payout number no share
+# price could sensibly track 1:1 anyway.
+HISTORY_RECENCY_DECAY = 0.85  # each result back in time counts for 85% of the one just after it
+HISTORY_MAX_RESULTS_PER_PLAYER = 20  # how far back "recent form" looks, most-recent-first
+PERFORMANCE_ELASTICITY = 0.5  # dampens extreme expected-value ratios (sqrt-like, not 1:1)
+PERFORMANCE_MULT_MIN = 0.4
+PERFORMANCE_MULT_MAX = 3.0
 
 VALUE_WEIGHT_MIN = 0.15
 VALUE_WEIGHT_MAX = 6.0
 
 
-def _placement_form_multiplier(placement: int | None) -> float:
-    if placement is None:
-        return 1.0
-    raw = (PLACEMENT_FORM_NEUTRAL_PLACEMENT - placement) / PLACEMENT_FORM_SENSITIVITY
-    return 1 + max(PLACEMENT_FORM_MAX_PENALTY, min(PLACEMENT_FORM_MAX_BONUS, raw))
+def _tournament_pool_amounts(db: Session, tournament_ids: list[uuid.UUID]) -> dict[uuid.UUID, Decimal]:
+    """Same pool logic app/api/v1/tournaments.py's calendar endpoint uses
+    for a real (not-yet-finalized) tournament: the tier's fixed synthetic
+    pool scaled by region, or the tournament's own admin-entered
+    prize_pool if that tier doesn't use a fixed pool. Batched -- one query
+    for every tournament these players have ever competed in, not one per
+    tournament."""
+    if not tournament_ids:
+        return {}
+    pools: dict[uuid.UUID, Decimal] = {}
+    for t_id, tournament_type, region, prize_pool in (
+        db.query(Tournament.id, Tournament.tournament_type, Tournament.region, Tournament.prize_pool)
+        .filter(Tournament.id.in_(tournament_ids))
+        .all()
+    ):
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type)
+        if fixed_pool is not None:
+            pools[t_id] = fixed_pool * economic_params_service.get_region_multiplier(db, region)
+        elif prize_pool is not None:
+            pools[t_id] = prize_pool
+        else:
+            pools[t_id] = Decimal("0")
+    return pools
 
 
-def _compute_fair_value(ipo_price: Decimal, best_recent_placement: int | None) -> Decimal:
-    multiplier = Decimal(str(round(_placement_form_multiplier(best_recent_placement), 6)))
-    return ipo_price * multiplier
+def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, Decimal]:
+    """Each player's recency-weighted average expected dividend across
+    their full PlacementResult history -- see the module-level comment
+    above this section for the full reasoning. Missing entirely from the
+    dict means "no placement history at all" (a brand-new, never-played
+    player), which callers should treat as fair-value-neutral."""
+    if not player_ids:
+        return {}
+
+    rows = (
+        db.query(PlacementResult.player_id, PlacementResult.tournament_id, PlacementResult.placement)
+        .filter(PlacementResult.player_id.in_(player_ids))
+        .order_by(PlacementResult.created_at.desc())
+        .limit(20000)
+        .all()
+    )
+    if not rows:
+        return {}
+
+    field_size: dict[uuid.UUID, int] = {}
+    by_player: dict[uuid.UUID, list[tuple[uuid.UUID, int]]] = {}
+    for player_id, tournament_id, placement in rows:
+        field_size[tournament_id] = field_size.get(tournament_id, 0) + 1
+        by_player.setdefault(player_id, []).append((tournament_id, placement))
+
+    pools = _tournament_pool_amounts(db, list(field_size.keys()))
+    curve = economic_params_service.get_placement_curve(db)
+
+    expected_value: dict[uuid.UUID, Decimal] = {}
+    for player_id, results in by_player.items():
+        recent = results[:HISTORY_MAX_RESULTS_PER_PLAYER]  # already most-recent-first
+        weighted_sum = Decimal("0")
+        weight_total = Decimal("0")
+        for rank, (tournament_id, placement) in enumerate(recent):
+            pool = pools.get(tournament_id, Decimal("0"))
+            max_placement = field_size.get(tournament_id, 1)
+            fraction = placement_payout_fraction(placement, max_placement, curve)
+            weight = Decimal(str(HISTORY_RECENCY_DECAY)) ** rank
+            weighted_sum += pool * fraction * weight
+            weight_total += weight
+        if weight_total > 0:
+            expected_value[player_id] = weighted_sum / weight_total
+
+    return expected_value
+
+
+def _compute_fair_value(ipo_price: Decimal, own_ev: Decimal | None, roster_median_ev: Decimal | None) -> Decimal:
+    if own_ev is None or roster_median_ev is None or roster_median_ev <= 0:
+        return ipo_price  # no history (for this player, or for the roster) -- stay at the neutral anchor
+    ratio = float(own_ev / roster_median_ev)
+    multiplier = ratio**PERFORMANCE_ELASTICITY if ratio > 0 else 0.0
+    multiplier = max(PERFORMANCE_MULT_MIN, min(PERFORMANCE_MULT_MAX, multiplier))
+    return ipo_price * Decimal(str(round(multiplier, 6)))
 
 
 def _value_weight(ratio: Decimal) -> float:
@@ -243,8 +332,16 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         ):
             best_recent_placement.setdefault(row.player_id, row.placement)
 
+    # Full-career, curve-based expected value -- see _expected_value_per_tournament's
+    # docstring. Normalized against the roster's own median (only among
+    # players who HAVE a career to measure) so fair_value stays in a sane,
+    # comparable range no matter how large any one tournament's pool was.
+    expected_value = _expected_value_per_tournament(db, player_ids)
+    ev_values = sorted(expected_value.values())
+    roster_median_ev = ev_values[len(ev_values) // 2] if ev_values else None
+
     fair_value = {
-        p.id: _compute_fair_value(p.ipo_price, best_recent_placement.get(p.id)) for p in players
+        p.id: _compute_fair_value(p.ipo_price, expected_value.get(p.id), roster_median_ev) for p in players
     }
 
     return MarketSnapshot(
