@@ -1043,10 +1043,23 @@ def backfill_historical_tournaments(db: Session, candidates: list[BackfillCandid
 
 
 def sync_all_tracked(db: Session) -> list[SyncResult]:
+    # Excludes is_historical_archive rows on purpose -- this is the
+    # background loop's own automatic sync pass (see app/main.py's
+    # _osirion_sync_loop, runs every 45s), and it always calls plain
+    # sync_tournament() with skip_finalize defaulting to False. A
+    # backfilled historical tournament sits non-finalized (same as a
+    # normal in-progress one) for however long its own sync takes to walk
+    # the full leaderboard -- without this filter, THIS loop could race in
+    # during that window and finish syncing it via the normal path,
+    # calling finalize_tournament() and creating real DividendPayout rows
+    # for an already-decided historical result. Only
+    # backfill_historical_tournaments (via sync_tournament(...,
+    # skip_finalize=True)) is ever allowed to finish syncing one of these.
     mappings = (
         db.query(OsirionTournamentMapping)
         .join(Tournament, Tournament.id == OsirionTournamentMapping.tournament_id)
         .filter(Tournament.status != TournamentStatus.FINALIZED)
+        .filter(Tournament.is_historical_archive.is_(False))
         .all()
     )
 

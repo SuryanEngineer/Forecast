@@ -108,9 +108,20 @@ def main() -> None:
 
     db = SessionLocal()
     try:
+        # Excludes is_historical_archive rows -- those belong exclusively to
+        # backfill_historical_market.py (via sync_tournament(...,
+        # skip_finalize=True)). A historical backfill can sit non-finalized
+        # for a while (it walks a full leaderboard with no page cap, same
+        # as any window that's already ended), and this loop's own resync
+        # step below calls plain sync_tournament() -- which WOULD call
+        # finalize_tournament() and create real DividendPayout rows for an
+        # already-decided historical result if it got its hands on one.
+        # See osirion_service.sync_all_tracked's comment for the same
+        # reasoning applied to the automatic background loop.
         pending = (
             db.query(Tournament)
             .filter(Tournament.status != TournamentStatus.FINALIZED)
+            .filter(Tournament.is_historical_archive.is_(False))
             .order_by(Tournament.start_time.asc().nullslast())
             .all()
         )

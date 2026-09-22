@@ -214,7 +214,14 @@ def sync_osirion_tournament_now(
     )
     if mapping is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This tournament isn't tracked via Osirion")
-    result = osirion_service.sync_tournament(db, mapping)
+    # skip_finalize mirrors is_historical_archive -- an admin manually
+    # nudging a still-syncing backfilled tournament along must never be
+    # able to trigger a real dividend payout for it either. See
+    # sync_all_tracked's comment for the same reasoning applied to the
+    # automatic background loop.
+    tournament = db.get(Tournament, tournament_id)
+    skip_finalize = bool(tournament and tournament.is_historical_archive)
+    result = osirion_service.sync_tournament(db, mapping, skip_finalize=skip_finalize)
     return SyncResultResponse(
         tournament_id=result.tournament_id,
         entries_seen=result.entries_seen,
