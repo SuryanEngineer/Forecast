@@ -39,6 +39,15 @@ must match a classification rule) with one difference: no season/region
 dedup -- history wants every distinct past edition it can find, not just
 one per season.
 
+Interruption-safe: if this script (or your network connection) dies
+mid-run, nothing is lost -- each leaderboard page commits to the database
+as it's fetched -- and nothing dangerous happens either -- a tournament
+that was mid-sync when interrupted just sits non-finalized, and nothing
+else in this app will ever touch it (see resume_incomplete_historical_backfills's
+docstring for why). Just run this exact same command again: every run
+starts by automatically finishing any historical tournament left
+incomplete by an earlier interrupted run, before looking for new ones.
+
 Usage (dry run by default -- shows what's eligible, tracks/syncs nothing):
     cd forecast-backend
     python3 scripts/backfill_historical_market.py
@@ -77,6 +86,26 @@ def main() -> None:
 
     db = SessionLocal()
     try:
+        # Always resume first, dry run or not -- finishing a tournament
+        # that was already tracked by an earlier interrupted run is just
+        # completing safe, already-in-flight work (never creates a
+        # dividend payout either), not a new destructive action, so it
+        # doesn't need to wait for --confirm. Safe/cheap to call even when
+        # there's nothing to resume. See resume_incomplete_historical_backfills's
+        # docstring for why this exists at all: nothing else ever revisits
+        # a historical tournament that got tracked but didn't finish
+        # syncing (e.g. this script got interrupted -- lost network,
+        # closed the terminal, etc.) part way through.
+        resumed = osirion_service.resume_incomplete_historical_backfills(db)
+        if resumed:
+            print(f"Resuming {len(resumed)} historical tournament(s) left incomplete by an earlier run...")
+            for r in resumed:
+                print(
+                    f"  - tournament {r.tournament_id}: entries_seen={r.entries_seen} matched={r.matched} "
+                    f"finalized={r.finalized} error={r.error!r}"
+                )
+            print()
+
         print("Fetching Osirion's full historical tournament listing (includeHistoricData=true)...")
         scan = osirion_service.find_historical_backfill_candidates(db)
         if scan.errors:

@@ -1042,6 +1042,46 @@ def backfill_historical_tournaments(db: Session, candidates: list[BackfillCandid
     return result
 
 
+def resume_incomplete_historical_backfills(db: Session) -> list[SyncResult]:
+    """Finds any historical-archive tournament that got tracked (via
+    track_tournament) but never finished syncing -- e.g. the script/network
+    connection was interrupted mid-run -- and finishes each one via
+    sync_tournament(..., skip_finalize=True), the same safe no-dividend
+    path a fresh backfill uses.
+
+    This matters because nothing else will ever pick these back up:
+    find_historical_backfill_candidates excludes anything with an existing
+    OsirionTournamentMapping (which track_tournament already created), and
+    is_historical_archive rows are deliberately excluded from every other
+    sync path (sync_all_tracked, reconcile_stale_tournaments.py -- see
+    their own comments) specifically so they can never be finalized with a
+    real dividend payout. Without this function, an interrupted historical
+    tournament would be permanently stuck non-finalized -- not lost or
+    corrupted (each already-fetched leaderboard page commits as it goes),
+    just never revisited by anything.
+
+    Safe and cheap to call every run even when there's nothing to resume:
+    sync_tournament always re-walks a tournament's leaderboard from page 0
+    (upsert_placement_result is idempotent, so reprocessing already-seen
+    pages is a harmless no-op), so this just finishes the job."""
+    mappings = (
+        db.query(OsirionTournamentMapping)
+        .join(Tournament, Tournament.id == OsirionTournamentMapping.tournament_id)
+        .filter(Tournament.is_historical_archive.is_(True))
+        .filter(Tournament.status != TournamentStatus.FINALIZED)
+        .all()
+    )
+    results: list[SyncResult] = []
+    for mapping in mappings:
+        try:
+            results.append(sync_tournament(db, mapping, skip_finalize=True))
+        except Exception as exc:  # noqa: BLE001 -- defense in depth, same reasoning as sync_all_tracked
+            db.rollback()
+            logger.exception("Resuming incomplete historical backfill failed for mapping %s", mapping.id)
+            results.append(SyncResult(tournament_id=mapping.tournament_id, error=f"unexpected error: {exc}"))
+    return results
+
+
 def sync_all_tracked(db: Session) -> list[SyncResult]:
     # Excludes is_historical_archive rows on purpose -- this is the
     # background loop's own automatic sync pass (see app/main.py's
