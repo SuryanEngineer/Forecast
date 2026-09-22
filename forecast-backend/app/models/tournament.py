@@ -131,7 +131,16 @@ class PlacementResult(Base):
     # Osirion's public beta API ever purges/rotates this tournament's data
     # (see app/models/tournament.py's TournamentResultArchive for the
     # equivalent tournament-level, not per-player, raw archive).
-    team_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Text, not a bounded VARCHAR: Osirion's teamId for a multi-player
+    # squad is every teammate's accountId concatenated with colons (see
+    # osirion_service.py's module docstring on Osirion's per-TEAM
+    # leaderboard entries) -- a 4-player squad's is 131 characters, which
+    # overflowed the VARCHAR(100) this used to be (discovered live: a real
+    # historical squad tournament's very first placement failed to insert
+    # with a StringDataRightTruncation error). Duos/solos happened to
+    # always fit under 100, which is exactly why this went unnoticed until
+    # a backfill run finally pulled in a squad-format tournament.
+    team_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     percentile: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
     raw_stats: Mapped[dict | None] = mapped_column(JSONType(), nullable=True)
 
