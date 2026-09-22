@@ -188,11 +188,32 @@ def _is_zero_build(tournament: dict, event_window: dict, display_name_str: str) 
     return any(marker in haystack for marker in _ZERO_BUILD_MARKERS)
 
 
+def _pick_score_location(score_locations: list[dict]) -> dict:
+    """Picks which of a window's scoreLocations is authoritative for
+    classification/payout/tracking purposes. Most windows have exactly
+    one, or one flagged isMain that also carries the real payout table --
+    but a multi-day cumulative event (observed on a real FNCS Global
+    Championship window: two daily isMain leaderboards, EACH with an
+    empty payoutTables array, plus a separate non-main scoreLocation
+    named "cumulative" that carries the actual $2,000,000 payout table
+    spanning both days) breaks the naive "just use isMain" heuristic --
+    it silently makes a real, huge-money Finals event look like it has no
+    cash payout at all, so it never gets classified, tracked, or synced.
+
+    Prefer whichever scoreLocation actually HAS a real cash payout table;
+    only fall back to isMain/first when none of them do (a genuine
+    heat/qualifier window with no cash payouts, or a window where Osirion
+    hasn't published payouts yet)."""
+    with_cash = [sl for sl in score_locations if _cash_payout_info(sl)[0]]
+    if with_cash:
+        return next((sl for sl in with_cash if sl.get("isMain")), with_cash[0])
+    return next((sl for sl in score_locations if sl.get("isMain")), score_locations[0])
+
+
 def list_available_windows(region: str | None = None, include_historic_data: bool = False) -> list[AvailableWindow]:
     """Flattens Osirion's /v1/tournaments response into one row per
-    trackable window, for an admin picker UI. Prefers each window's
-    isMain-flagged score location; falls back to the first one if none is
-    flagged main."""
+    trackable window, for an admin picker UI. See _pick_score_location for
+    which of a window's scoreLocations gets used."""
     tournaments = osirion_client.list_tournaments(region=region, include_historic_data=include_historic_data)
     windows: list[AvailableWindow] = []
 
@@ -205,7 +226,7 @@ def list_available_windows(region: str | None = None, include_historic_data: boo
             score_locations = event_window.get("scoreLocations", [])
             if not score_locations:
                 continue
-            chosen = next((sl for sl in score_locations if sl.get("isMain")), score_locations[0])
+            chosen = _pick_score_location(score_locations)
             round_num = event_window.get("round", 0)
             has_cash_payout, top_cash_amount = _cash_payout_info(chosen)
             is_zero_build = _is_zero_build(tournament, event_window, name)

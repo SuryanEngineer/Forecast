@@ -328,12 +328,37 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
 
 export function Tournaments({ openTournament }: Props) {
   const { data: tournaments, loading } = useTournamentsList();
+  const { data: calendar } = useTournamentCalendar();
   const [tab, setTab] = useState<'upcoming' | 'calendar' | 'results'>('upcoming');
 
-  const upcoming = tournaments.filter(t => t.status === 'scheduled' || t.status === 'results_pending');
   const finalized = tournaments.filter(t => t.status === 'finalized');
   const inProgress = tournaments.filter(t => t.status === 'results_pending');
-  const [featured, ...otherUpcoming] = upcoming;
+
+  // The "Upcoming" tab's featured/list cards show a live countdown, which
+  // only makes sense for something that hasn't started yet -- so this
+  // deliberately sources from the calendar endpoint (already filtered to
+  // non-finalized and sorted soonest-first, nulls last) rather than the
+  // raw /tournaments list (ordered by when it was TRACKED, not when it
+  // STARTS, so "the first non-finalized one" could easily be months-old
+  // and stuck, producing a nonsensical negative day count). Anything
+  // whose start_time has already passed isn't "upcoming" any more,
+  // whatever its sync status -- it just doesn't get a countdown card
+  // here; it's still visible with an honest date (no countdown) under the
+  // Calendar tab, and moves to Results once actually finalized.
+  const now = Date.now();
+  const upcomingFromCalendar = calendar.filter(t => !t.start_time || new Date(t.start_time).getTime() >= now);
+  const toTournamentResponse = (t: (typeof calendar)[number]): TournamentResponse => ({
+    id: t.id,
+    name: t.name,
+    tournament_type: t.tournament_type,
+    region: t.region,
+    start_time: t.start_time,
+    end_time: t.end_time,
+    prize_pool: t.total_dividend_pool,
+    status: t.status,
+    created_at: t.start_time ?? new Date().toISOString(),
+  });
+  const [featured, ...otherUpcoming] = upcomingFromCalendar.map(toTournamentResponse);
 
   return (
     <div className="p-6 max-w-[900px] mx-auto space-y-6">
@@ -349,7 +374,7 @@ export function Tournaments({ openTournament }: Props) {
 
       <div className="flex rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
         {[
-          { key: 'upcoming' as const, label: `⏳ Upcoming (${upcoming.length})` },
+          { key: 'upcoming' as const, label: `⏳ Upcoming (${upcomingFromCalendar.length})` },
           { key: 'calendar' as const, label: `📅 Calendar` },
           { key: 'results' as const, label: `🏁 Results (${finalized.length})` },
         ].map(t => (

@@ -392,6 +392,36 @@ hundreds of sequential DB queries per load (see above), which made it
 disproportionately likely to time out under exactly this kind of
 pressure.
 
+### `psycopg2.OperationalError: ... FATAL: (ECIRCUITBREAKER) too many authentication failures, new connections are temporarily blocked`
+
+This is Supabase's connection pooler (Supavisor) protecting itself, not
+a config mistake in this app. It triggers after it sees repeated failed
+login attempts from the same origin IP (Render's, here) -- usually
+because a client kept connecting with an outdated password right after
+a rotation -- and in response it blocks *every* new connection from
+that IP for up to ~2 minutes. If more bad-credential attempts land
+during that window, the block extends.
+
+If your build step's `alembic upgrade head` already connected fine
+(check the build log -- if you see `Context impl PostgresqlImpl` with
+no error right after it, the migration succeeded), your current
+`DATABASE_URL` is correct and this is just the lockout finishing:
+
+1. Wait a couple of minutes without redeploying or repeatedly hitting
+   the site.
+2. Reload / hit `/health`. It should connect cleanly once the window
+   passes.
+3. Still failing after a few minutes? **Manual Deploy → Restart
+   service** on the `forecast-backend` service in the Render dashboard,
+   to force a fresh set of connections instead of whatever's currently
+   stuck retrying.
+
+To avoid tripping this at all next time you rotate the Supabase
+database password: pause/stop the Render service *first*, update
+`DATABASE_URL` with the new password, and only then resume it -- that
+way nothing is still hammering the pooler with the old password while
+you're mid-change.
+
 ---
 
 ## If you outgrow the free tier later

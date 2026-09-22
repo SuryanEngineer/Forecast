@@ -54,6 +54,14 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "Any other Cash Cup Finals lobby not already matched above.",
     ),
     (
+        "performance evaluation", TournamentType.CASH_CUP, 26,
+        "Osirion's 'Fortnite Performance Evaluation' events -- real cash payouts "
+        "(seen at $1,600 for a top finish) despite the low-key 'test event' framing "
+        "in Osirion's own description. 'Performance Evaluation' appears verbatim in "
+        "the window's own display name (unlike the Global Championship case above, "
+        "no cross-field concatenation needed here), so a plain substring match is safe.",
+    ),
+    (
         "esports world cup", TournamentType.GLOBAL_CHAMPIONSHIP, 30,
         "EWC (Esports World Cup) -- Global tier, same pool as FNCS Globals.",
     ),
@@ -66,6 +74,14 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "FNCS Global Championship -- Global tier.",
     ),
     (
+        "global championship", TournamentType.GLOBAL_CHAMPIONSHIP, 33,
+        "Catches real Osirion titles like 'Fortnite Global Championship' -- the branding lives in "
+        "eventGroup ('FNCS') separately from the title, so 'FNCS' and 'Global' never actually appear "
+        "adjacent in the combined classification text the way the 'fncs global' pattern above assumes. "
+        "Added after a real live Global Championship window (a genuine $2,000,000 LAN Finals) was "
+        "confirmed to match no existing rule and therefore never get auto-tracked at all.",
+    ),
+    (
         "fncs finals", TournamentType.FNCS_FINALS, 40,
         "Basic FNCS Finals -- auto-tracked once per season, and skipped entirely during a season that has a "
         "Globals event instead (see osirion_service.auto_track_new_tournaments for that dedup logic).",
@@ -74,9 +90,23 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
 
 
 def seed_default_rules(db: Session) -> None:
-    if db.query(TournamentClassificationRule).count() > 0:
-        return
+    """Idempotent, and NOT just a one-time bootstrap: inserts any
+    DEFAULT_RULES pattern that isn't already present (exact match on
+    `pattern`), leaving every existing row -- including admin edits and
+    additions -- completely untouched. Originally this only ran once,
+    when the rules table was empty; that meant adding a new entry to
+    DEFAULT_RULES in code and deploying it had NO effect on an
+    already-seeded production database, which is exactly how the
+    'global championship' rule (added after discovering real Global
+    Championship windows were going untracked) would otherwise have
+    silently failed to reach production without a manual admin API call.
+    Runs on every call to get_active_rules/get_all_rules/create_rule, so
+    it's cheap (one query) and always current."""
+    existing_patterns = {rule.pattern for rule in db.query(TournamentClassificationRule).all()}
+    added_any = False
     for pattern, tournament_type, priority, description in DEFAULT_RULES:
+        if pattern in existing_patterns:
+            continue
         db.add(
             TournamentClassificationRule(
                 pattern=pattern,
@@ -86,7 +116,9 @@ def seed_default_rules(db: Session) -> None:
                 description=description,
             )
         )
-    db.flush()
+        added_any = True
+    if added_any:
+        db.flush()
 
 
 def get_active_rules(db: Session) -> list[TournamentClassificationRule]:

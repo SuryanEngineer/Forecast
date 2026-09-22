@@ -71,8 +71,18 @@ class Tournament(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    placement_results: Mapped[list["PlacementResult"]] = relationship(back_populates="tournament")
-    dividend_payouts: Mapped[list["DividendPayout"]] = relationship(back_populates="tournament")
+    # passive_deletes=True on both: without it, SQLAlchemy's ORM tries to
+    # manage the delete-cascade itself by loading every related row and
+    # issuing `UPDATE ... SET tournament_id = NULL` on them before deleting
+    # the Tournament -- which fails outright, since tournament_id is
+    # NOT NULL on both child tables. With passive_deletes=True, the ORM
+    # steps aside and trusts the DB-level ondelete="CASCADE" already
+    # declared on each child's tournament_id FK to do the real cascading
+    # delete itself. (Discovered the hard way: scripts/reconcile_stale_tournaments.py
+    # --confirm hit exactly this NOT NULL violation trying to null out
+    # 16,141 dividend_payouts rows before deleting their tournament.)
+    placement_results: Mapped[list["PlacementResult"]] = relationship(back_populates="tournament", passive_deletes=True)
+    dividend_payouts: Mapped[list["DividendPayout"]] = relationship(back_populates="tournament", passive_deletes=True)
 
 
 class PlacementResult(Base):

@@ -50,7 +50,11 @@ class DividendPayout(Base):
 
     tournament: Mapped["Tournament"] = relationship(back_populates="dividend_payouts")
     player: Mapped["Player"] = relationship()
-    line_items: Mapped[list["DividendLineItem"]] = relationship(back_populates="payout")
+    # passive_deletes=True: same reasoning as Tournament.dividend_payouts in
+    # app/models/tournament.py -- lets a direct DividendPayout delete trust
+    # the DB-level ondelete="CASCADE" on DividendLineItem.payout_id instead
+    # of the ORM nulling that NOT NULL column out first.
+    line_items: Mapped[list["DividendLineItem"]] = relationship(back_populates="payout", passive_deletes=True)
 
 
 class DividendLineItem(Base):

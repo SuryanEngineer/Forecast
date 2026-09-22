@@ -37,13 +37,36 @@ For every Tournament that is NOT yet finalized:
          what happened (entries seen/matched, and whether it finalized or
          why not), instead of guessing.
 
-ORPHANED and INVALID tournaments have never finalized (by definition --
-this script only ever looks at non-finalized ones), so no dividends have
-ever been paid for them and deleting them is safe. Deleting a Tournament
-row cascades automatically to its OsirionTournamentMapping,
-PlacementResult, TournamentEntrant, and DividendPayout rows (all declared
-ondelete="CASCADE" -- see app/models/tournament.py and
-app/models/osirion.py).
+ORPHANED and INVALID tournaments are, by definition, non-finalized -- but
+non-finalized does NOT actually guarantee no dividends were ever paid for
+them. `dividend_service._maybe_finalize_tournament` only flips a
+Tournament to FINALIZED once every single one of its DividendPayout rows
+independently reaches COMPLETED; if that per-payout processing ever got
+interrupted partway (a crash, a statement timeout, a bad sync run), a
+tournament can be sitting here with real, completed dividend history
+underneath it while still reading as "non-finalized". This is not
+hypothetical -- it's exactly what happened to a "Console Duos ZB Cash
+Cup" row in production on 2026-09-07 (16,141 DividendPayout rows from one
+runaway sync, 2,354 of them COMPLETED), and it's why an earlier version
+of this script crashed trying to delete it: it attempted to null out
+16,141 NOT NULL tournament_id columns before the delete, which Postgres
+correctly rejected.
+
+So: this script does NOT blindly delete every ORPHANED/INVALID tournament
+it finds. Before deleting, it checks whether the tournament has ANY
+DividendPayout rows at all (regardless of their status). If it does,
+that tournament is pulled out and reported separately as NEEDS MANUAL
+REVIEW instead of being deleted -- because rows with real payout history,
+even unfinished/pending ones, deserve a human look, not an automatic
+delete. Only tournaments with zero dividend history get deleted.
+
+Deleting a Tournament row cascades automatically to its
+OsirionTournamentMapping, PlacementResult, TournamentEntrant, and
+DividendPayout rows (all declared ondelete="CASCADE" at the DB level --
+see app/models/tournament.py and app/models/osirion.py -- and, as of this
+script's last fix, also passive_deletes=True on the ORM side so
+SQLAlchemy actually trusts that DB-level cascade instead of trying to
+manage it itself).
 
 This does NOT touch Player rows (including any zero-share placeholders
 created by an older version of _match_player, back before "anyone found
@@ -69,6 +92,7 @@ sys.path.insert(0, ".")
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.integrations.osirion_client import OsirionApiError  # noqa: E402
+from app.models.dividend import DividendPayout  # noqa: E402
 from app.models.osirion import OsirionTournamentMapping  # noqa: E402
 from app.models.tournament import Tournament, TournamentStatus  # noqa: E402
 from app.services import osirion_service  # noqa: E402
@@ -157,15 +181,42 @@ def main() -> None:
             for t, m, reason in invalid:
                 print(f"  - {t.name!r} (id={t.id}): {reason}")
 
-        to_delete = [t for t, _ in orphaned] + [t for t, _, _ in invalid]
+        delete_candidates = [t for t, _ in orphaned] + [t for t, _, _ in invalid]
+
+        # Safety guard: never auto-delete a tournament that has ANY
+        # DividendPayout rows, regardless of status. Non-finalized does not
+        # mean dividend-free -- see this script's module docstring for why
+        # (a real production tournament hit exactly this gap). Anything
+        # caught here needs a human to look at it, not an automatic delete.
+        to_delete: list[Tournament] = []
+        needs_review: list[tuple[Tournament, int, int]] = []  # (tournament, total_payouts, completed_payouts)
+        for t in delete_candidates:
+            payout_rows = db.query(DividendPayout).filter(DividendPayout.tournament_id == t.id).all()
+            if payout_rows:
+                completed = sum(1 for p in payout_rows if p.status.value == "completed")
+                needs_review.append((t, len(payout_rows), completed))
+            else:
+                to_delete.append(t)
+
+        if needs_review:
+            print(
+                f"\n{len(needs_review)} tournament(s) skipped -- NOT deleted -- because they have existing "
+                "DividendPayout rows and need manual review:"
+            )
+            for t, total, completed in needs_review:
+                print(
+                    f"  - {t.name!r} (id={t.id}): {total} dividend_payout row(s), {completed} completed. "
+                    "Investigate before deciding whether to delete."
+                )
+
         if not to_delete:
-            print("\nNothing to delete.")
+            print("\nNothing safe to auto-delete.")
             return
 
         if not args.confirm:
             print(
-                f"\nDry run only -- {len(to_delete)} tournament(s) would be deleted, nothing deleted yet. "
-                "Re-run with --confirm to actually delete them."
+                f"\nDry run only -- {len(to_delete)} tournament(s) with zero dividend history would be deleted, "
+                "nothing deleted yet. Re-run with --confirm to actually delete them."
             )
             return
 
