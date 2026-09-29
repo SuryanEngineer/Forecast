@@ -7,6 +7,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from app.models.tournament import TournamentType
+from app.schemas.tournament import TournamentPhase
 
 
 class AvailableWindowResponse(BaseModel):
@@ -94,7 +95,13 @@ class LiveLeaderboardResponse(BaseModel):
     tournament_id: uuid.UUID
     tournament_name: str
     tournament_status: str
+    # Server-computed, same TournamentPhase used by /tournaments and
+    # /tournaments/calendar (see schemas/tournament.py's docstring on it)
+    # -- the frontend should treat this, not `tournament_status` alone, as
+    # the answer to "is this actually live right now".
+    phase: TournamentPhase
     is_osirion_tracked: bool
+    window_begin_time: datetime | None
     window_end_time: datetime | None
     last_synced_at: datetime | None
     # `entries` is just this page -- some real tournaments have thousands

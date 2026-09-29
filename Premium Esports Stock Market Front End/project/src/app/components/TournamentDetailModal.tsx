@@ -171,7 +171,14 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
   // to -- so it polls the same live-leaderboard endpoint they do, just at a
   // full page size with real pagination instead of a capped preview.
   const [livePage, setLivePage] = useState(1);
-  const isLive = tournament.status === 'results_pending';
+  // phase, not raw status -- status stays 'results_pending' for a
+  // tournament's whole life until it finalizes (see Tournaments.tsx's
+  // CalendarRow comment), so it doesn't by itself mean "poll for live
+  // standings right now". Once the window has actually ended (phase
+  // becomes 'finalizing'), fall through to the same results section a
+  // finalized tournament uses -- whatever's been recorded so far, without
+  // polling something that's no longer moving.
+  const isLive = tournament.phase === 'live';
   const { data: liveData, loading: liveLoading } = useLiveLeaderboard(
     isLive ? tournament.id : null,
     livePage,
@@ -184,14 +191,14 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
   // osirion_service.py's _seed_entrants_from_heat_windows) instead of a
   // flat "no results yet" placeholder.
   useEffect(() => {
-    if (tournament.status === 'finalized') return;
+    if (tournament.phase === 'completed') return;
     let cancelled = false;
     api
       .get<TournamentEntrant[]>(`/tournaments/${tournament.id}/entrants`)
       .then(r => { if (!cancelled) setEntrants(r); })
       .catch(() => { if (!cancelled) setEntrants([]); });
     return () => { cancelled = true; };
-  }, [tournament.id, tournament.status]);
+  }, [tournament.id, tournament.phase]);
 
   useEffect(() => {
     if (tournament.status !== 'finalized') return;
@@ -280,7 +287,13 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                   color: tournament.status === 'finalized' ? 'var(--gain)' : 'var(--primary)',
                 }}
               >
-                {tournament.status === 'finalized' ? 'Final' : tournament.status === 'results_pending' ? 'In Progress' : 'Upcoming'}
+                {tournament.phase === 'completed'
+                  ? 'Final'
+                  : tournament.phase === 'live'
+                  ? 'In Progress'
+                  : tournament.phase === 'finalizing'
+                  ? 'Finalizing'
+                  : 'Upcoming'}
               </span>
             </div>
             <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors shrink-0">
@@ -305,7 +318,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
         </div>
 
         <div className="px-5 pb-5 pt-4">
-          {tournament.status === 'scheduled' && entrants && entrants.length > 0 ? (
+          {tournament.phase === 'upcoming' && entrants && entrants.length > 0 ? (
             <div className="space-y-2">
               <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
                 Qualified entrants ({entrants.length})
@@ -331,7 +344,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                 })}
               </div>
             </div>
-          ) : tournament.status === 'scheduled' ? (
+          ) : tournament.phase === 'upcoming' ? (
             <div className="rounded-2xl border border-border p-6 text-center" style={{ background: 'var(--muted)' }}>
               <p style={{ fontSize: 24 }}>⏳</p>
               <p className="text-muted-foreground mt-2" style={{ fontSize: 13, lineHeight: 1.6 }}>

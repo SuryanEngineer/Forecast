@@ -83,6 +83,15 @@ export interface TradeResponse {
   executed_at: string;
 }
 
+// Server-computed from status/start_time/end_time -- see the backend's
+// app/schemas/tournament.py compute_tournament_phase docstring for the
+// full reasoning. This, not raw `status`, is what every "is it live /
+// upcoming / wrapping up" badge in the UI should read: `status` alone
+// stays at 'scheduled'/'results_pending' for a tournament's entire life
+// until it finalizes (which can take a while, or historically could get
+// stuck), so "not finalized" never meant "happening right now".
+export type TournamentPhase = 'upcoming' | 'live' | 'finalizing' | 'completed';
+
 export interface TournamentResponse {
   id: string;
   name: string;
@@ -92,6 +101,7 @@ export interface TournamentResponse {
   end_time: string | null;
   prize_pool: Money | null;
   status: 'scheduled' | 'results_pending' | 'finalized';
+  phase: TournamentPhase;
   created_at: string;
 }
 
@@ -108,6 +118,7 @@ export interface CalendarTournamentResponse {
   start_time: string | null;
   end_time: string | null;
   status: 'scheduled' | 'results_pending' | 'finalized';
+  phase: TournamentPhase;
   total_dividend_pool: Money | null;
   is_osirion_tracked: boolean;
   last_synced_at: string | null;
@@ -138,7 +149,9 @@ export interface LiveLeaderboardResponse {
   tournament_id: string;
   tournament_name: string;
   tournament_status: 'scheduled' | 'results_pending' | 'finalized';
+  phase: TournamentPhase;
   is_osirion_tracked: boolean;
+  window_begin_time: string | null;
   window_end_time: string | null;
   last_synced_at: string | null;
   total_entries: number;

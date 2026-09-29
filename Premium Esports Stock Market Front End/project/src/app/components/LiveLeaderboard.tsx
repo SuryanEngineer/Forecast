@@ -35,7 +35,15 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
     );
   }
 
-  const isFinal = data.tournament_status === 'finalized';
+  // phase, not raw tournament_status -- status stays non-'finalized' for a
+  // tournament's entire life until it actually finalizes (which can take a
+  // while), so "not finalized" alone used to mean this badge/the "Sync
+  // stalled" warning below stayed stuck on "LIVE" even for a tournament
+  // that had genuinely already ended. phase === 'live' answers "is this
+  // actually happening right now" using start_time/end_time too -- see the
+  // backend's app/schemas/tournament.py compute_tournament_phase.
+  const isFinal = data.phase === 'completed';
+  const isLivePhase = data.phase === 'live';
   const entries = compact ? data.entries.slice(0, 8) : data.entries;
 
   return (
@@ -46,11 +54,11 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
             className="flex items-center gap-1 px-1.5 py-0.5 rounded font-bold tracking-wide shrink-0"
             style={{
               fontSize: 9,
-              background: isFinal ? 'rgba(255,255,255,0.08)' : 'rgba(255,71,87,0.15)',
-              color: isFinal ? 'var(--muted-foreground)' : '#ff4757',
+              background: isLivePhase ? 'rgba(255,71,87,0.15)' : 'rgba(255,255,255,0.08)',
+              color: isLivePhase ? '#ff4757' : 'var(--muted-foreground)',
             }}
           >
-            {!isFinal && (
+            {isLivePhase && (
               <span className="relative flex shrink-0" style={{ width: 6, height: 6 }}>
                 <span
                   className="animate-ping absolute inline-flex h-full w-full rounded-full"
@@ -59,13 +67,13 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
                 <span className="relative inline-flex rounded-full" style={{ width: 6, height: 6, background: '#ff4757' }} />
               </span>
             )}
-            {isFinal ? 'FINAL' : 'LIVE'}
+            {isFinal ? 'FINAL' : isLivePhase ? 'LIVE' : 'WRAPPING UP'}
           </span>
           <p className="font-semibold truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>
             {data.tournament_name}
           </p>
         </div>
-        <LastUpdated lastSyncedAt={data.last_synced_at} isOsirionTracked={data.is_osirion_tracked} isLive={!isFinal} />
+        <LastUpdated lastSyncedAt={data.last_synced_at} isOsirionTracked={data.is_osirion_tracked} isLive={isLivePhase} />
       </div>
 
       {entries.length === 0 ? (

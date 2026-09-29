@@ -41,6 +41,7 @@ produce more than one PlacementResult, all at the same placement.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ from app.integrations.osirion_client import OsirionApiError
 from app.models.osirion import OsirionPlayerMapping, OsirionSeededHeatWindow, OsirionTournamentMapping
 from app.models.player import Player
 from app.models.tournament import (
+    PlacementResult,
     ResultSource,
     Tournament,
     TournamentEntrant,
@@ -332,6 +334,33 @@ def track_tournament(
     return mapping
 
 
+_CLAN_TAG_RE = re.compile(r"\[[^\]]*\]")
+_EXTRA_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def clean_gamertag(raw: str) -> str:
+    """Osirion's `username` sometimes carries a bracketed clan/LAN tag
+    baked into the same string as the display name -- e.g.
+    "[FNCSGC26] PlayerName" or "PlayerName [EW2026]" -- plus occasional
+    extra/inconsistent whitespace around it. None of that is part of the
+    competitor's actual name, but with no cleaning it used to get stored
+    verbatim as the permanent, globally-unique `Player.gamertag`: ugly on
+    the leaderboard, and a real risk of the SAME real player getting two
+    different Player rows/stocks if one sync sees them tagged and another
+    (or a later event) doesn't -- see `_match_player`'s accountId-based
+    OsirionPlayerMapping cache for why that risk is otherwise contained
+    once a player IS matched this way (capitalization/tag changes AFTER
+    the first successful match never re-run this string matching, since
+    the cached mapping is checked first).
+
+    Strips every bracketed `[...]` segment and collapses/trims whitespace.
+    Falls back to the original raw string if cleaning would leave nothing
+    (e.g. a username that was somehow only a bracket tag) -- a Player
+    always needs a non-empty gamertag."""
+    cleaned = _EXTRA_WHITESPACE_RE.sub(" ", _CLAN_TAG_RE.sub("", raw)).strip()
+    return cleaned or raw.strip()
+
+
 def _match_player(db: Session, osirion_player: dict) -> Player | None:
     """Finds (or creates) the Player for one Osirion competitor -- used
     both for entrants discovered ahead of Finals (via a concluded heat's
@@ -369,15 +398,22 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
         # create a player without at least a gamertag to show.
         return None
 
+    # Clean BEFORE matching, not just before creating -- so a name that's
+    # tagged this sync but was clean (or tagged differently) on some
+    # earlier sync still matches the same existing Player.gamertag rather
+    # than silently creating a second stock for the same real competitor.
+    # See clean_gamertag's docstring.
+    cleaned_username = clean_gamertag(username)
+
     # Escape SQL LIKE wildcards (% and _) that could theoretically appear
     # in a Fortnite display name -- ilike() would otherwise treat them as
     # pattern characters instead of literal ones.
-    escaped_username = username.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+    escaped_username = cleaned_username.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
     player = db.query(Player).filter(Player.gamertag.ilike(escaped_username, escape="\\")).one_or_none()
 
     if player is None:
-        player = player_service.create_player(db, gamertag=username)
-        logger.info("Auto-created a real tradeable stock for Osirion competitor '%s'", username)
+        player = player_service.create_player(db, gamertag=cleaned_username)
+        logger.info("Auto-created a real tradeable stock for Osirion competitor '%s' (raw: '%s')", cleaned_username, username)
 
     if account_id:
         db.add(
@@ -675,8 +711,34 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping, skip_finaliz
     # missing tail of the field (finalize_tournament stops this
     # tournament from ever syncing again), which is worse than just taking
     # one more 45s pass to get a complete picture.
-    if reached_end_of_leaderboard and window_ended and result.matched > 0:
-        if skip_finalize:
+    #
+    # Whether there's anything TO finalize is decided from the DB, not
+    # from `result.matched` (this pass's local counter) -- a real Cash
+    # Cup/FNCS window can have thousands of entrants against our much
+    # smaller tracked roster, so it's normal and common for a fully
+    # completed tournament to have zero of our players anywhere in its
+    # field. Gating on `result.matched > 0` used to mean that case never
+    # finalized: finalize_tournament requires >=1 PlacementResult and
+    # raises ValueError otherwise, so every single sync pass forever would
+    # re-walk the whole (already-fully-synced) leaderboard, hit the same
+    # ValueError, and leave the tournament stuck showing as perpetually
+    # "Live"/"Sync stalled" on the frontend even though it finished
+    # normally and simply had no involvement from anyone we track.
+    if reached_end_of_leaderboard and window_ended:
+        has_any_results = (
+            db.query(PlacementResult.id).filter(PlacementResult.tournament_id == tournament.id).first() is not None
+        )
+        if not has_any_results:
+            # Nobody we track ever placed here -- nothing for
+            # finalize_tournament to do, and nothing will ever revisit
+            # this tournament once it stops being synced. Retire it the
+            # same no-payout way `skip_finalize` does, purely so it drops
+            # off the live calendar / "Happening Now" instead of sitting
+            # stuck forever.
+            tournament.status = TournamentStatus.FINALIZED
+            db.commit()
+            result.finalized = True
+        elif skip_finalize:
             # Historical backfill path: lock in FINALIZED (so nothing ever
             # re-syncs or tries to finalize this again) WITHOUT creating a
             # single DividendPayout row. See this function's docstring.
@@ -688,9 +750,9 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping, skip_finaliz
                 tournament_service.finalize_tournament(db, tournament.id)
                 result.finalized = True
             except ValueError as exc:
-                # e.g. every entry this pass was unmatched, so there are
-                # still zero placement results -- leave it for the next sync
-                # rather than crashing the whole loop.
+                # Shouldn't happen now that has_any_results is checked
+                # above, but leave this as a safety net -- leave it for
+                # the next sync rather than crashing the whole loop.
                 logger.warning("Could not finalize tournament %s yet: %s", tournament.id, exc)
             except Exception as exc:  # noqa: BLE001 -- same reasoning as the sync try/except above
                 # A finalize-time failure (e.g. a DB error while creating

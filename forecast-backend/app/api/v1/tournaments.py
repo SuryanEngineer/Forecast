@@ -18,6 +18,7 @@ from app.schemas.tournament import (
     PlacementResultResponse,
     TournamentEntrantResponse,
     TournamentResponse,
+    compute_tournament_phase,
 )
 from app.services import economic_params_service
 
@@ -206,7 +207,9 @@ def get_live_leaderboard(
         tournament_id=tournament.id,
         tournament_name=tournament.name,
         tournament_status=tournament.status.value,
+        phase=compute_tournament_phase(tournament.status, tournament.start_time, tournament.end_time),
         is_osirion_tracked=mapping is not None,
+        window_begin_time=mapping.window_begin_time if mapping else None,
         window_end_time=mapping.window_end_time if mapping else None,
         last_synced_at=mapping.last_synced_at if mapping else None,
         total_entries=total_entries,

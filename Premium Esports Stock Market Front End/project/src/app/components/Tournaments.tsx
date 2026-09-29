@@ -239,19 +239,15 @@ const TIER_LABELS: Record<string, string> = {
 
 function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
   const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
-  // status === 'results_pending' alone isn't enough to mean "happening
-  // right now" -- a tournament stays results_pending indefinitely until it
-  // fully finalizes, which can take a while (or get stuck) if its Osirion
-  // sync hits an error. Without checking end_time, a real-world event from
-  // over a year ago that's still catching up on syncing looked exactly
-  // like something currently live. Only call it Live while we're actually
-  // still inside (or don't yet know) its event window; once end_time has
-  // passed, it's really just waiting on results to finish syncing in.
-  const now = Date.now();
-  const endTime = tournament.end_time ? new Date(tournament.end_time).getTime() : null;
-  const hasEnded = endTime !== null && endTime < now;
-  const isLive = tournament.status === 'results_pending' && !hasEnded;
-  const isAwaitingResults = tournament.status === 'results_pending' && hasEnded;
+  // `phase` is computed server-side from status + start_time + end_time
+  // (see the backend's app/schemas/tournament.py compute_tournament_phase)
+  // -- a single source of truth instead of re-deriving "is this live" here
+  // from raw status/time fields, which used to disagree with how
+  // LiveLeaderboard.tsx and the Tournaments tab filters derived the same
+  // thing, producing contradictory badges (e.g. "Awaiting Results" on a
+  // tournament that hadn't even started yet).
+  const isLive = tournament.phase === 'live';
+  const isFinalizing = tournament.phase === 'finalizing';
   // No explicit `timeZone` option -- Date/toLocaleDateString/toLocaleTimeString
   // default to the browser's own local timezone, so this automatically
   // shows each viewer their own local date/time with no extra plumbing.
@@ -278,9 +274,9 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
               ● Live
             </span>
           )}
-          {isAwaitingResults && (
+          {isFinalizing && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,171,64,0.15)', color: '#ffab40' }}>
-              ⏳ Awaiting Results
+              ⏳ Finalizing Results
             </span>
           )}
         </div>
@@ -334,6 +330,7 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
               end_time: t.end_time,
               prize_pool: null,
               status: t.status,
+              phase: t.phase,
               created_at: t.start_time ?? new Date().toISOString(),
             })
           }
@@ -349,7 +346,10 @@ export function Tournaments({ openTournament }: Props) {
   const [tab, setTab] = useState<'upcoming' | 'calendar' | 'results'>('upcoming');
 
   const finalized = tournaments.filter(t => t.status === 'finalized');
-  const inProgress = tournaments.filter(t => t.status === 'results_pending');
+  // phase === 'live', not raw status -- a tournament can sit at
+  // 'results_pending' for its whole life (see CalendarRow's comment), so
+  // "not finalized" alone doesn't mean "happening right now".
+  const inProgress = tournaments.filter(t => t.phase === 'live');
 
   // The "Upcoming" tab's featured/list cards show a live countdown, which
   // only makes sense for something that hasn't started yet -- so this
@@ -373,6 +373,7 @@ export function Tournaments({ openTournament }: Props) {
     end_time: t.end_time,
     prize_pool: t.total_dividend_pool,
     status: t.status,
+    phase: t.phase,
     created_at: t.start_time ?? new Date().toISOString(),
   });
   const [featured, ...otherUpcoming] = upcomingFromCalendar.map(toTournamentResponse);
