@@ -167,9 +167,23 @@ def main() -> None:
             return
 
         ids_deactivated = [p.id for p in to_deactivate]
-        for p in to_deactivate:
-            p.is_active = False
-        db.commit()
+        # A bulk UPDATE ... WHERE id IN (...) in chunks, NOT one UPDATE per
+        # ORM object -- setting `.is_active` on tens of thousands of loaded
+        # Player instances and committing sends one round trip per row to
+        # the database, which against a remote connection (this app talks
+        # to a hosted Supabase Postgres, not a local DB) can take minutes
+        # to tens of minutes for a batch this size. `synchronize_session`
+        # is set to False since these Player objects aren't read again
+        # after this point. Chunked (not one single WHERE id IN (44,661
+        # values)) to stay well clear of any single-statement parameter
+        # limits.
+        CHUNK_SIZE = 2000
+        for start in range(0, len(ids_deactivated), CHUNK_SIZE):
+            chunk = ids_deactivated[start : start + CHUNK_SIZE]
+            db.query(Player).filter(Player.id.in_(chunk)).update(
+                {"is_active": False}, synchronize_session=False
+            )
+            db.commit()
 
         remaining_active = db.query(func.count(Player.id)).filter(Player.is_active.is_(True)).scalar() or 0
         print(f"\nDeactivated {len(ids_deactivated)} player(s). Active players: {total_active} -> {remaining_active}.")
