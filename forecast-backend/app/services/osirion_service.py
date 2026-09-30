@@ -427,15 +427,35 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
 
 
 def _seed_entrants_from_heat_windows(db: Session, tournament: Tournament, heat_windows: list["AvailableWindow"]) -> int:
-    """For a tracked Finals tournament, pulls the leaderboard of each
-    sibling heat/qualifier window (same event, but has_cash_payout=False)
-    that has ALREADY ended, so the roster of who qualified is known before
-    the Finals themselves are played. Each competitor found gets a real
-    tradeable stock (see `_match_player`) and a TournamentEntrant row, so
-    the frontend can show "players qualified for this tournament" instead
-    of a blank leaderboard while everyone waits for Finals day. Safe to
-    call repeatedly -- skips heats that haven't ended yet, and skips a
-    competitor already recorded as an entrant."""
+    """INTENTIONALLY DISABLED (returns 0 immediately, does nothing) -- see
+    the user-directed fix in this function's git history for the full
+    reasoning. This used to pull the FULL leaderboard of every sibling
+    heat/qualifier window (same event, has_cash_payout=False) so the
+    "qualified entrants" preview could show a field before Finals day,
+    auto-IPOing (via `_match_player`) every competitor found in the
+    process. Real qualifier leaderboards can have tens of thousands of
+    entrants with no page cap on the walk here (unlike sync_tournament's
+    OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC limit on the real Finals
+    leaderboard) -- this turned out to be THE reason 89,702 Player rows
+    existed in production despite the Tournament-tracking gate itself
+    (has_cash_payout, see auto_track_new_tournaments) already correctly
+    limiting real tracked tournaments to genuine cash-payout Finals
+    events with ~40-100 real entrants. The explicit decision is: only
+    Finals-tier tournaments with real cash payouts should ever create or
+    grow the tradeable player roster; qualifiers/heats should not,
+    regardless of how large or repeat-heavy their own field is. The
+    "qualified entrants" preview this fed simply goes back to showing
+    nothing until real Finals results come in -- see
+    TournamentDetailModal.tsx's `entrants.length > 0` fallback, which
+    already handles an empty/never-populated entrants list gracefully.
+    Left in place (rather than deleted) so the call sites, the
+    AutoTrackResult.entrants_seeded field, and the OsirionSeededHeatWindow
+    dedup table don't need to change; this is now always a no-op."""
+    return 0
+
+
+def _seed_entrants_from_heat_windows_DISABLED(db: Session, tournament: Tournament, heat_windows: list["AvailableWindow"]) -> int:
+    """Original implementation, kept only for reference -- never called."""
     seeded = 0
     now = datetime.now(timezone.utc)
     for heat in heat_windows:
@@ -859,13 +879,17 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
     cross-region window is tracked with region=None (full, unscaled pool)
     rather than guessing which single region's multiplier should apply.
 
-    Finally, for every Finals window this pass DOES track (or has already
-    tracked in an earlier pass, as long as it isn't finalized yet), it
-    also looks at that same event's heat/qualifier windows that have
-    already ended and pulls their leaderboard once to learn who actually
-    qualified -- see _seed_entrants_from_heat_windows -- so the calendar
-    can show a real field of competitors before Finals day, each backed by
-    a real tradeable stock, not a blank "no results yet" leaderboard.
+    NOTE: this used to also pull each Finals window's sibling heat/qualifier
+    leaderboards (see _seed_entrants_from_heat_windows) to pre-seed a
+    "qualified entrants" preview before Finals day -- that's now disabled.
+    Walking a qualifier's full leaderboard (often tens of thousands of
+    entrants, heavy on one-off/repeat names, with no cash payout of its
+    own) and auto-IPOing everyone found was the actual cause of the
+    player roster growing to 89,702 rows, even though tournament TRACKING
+    itself was already correctly limited to genuine cash-payout Finals
+    events. Only a tournament's own Finals leaderboard (walked in
+    sync_tournament, page-capped, ~40-100 real entrants) creates/grows
+    the tradeable player roster now.
     """
     result = AutoTrackResult()
     try:
