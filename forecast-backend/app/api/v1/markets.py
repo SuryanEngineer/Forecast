@@ -9,20 +9,61 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.player import Player
-from app.schemas.market import MarketSnapshotResponse, PriceHistoryPointResponse
+from app.schemas.market import (
+    MarketSnapshotResponse,
+    MarketSummaryResponse,
+    PaginatedMarketSnapshotResponse,
+    PriceHistoryPointResponse,
+)
 from app.services import market_data_service
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 
+_VALID_SORTS = {"market_cap", "price", "volume", "hot", "gainers", "losers"}
 
-@router.get("", response_model=list[MarketSnapshotResponse])
-def list_markets(db: Session = Depends(get_db)) -> list[MarketSnapshotResponse]:
-    return market_data_service.list_market_snapshots(db)
+
+@router.get("", response_model=PaginatedMarketSnapshotResponse)
+def list_markets(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(60, ge=1, le=200),
+    sort: str = Query("market_cap"),
+    search: str | None = Query(None, min_length=1, max_length=100),
+    db: Session = Depends(get_db),
+) -> PaginatedMarketSnapshotResponse:
+    """Paginated -- the real roster is tens of thousands of players (every
+    entrant Osirion has ever recorded a real result for across every
+    tracked tournament, not a small curated list), so shipping/rendering
+    all of them at once made this page unusable. Default page size 60
+    (a comfortable grid for the frontend's card layout); `sort` picks
+    which computed field ranks the page (see market_data_service's
+    _SORT_KEYS), `search` narrows by gamertag/real_name/team before
+    anything else runs."""
+    if sort not in _VALID_SORTS:
+        sort = "market_cap"
+    items, total = market_data_service.list_market_snapshots_page(
+        db, page=page, page_size=page_size, sort=sort, search=search
+    )
+    return PaginatedMarketSnapshotResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=max(1, -(-total // page_size)),
+    )
+
+
+@router.get("/summary", response_model=MarketSummaryResponse)
+def get_markets_summary(db: Session = Depends(get_db)) -> MarketSummaryResponse:
+    """Market-wide totals for the overview panel -- computed as real SQL
+    aggregates over every active player, not by summing whatever single
+    page of GET /markets the frontend happens to have loaded (which, now
+    that the roster is paginated, would only reflect one page's worth)."""
+    return MarketSummaryResponse(**market_data_service.get_market_summary(db))
 
 
 @router.get("/{player_id}", response_model=MarketSnapshotResponse)

@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useMarkets, useMyPositions } from '../lib/hooks';
+import { useMarketsByIds, useMyPositions } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
@@ -18,11 +18,15 @@ function playerName(m: MarketSnapshot): string {
 
 export function Portfolio({ navigate, openPlayer }: Props) {
   const { wallet } = useAuth();
-  const { data: markets, loading: marketsLoading } = useMarkets();
   const { data: positions, loading: positionsLoading } = useMyPositions();
   const [activeHoldingId, setActiveHoldingId] = useState<string | null>(null);
 
-  const marketById = new Map(markets.map(m => [m.id, m]));
+  // Looks up each held player by id, not from a ranked page of the
+  // market -- see useMarketsByIds' docstring in lib/hooks.ts for why
+  // this replaced the old "fetch the whole roster and .find()" approach
+  // now that the real roster is 89k+ players.
+  const holdingIds = useMemo(() => positions.map(p => p.player_id), [positions]);
+  const { data: marketById, loading: marketsLoading } = useMarketsByIds(holdingIds);
   const cashBalance = wallet ? toNumber(wallet.cash_balance) : 0;
 
   const holdings = positions

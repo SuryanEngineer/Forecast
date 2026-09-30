@@ -133,7 +133,7 @@ def _bulk_volume_since(db: Session, player_ids: list[uuid.UUID], since: datetime
     return {player_id: int(total or 0) for player_id, total in rows}
 
 
-def list_market_snapshots(db: Session, active_only: bool = True) -> list[dict]:
+def list_market_snapshots(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
     """Batch-computed equivalent of calling get_market_snapshot() once per
     player. That naive per-player loop meant THREE separate DB
     round-trips per player (last price, price-24h-ago, 24h volume) -- for
@@ -144,10 +144,25 @@ def list_market_snapshots(db: Session, active_only: bool = True) -> list[dict]:
     generic, confusing "Failed to fetch" with no HTTP status to point to,
     since the connection gets dropped before any response is sent. This
     does the exact same three lookups, but as three bulk queries total,
-    no matter how large the roster is."""
+    no matter how large the roster is.
+
+    `search`, if given, is applied at the SQL level BEFORE any of that --
+    real production data has tens of thousands of players (every entrant
+    Osirion has ever seen in a tracked tournament, not a curated handful),
+    so narrowing the candidate set first is what keeps a search from still
+    doing bulk-price lookups across the entire roster. Matches gamertag,
+    real_name, or team, case-insensitively."""
     query = db.query(Player)
     if active_only:
         query = query.filter(Player.is_active.is_(True))
+    if search:
+        escaped = search.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        like = f"%{escaped}%"
+        query = query.filter(
+            (Player.gamertag.ilike(like, escape="\\"))
+            | (Player.real_name.ilike(like, escape="\\"))
+            | (Player.team.ilike(like, escape="\\"))
+        )
     players = query.order_by(Player.gamertag.asc()).all()
     if not players:
         return []
@@ -188,6 +203,98 @@ def list_market_snapshots(db: Session, active_only: bool = True) -> list[dict]:
             }
         )
     return snapshots
+
+
+_SORT_KEYS = {
+    "market_cap": lambda s: s["market_cap"],
+    "price": lambda s: s["last_price"],
+    "volume": lambda s: s["volume_24h"],
+    "hot": lambda s: abs(s["change_pct"]),
+    "gainers": lambda s: s["change_pct"],
+    "losers": lambda s: -s["change_pct"],
+}
+
+
+def list_market_snapshots_page(
+    db: Session,
+    page: int = 1,
+    page_size: int = 60,
+    sort: str = "market_cap",
+    search: str | None = None,
+    active_only: bool = True,
+) -> tuple[list[dict], int]:
+    """One page of the market, sorted server-side. See
+    list_market_snapshots' docstring for why `search` narrows the
+    candidate set at the SQL level first -- this then sorts/slices that
+    (already-narrowed) set in Python, since "24h change %"/"volume" aren't
+    plain columns to ORDER BY in SQL without either a denormalized column
+    or a materialized view, neither of which exist yet. Fine at this
+    scale once `search` has done its job; if the unfiltered (no-search)
+    case ever becomes a real bottleneck at 100k+ players, that's the next
+    thing to denormalize."""
+    snapshots = list_market_snapshots(db, active_only=active_only, search=search)
+    total = len(snapshots)
+
+    key_fn = _SORT_KEYS.get(sort, _SORT_KEYS["market_cap"])
+    snapshots.sort(key=key_fn, reverse=True)
+
+    start = (page - 1) * page_size
+    page_items = snapshots[start : start + page_size]
+    return page_items, total
+
+
+def get_market_summary(db: Session, active_only: bool = True) -> dict:
+    """Market-wide totals computed as real SQL aggregates, not by summing
+    whatever page of snapshots the client happens to have -- see
+    MarketSummaryResponse's docstring. Correct and cheap at any roster
+    size, unlike building a full snapshot dict per player just to add up
+    a few numbers."""
+    row_number = func.row_number().over(
+        partition_by=PriceSnapshot.player_id,
+        order_by=PriceSnapshot.recorded_at.desc(),
+    ).label("rn")
+    latest_prices_sq = db.query(PriceSnapshot.player_id, PriceSnapshot.price, row_number).subquery()
+    latest_prices = (
+        db.query(latest_prices_sq.c.player_id, latest_prices_sq.c.price)
+        .filter(latest_prices_sq.c.rn == 1)
+        .subquery()
+    )
+
+    player_query = db.query(Player)
+    if active_only:
+        player_query = player_query.filter(Player.is_active.is_(True))
+    players = player_query.subquery()
+
+    price_expr = func.coalesce(latest_prices.c.price, players.c.ipo_price)
+    total_market_cap, total_players = (
+        db.query(
+            func.coalesce(func.sum(price_expr * players.c.total_shares_outstanding), 0),
+            func.count(players.c.id),
+        )
+        .select_from(players)
+        .outerjoin(latest_prices, latest_prices.c.player_id == players.c.id)
+        .one()
+    )
+
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+    total_volume_24h, players_trading = (
+        db.query(
+            func.coalesce(func.sum(Trade.quantity), 0),
+            func.count(func.distinct(Trade.player_id)),
+        )
+        .select_from(Trade)
+        .join(players, players.c.id == Trade.player_id)
+        .filter(Trade.executed_at >= day_ago)
+        .one()
+    )
+
+    return {
+        "total_market_cap": total_market_cap or Decimal("0"),
+        "total_players": total_players or 0,
+        "total_volume_24h": int(total_volume_24h or 0),
+        "players_trading": players_trading or 0,
+    }
 
 
 def get_price_history(db: Session, player_id: uuid.UUID, limit: int = 200) -> list[PriceSnapshot]:

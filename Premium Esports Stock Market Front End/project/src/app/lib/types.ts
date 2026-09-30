@@ -43,6 +43,32 @@ export interface MarketSnapshot {
   market_cap: Money;
 }
 
+// GET /markets -- paginated. The real roster is tens of thousands of
+// players (every entrant Osirion has ever recorded a real result for
+// across every tracked tournament, not a small curated list), so this
+// always comes back one page at a time -- see the backend's
+// app/api/v1/markets.py docstring.
+export type MarketSortKey = 'market_cap' | 'price' | 'volume' | 'hot' | 'gainers' | 'losers';
+
+export interface PaginatedMarketSnapshotResponse {
+  items: MarketSnapshot[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+// GET /markets/summary -- market-wide totals computed server-side as real
+// SQL aggregates over every active player, NOT derived by summing
+// whatever single page of markets happens to be loaded (which would only
+// reflect that one page once the roster stopped being small).
+export interface MarketSummaryResponse {
+  total_market_cap: Money;
+  total_players: number;
+  total_volume_24h: number;
+  players_trading: number;
+}
+
 export interface PriceHistoryPoint {
   price: Money;
   volume: number;

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, TrendingUp, TrendingDown, X, MessageCircle } from 'lucide-react';
+import { Search, TrendingUp, TrendingDown, X, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { api } from '../lib/api';
-import { useLeaderboard, useMarkets } from '../lib/hooks';
+import { useLeaderboard, useMarkets, useMarketSummary } from '../lib/hooks';
 import { toNumber, type MarketSnapshot, type TradeResponse } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
@@ -242,12 +242,16 @@ function LiveActivityPanel({ trades, navigate, onClose }: { trades: FeedTrade[];
   );
 }
 
+// A comfortable grid page for the card layout below -- see the backend's
+// app/api/v1/markets.py docstring for why this is paginated at all (the
+// real roster is tens of thousands of players, not a small curated list).
+const PAGE_SIZE = 60;
+
 export function Markets({ navigate, initialSearch = '', onSearchChange }: Props) {
-  const { data: markets, loading, error } = useMarkets();
-  const { data: leaderboard } = useLeaderboard();
-  const liveTrades = useLiveTradeFeed(markets);
   const [search, setSearch] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [sort, setSort] = useState<SortKey>('hot');
+  const [page, setPage] = useState(1);
   // Collapsed by default -- Market Overview's stat grid is useful detail,
   // not something that should eat up the top of the page before anyone's
   // asked to see it.
@@ -264,33 +268,51 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
     if (initialSearch) searchRef.current?.focus();
   }, [initialSearch]);
 
+  // Debounce the search box before it drives a real backend query -- every
+  // keystroke used to just re-filter an already-loaded array for free;
+  // now it's a paginated request against tens of thousands of rows, so
+  // typing fast shouldn't fire one request per character.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // Changing what's being asked for always jumps back to page 1 -- staying
+  // on, say, page 12 of a brand new search almost always reads as "no
+  // results" even when real matches exist earlier on.
+  useEffect(() => {
+    setPage(1);
+  }, [sort, debouncedSearch]);
+
   function handleSearch(val: string) {
     setSearch(val);
     onSearchChange?.(val);
   }
 
-  const sorted = [...markets].sort((a, b) => {
-    if (sort === 'hot') return Math.abs(toNumber(b.change_pct)) - Math.abs(toNumber(a.change_pct));
-    if (sort === 'price') return toNumber(b.last_price) - toNumber(a.last_price);
-    if (sort === 'volume') return b.volume_24h - a.volume_24h;
-    return 0;
-  });
+  const { data: marketPage, loading, error } = useMarkets(page, PAGE_SIZE, sort, debouncedSearch);
+  const markets = marketPage.items;
+  const liveTrades = useLiveTradeFeed(markets);
 
-  const filtered = sorted.filter(m => {
-    if (!search) return true;
-    const term = search.toLowerCase();
-    return displayName(m).toLowerCase().includes(term) || (m.team ?? '').toLowerCase().includes(term);
-  });
+  // Market-wide totals come from a dedicated summary endpoint (real SQL
+  // aggregates over every active player) -- NOT derived by summing
+  // whatever single page happens to be loaded, which would badly
+  // understate everything once the roster stopped being small enough to
+  // fetch in one request.
+  const { data: summary } = useMarketSummary();
+  const totalMarketCap = toNumber(summary.total_market_cap);
+  const totalVolume = summary.total_volume_24h;
+  const playersTradingCount = summary.players_trading;
 
-  const totalMarketCap = markets.reduce((s, m) => s + toNumber(m.market_cap), 0);
-  const totalVolume = markets.reduce((s, m) => s + m.volume_24h, 0);
-  // Count players with actual trading volume, not just the whole listed
-  // roster -- so this reads as an activity signal, not "how many players
-  // have ever been IPO'd."
-  const playersTradingCount = markets.filter(m => m.volume_24h > 0).length;
-  const byChange = [...markets].sort((a, b) => toNumber(b.change_pct) - toNumber(a.change_pct));
-  const topGainers = byChange.slice(0, 5).filter(m => toNumber(m.change_pct) > 0);
-  const topLosers = byChange.slice(-5).reverse().filter(m => toNumber(m.change_pct) < 0);
+  // Small, separately-sorted fetches for the overview panel's gainers/
+  // losers widgets -- same reasoning as summary above, these need to rank
+  // across the WHOLE market, not just whatever page/sort the main grid
+  // currently has loaded.
+  const { data: gainersPage } = useMarkets(1, 5, 'gainers');
+  const { data: losersPage } = useMarkets(1, 5, 'losers');
+  const topGainers = gainersPage.items.filter(m => toNumber(m.change_pct) > 0);
+  const topLosers = losersPage.items.filter(m => toNumber(m.change_pct) < 0);
+
+  const { data: leaderboard } = useLeaderboard();
   // Sum of every ranked investor's cash_balance -- GET /leaderboard
   // already excludes bots and the House account (see
   // leaderboard_service.py), so this is a real, honest read of "cash
@@ -378,7 +400,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
                   <InfoDot text="How many listed players have actually had a share change hands recently -- not just the total roster size." align="right" />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{playersTradingCount}</p>
-                <p className="text-muted-foreground mt-0.5" style={{ fontSize: 9.5 }}>of {markets.length} listed</p>
+                <p className="text-muted-foreground mt-0.5" style={{ fontSize: 9.5 }}>of {summary.total_players.toLocaleString()} listed</p>
               </div>
             </div>
 
@@ -476,19 +498,46 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
 
       {loading && markets.length === 0 ? (
         <div className="py-20 text-center text-muted-foreground" style={{ fontSize: 14 }}>Loading players…</div>
-      ) : filtered.length === 0 ? (
+      ) : markets.length === 0 ? (
         <div className="py-20 text-center">
           <p style={{ fontSize: 40 }}>🔍</p>
           <p className="text-muted-foreground mt-3" style={{ fontSize: 16 }}>
-            {markets.length === 0 ? 'No players have been IPO\'d yet -- ask an admin to create one.' : `No players match "${search}"`}
+            {debouncedSearch ? `No players match "${debouncedSearch}"` : 'No players have been IPO\'d yet -- ask an admin to create one.'}
           </p>
         </div>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
-          {filtered.map(m => (
-            <PlayerCard key={m.id} market={m} navigate={navigate} />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+            {markets.map(m => (
+              <PlayerCard key={m.id} market={m} navigate={navigate} />
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>
+              {marketPage.total.toLocaleString()} player{marketPage.total === 1 ? '' : 's'}
+              {debouncedSearch ? ` matching "${debouncedSearch}"` : ''} · page {page} of {marketPage.total_pages.toLocaleString()}
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl font-medium transition-colors disabled:opacity-40"
+                style={{ fontSize: 12.5, background: 'var(--card)', border: '1.5px solid var(--border)', color: 'var(--muted-foreground)' }}
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+              </button>
+              <button
+                onClick={() => setPage(p => Math.min(marketPage.total_pages, p + 1))}
+                disabled={page >= marketPage.total_pages}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl font-medium transition-colors disabled:opacity-40"
+                style={{ fontSize: 12.5, background: 'var(--card)', border: '1.5px solid var(--border)', color: 'var(--muted-foreground)' }}
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </>
       )}
       </div>
 

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Trophy, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../lib/api';
-import { useLiveLeaderboard, useMarkets } from '../lib/hooks';
+import { useLiveLeaderboard, useMarketsByIds } from '../lib/hooks';
 import {
   toNumber,
   type PaginatedPlacementResultResponse,
@@ -157,7 +157,6 @@ interface TournamentEntrant {
  * instead of grouped teams. Works for both finalized tournaments (shows
  * results) and ones still upcoming (shows a placeholder only). */
 export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Props) {
-  const { data: markets } = useMarkets();
   const [results, setResults] = useState<PlacementResult[] | null>(null);
   const [resultsTotal, setResultsTotal] = useState(0);
   const [resultsTotalPages, setResultsTotalPages] = useState(1);
@@ -235,7 +234,16 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
     return () => { cancelled = true; };
   }, [tournament.id, tournament.status, resultsPage]);
 
-  const marketById = new Map(markets.map(m => [m.id, m]));
+  // Looks up specific players by id (this tournament's entrants and/or
+  // placed competitors), not a ranked page of the market -- see
+  // useMarketsByIds' docstring in lib/hooks.ts for why the old "fetch
+  // the whole roster and .find()" approach no longer works now that the
+  // real roster is 89k+ players.
+  const lookupIds = useMemo(
+    () => [...(entrants ?? []).map(e => e.player_id), ...(results ?? []).map(r => r.player_id)],
+    [entrants, results]
+  );
+  const { data: marketById } = useMarketsByIds(lookupIds);
   const prizePool = toNumber(tournament.prize_pool);
   const sorted = results ? [...results].sort((a, b) => a.placement - b.placement) : [];
 

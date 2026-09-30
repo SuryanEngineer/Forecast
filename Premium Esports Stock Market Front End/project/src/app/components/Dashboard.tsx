@@ -1,6 +1,7 @@
+import { useMemo } from 'react';
 import { ArrowUpRight, ArrowDownRight, ChevronRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useMarkets, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
+import { useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { LiveLeaderboard } from './LiveLeaderboard';
@@ -34,12 +35,19 @@ function playerName(m: MarketSnapshot): string {
 
 export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props) {
   const { user, wallet } = useAuth();
-  const { data: markets, loading: marketsLoading } = useMarkets();
+  // "Hot Right Now" is a ranked view of the WHOLE market (top absolute
+  // movers), so it comes from a small dedicated page of the ranked
+  // listing -- not from the same lookup used for the user's own
+  // holdings below, which needs specific players by id instead (see
+  // useMarketsByIds' docstring).
+  const { data: hotPage, loading: marketsLoading } = useMarkets(1, 4, 'hot');
+  const topMovers = hotPage.items;
   const { data: positions } = useMyPositions();
   const { data: tournaments } = useTournamentsList();
   const liveTournament = usePickLiveTournament(tournaments);
 
-  const marketById = new Map(markets.map(m => [m.id, m]));
+  const holdingIds = useMemo(() => positions.map(p => p.player_id), [positions]);
+  const { data: marketById } = useMarketsByIds(holdingIds);
   const cashBalance = wallet ? toNumber(wallet.cash_balance) : 0;
 
   const holdings = positions
@@ -63,7 +71,6 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
   const prevPortfolio = totalPortfolio - dayChange;
   const dayChangePct = prevPortfolio > 0 ? (dayChange / prevPortfolio) * 100 : 0;
 
-  const topMovers = [...markets].sort((a, b) => Math.abs(toNumber(b.change_pct)) - Math.abs(toNumber(a.change_pct))).slice(0, 4);
   const upcoming = tournaments
     .filter(t => t.status === 'scheduled')
     .sort((a, b) => new Date(a.start_time || a.created_at).getTime() - new Date(b.start_time || b.created_at).getTime())

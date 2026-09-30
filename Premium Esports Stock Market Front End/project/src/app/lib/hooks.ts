@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { CalendarTournamentResponse, LeaderboardEntry, LiveLeaderboardResponse, MarketSnapshot, PositionResponse, TournamentResponse } from './types';
+import type {
+  CalendarTournamentResponse,
+  LeaderboardEntry,
+  LiveLeaderboardResponse,
+  MarketSnapshot,
+  MarketSortKey,
+  MarketSummaryResponse,
+  PaginatedMarketSnapshotResponse,
+  PositionResponse,
+  TournamentResponse,
+} from './types';
 
 interface FetchState<T> {
   data: T;
@@ -53,11 +63,85 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
   return { data, loading, error, refetch };
 }
 
-// Markets list refreshes periodically so prices feel "live" without a
-// WebSocket subscription per row -- 15s is frequent enough to feel
-// responsive without hammering the API from every open tab.
-export function useMarkets() {
-  return usePolledFetch<MarketSnapshot[]>('/markets', [], 15_000);
+const EMPTY_MARKET_PAGE: PaginatedMarketSnapshotResponse = { items: [], total: 0, page: 1, page_size: 60, total_pages: 1 };
+
+// GET /markets is paginated server-side -- see the backend's
+// app/api/v1/markets.py docstring for why (the real roster is tens of
+// thousands of players, not a small curated list; fetching/rendering all
+// of them at once is what made the Markets page unusable in the first
+// place). Sort and search are also applied server-side, not by filtering
+// whatever's already loaded, since a client-side filter over one page
+// would silently miss every match on every other page.
+//
+// Refetches whenever page/pageSize/sort/search change (they're baked
+// into the request path, which is usePolledFetch's effect dependency),
+// plus every 15s on top of that so prices feel "live" without a
+// WebSocket subscription per row.
+export function useMarkets(page = 1, pageSize = 60, sort: MarketSortKey = 'market_cap', search = '') {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), sort });
+  const trimmedSearch = search.trim();
+  if (trimmedSearch) params.set('search', trimmedSearch);
+  return usePolledFetch<PaginatedMarketSnapshotResponse>(`/markets?${params.toString()}`, EMPTY_MARKET_PAGE, 15_000);
+}
+
+const EMPTY_MARKET_SUMMARY: MarketSummaryResponse = { total_market_cap: 0, total_players: 0, total_volume_24h: 0, players_trading: 0 };
+
+// GET /markets/summary -- market-wide totals computed server-side (real
+// SQL aggregates over every active player), for the overview panel. Kept
+// separate from useMarkets since it needs to reflect the WHOLE market
+// regardless of which page/sort/search the list view currently has
+// loaded -- summing just one page's worth would be wrong once the roster
+// is too large to fetch all at once (see EMPTY_MARKET_PAGE's fetch above).
+export function useMarketSummary() {
+  return usePolledFetch<MarketSummaryResponse>('/markets/summary', EMPTY_MARKET_SUMMARY, 30_000);
+}
+
+// Looks up a specific, bounded set of players by id -- for callers that
+// need particular players (a user's own portfolio holdings, a
+// tournament's entrants/placed competitors), NOT a ranked page of the
+// market. Before GET /markets was paginated, every caller just fetched
+// the whole roster and did `.find()`/`.get()` on it; now that the real
+// roster is 89k+ players, that same lookup has to go by id instead,
+// since the player someone holds/placed might not be anywhere near the
+// top of whatever page/sort the ranked listing would return. Uses the
+// existing GET /markets/{player_id} single-player endpoint, one request
+// per id, in parallel -- fine at the scale these callers actually need
+// (a person's own holdings, one tournament's field), unlike the full
+// roster this replaces.
+export function useMarketsByIds(ids: string[]): { data: Map<string, MarketSnapshot>; loading: boolean } {
+  const uniqueIds = useMemo(() => [...new Set(ids)].sort(), [ids.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [data, setData] = useState<Map<string, MarketSnapshot>>(new Map());
+  const [loading, setLoading] = useState(false);
+  const key = uniqueIds.join(',');
+
+  useEffect(() => {
+    if (uniqueIds.length === 0) {
+      setData(new Map());
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const fetchAll = () => {
+      Promise.allSettled(uniqueIds.map(id => api.get<MarketSnapshot>(`/markets/${id}`))).then(results => {
+        if (cancelled) return;
+        const next = new Map<string, MarketSnapshot>();
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') next.set(uniqueIds[i], r.value);
+        });
+        setData(next);
+        setLoading(false);
+      });
+    };
+    fetchAll();
+    const interval = setInterval(fetchAll, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return { data, loading };
 }
 
 export function useMyPositions() {
