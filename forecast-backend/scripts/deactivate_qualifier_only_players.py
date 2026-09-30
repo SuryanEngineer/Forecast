@@ -27,6 +27,12 @@ footprint is a TournamentEntrant row from the disabled heat-seeding path
 (i.e. they qualified for or competed in a qualifier/heat, but never
 actually placed in the tracked Finals itself, at least not yet).
 
+"Real user" here excludes both strategy bots (BotProfile rows) and the
+House/market-maker system account (every player IPOs with 100% of its
+shares owned by House -- see app/services/house_account.py -- so House
+alone doesn't count as a real holder, only an actual person's Position
+does).
+
 What this script deliberately does NOT do: delete anything, or touch a
 player any real (non-bot) user currently holds shares in. Deleting would
 destroy the OsirionPlayerMapping/audit trail for no benefit; touching a
@@ -71,6 +77,8 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.models.player import Player, Position  # noqa: E402
 from app.models.tournament import PlacementResult  # noqa: E402
 from app.models.bot import BotProfile  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.services.house_account import HOUSE_ACCOUNT_EMAIL  # noqa: E402
 
 
 def _players_with_any_placement(db: Session) -> set:
@@ -79,19 +87,30 @@ def _players_with_any_placement(db: Session) -> set:
 
 
 def _players_with_real_holdings(db: Session) -> set:
-    """Players a real (non-bot) user currently holds shares in -- these
-    are left alone no matter what, see module docstring."""
+    """Players a real (non-bot, non-House) user currently holds shares in
+    -- these are left alone no matter what, see module docstring.
+
+    Excludes both strategy bots (app.models.bot.BotProfile) AND the
+    House/market-maker system account (app.services.house_account) --
+    every single player IPOs with 100% of its shares owned by House (see
+    that module's docstring), so without excluding it too, EVERY player
+    in the database would always show a "real" holder and nothing would
+    ever be classified as safe to deactivate. This mirrors the same
+    House+bot exclusion pattern already used in
+    app/services/leaderboard_service.py."""
     bot_user_ids = {r[0] for r in db.query(BotProfile.user_id).all()}
+    house_row = db.query(User.id).filter(User.email == HOUSE_ACCOUNT_EMAIL).one_or_none()
+    if house_row is not None:
+        bot_user_ids.add(house_row[0])
+
     rows = db.query(Position.player_id).filter(Position.quantity > 0).distinct().all()
     candidate_ids = {r[0] for r in rows}
     if not candidate_ids:
         return set()
-    real_holder_rows = (
-        db.query(Position.player_id)
-        .filter(Position.player_id.in_(candidate_ids), Position.quantity > 0, Position.user_id.notin_(bot_user_ids) if bot_user_ids else True)
-        .distinct()
-        .all()
-    )
+    query = db.query(Position.player_id).filter(Position.player_id.in_(candidate_ids), Position.quantity > 0)
+    if bot_user_ids:
+        query = query.filter(Position.user_id.notin_(bot_user_ids))
+    real_holder_rows = query.distinct().all()
     return {r[0] for r in real_holder_rows}
 
 
