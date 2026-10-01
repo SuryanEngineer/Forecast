@@ -67,6 +67,39 @@ from app.services import player_service, tournament_classification_service, tour
 
 logger = logging.getLogger("forecast.osirion")
 
+# Per explicit product direction (Sept 2026): the tradeable roster was
+# growing far larger than expected once every region's weekly Cash Cup
+# (NAC, NAW, EU, BR, OCE, ME, ASIA, each in multiple formats) was counted
+# as a real Finals tier alongside the genuinely rare top-tier events. For
+# now, only track region-scoped tournaments (Cash Cup / FNCS Division /
+# FNCS Finals / generic Cash Cup) for these two regions -- easy to expand
+# later by just adding more codes here (these match the exact strings
+# Osirion returns in a window's `regions` list, and the same codes used by
+# economic_params_service.DEFAULT_REGION_MULTIPLIERS).
+ALLOWED_TRACKING_REGIONS: set[str] = {"NAC", "EU"}
+
+# LAN/global-tier tournaments (EWC, FNCS Global Championship, Majors) are
+# NEVER region-restricted -- they're inherently cross-region events (often
+# tracked with region=None / a "MULTI" region key, see _region_key), and
+# the whole point of a LAN is that it draws from every region at once. The
+# ALLOWED_TRACKING_REGIONS scope above only applies to the per-region
+# recurring tiers (Cash Cup, FNCS Finals).
+_REGION_EXEMPT_TOURNAMENT_TYPES: frozenset[TournamentType] = frozenset(
+    {TournamentType.GLOBAL_CHAMPIONSHIP, TournamentType.MAJOR}
+)
+
+
+def _in_tracking_region_scope(tournament_type: TournamentType, regions: list[str]) -> bool:
+    """True if this window should be tracked given the current
+    ALLOWED_TRACKING_REGIONS scope -- LAN/global tiers always pass
+    regardless of region; everything else must resolve to exactly one
+    region that's in the allow-list (a cross-region/ambiguous "MULTI" key
+    for a non-LAN tier is treated as out of scope, not guessed into
+    scope)."""
+    if tournament_type in _REGION_EXEMPT_TOURNAMENT_TYPES:
+        return True
+    return _region_key(regions) in ALLOWED_TRACKING_REGIONS
+
 
 @dataclass
 class AvailableWindow:
@@ -830,6 +863,7 @@ class AutoTrackResult:
     skipped_unclassified: int = 0
     skipped_season_dedup: int = 0
     skipped_not_finals: int = 0  # heat/qualifier (token-only payout) or Zero Build -- never auto-tracked
+    skipped_region: int = 0  # classified fine, but outside ALLOWED_TRACKING_REGIONS and not a LAN/global tier
     entrants_seeded: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -862,6 +896,15 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
     tier it's tracked as. A window that matches no rule, or an explicit
     "exclude" rule (Victory Cups, skin cups, etc.), is left alone -- see
     that module's docstring for why this is a whitelist, not a blocklist.
+
+    A THIRD filter applies right after classification: see
+    `_in_tracking_region_scope`/`ALLOWED_TRACKING_REGIONS` above this
+    function -- a region-scoped tier (Cash Cup, FNCS Finals) is only
+    auto-tracked for the currently-allowed regions; LAN/global tiers
+    (EWC, FNCS Global Championship, Majors) always pass regardless of
+    region. This is the fix for the roster growing far past what a handful
+    of genuinely rare Finals/LAN events would ever produce -- most of the
+    volume was coming from tracking every region's own weekly Cash Cup.
 
     Basic FNCS Finals (TournamentType.FNCS_FINALS) gets one extra check:
     the user's rule is "once per season, except during a Globals season"
@@ -944,6 +987,10 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
             result.skipped_unclassified += 1
             continue
 
+        if not _in_tracking_region_scope(tournament_type, window.regions):
+            result.skipped_region += 1
+            continue
+
         region_key = _region_key(window.regions)
         if tournament_type == TournamentType.FNCS_FINALS:
             quarter_key = _season_quarter_key(window.begin_time or datetime.now(timezone.utc))
@@ -1018,10 +1065,11 @@ def find_historical_backfill_candidates(db: Session) -> BackfillScanResult:
 
     Eligibility mirrors auto_track_new_tournaments (has_cash_payout, not
     Zero Build, one window per event picked by top payout, must classify
-    to a real tier) with two differences: no season/region dedup (we want
-    every distinct past edition, not just one per season), and the window
-    must have actually ENDED -- anything still open belongs to the live
-    auto-track path, not history."""
+    to a real tier, must pass the current ALLOWED_TRACKING_REGIONS/LAN
+    scope -- see _in_tracking_region_scope) with two differences: no
+    season/region dedup (we want every distinct past edition, not just one
+    per season), and the window must have actually ENDED -- anything still
+    open belongs to the live auto-track path, not history."""
     scan = BackfillScanResult()
     try:
         windows = list_available_windows(include_historic_data=True)
@@ -1066,6 +1114,10 @@ def find_historical_backfill_candidates(db: Session) -> BackfillScanResult:
         tournament_type = tournament_classification_service.classify(db, window.classification_text)
         if tournament_type is None:
             scan.skipped_unclassified += 1
+            continue
+
+        if not _in_tracking_region_scope(tournament_type, window.regions):
+            scan.skipped_not_eligible += 1
             continue
 
         scan.candidates.append(BackfillCandidate(window=window, tournament_type=tournament_type))

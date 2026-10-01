@@ -54,12 +54,12 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "Any other Cash Cup Finals lobby not already matched above.",
     ),
     (
-        "performance evaluation", TournamentType.CASH_CUP, 26,
-        "Osirion's 'Fortnite Performance Evaluation' events -- real cash payouts "
-        "(seen at $1,600 for a top finish) despite the low-key 'test event' framing "
-        "in Osirion's own description. 'Performance Evaluation' appears verbatim in "
-        "the window's own display name (unlike the Global Championship case above, "
-        "no cross-field concatenation needed here), so a plain substring match is safe.",
+        "performance evaluation", None, 26,
+        "Osirion's 'Fortnite Performance Evaluation' events pay real cash (seen at $1,600 for a top "
+        "finish), but per explicit product direction these should NOT count toward the tradeable "
+        "roster/Finals tier -- excluded outright rather than classified as Cash Cup. (Previously tracked "
+        "as CASH_CUP; changed back to an exclude rule -- see scripts/fix_classification_rules.py for the "
+        "one-time production fix needed since seed_default_rules() never updates an already-seeded row.)",
     ),
     (
         "esports world cup", TournamentType.GLOBAL_CHAMPIONSHIP, 30,

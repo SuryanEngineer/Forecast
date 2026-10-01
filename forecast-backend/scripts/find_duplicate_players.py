@@ -88,10 +88,10 @@ def main() -> None:
 
         # Per-player context, fetched in bulk (not N+1) up front.
         mapping_counts: dict = defaultdict(int)
-        for player_id, count in db.query(OsirionPlayerMapping.player_id, func.count(OsirionPlayerMapping.id)).group_by(
-            OsirionPlayerMapping.player_id
-        ):
-            mapping_counts[player_id] = count
+        account_ids: dict = defaultdict(list)
+        for player_id, account_id in db.query(OsirionPlayerMapping.player_id, OsirionPlayerMapping.osirion_account_id):
+            mapping_counts[player_id] += 1
+            account_ids[player_id].append(account_id)
 
         placement_counts: dict = defaultdict(int)
         for player_id, count in db.query(PlacementResult.player_id, func.count(PlacementResult.id)).group_by(
@@ -116,10 +116,23 @@ def main() -> None:
             pcount = placement_counts.get(p.id, 0)
             latest = latest_placement.get(p.id)
             latest_str = f"{latest[0]} ({latest[1].date()})" if latest and latest[1] else (latest[0] if latest else "none")
+            ids = account_ids.get(p.id, [])
+            ids_str = ", ".join(ids) if ids else "none"
             return (
                 f"id={p.id}  gamertag={p.gamertag!r}  osirion_mappings={mcount}  "
-                f"placements={pcount}  most_recent={latest_str}"
+                f"placements={pcount}  most_recent={latest_str}  account_id(s)={ids_str}"
             )
+
+        def same_account_ids(group: list) -> bool:
+            """True only if every player in the group shares at least one
+            real Osirion accountId with every other -- i.e. Osirion itself
+            already knows these are the same Epic account, and the only
+            reason they're still two Player rows is the stale-gamertag
+            first-match-miss bug, not a genuinely different real account."""
+            all_ids = [set(account_ids.get(p.id, [])) for p in group]
+            if any(not s for s in all_ids):
+                return False
+            return len(set.union(*all_ids)) < sum(len(s) for s in all_ids) or len(all_ids) == 1
 
         # --- Pass 1: exact collisions on clean_gamertag() ---
         exact_groups: dict = defaultdict(list)
@@ -127,11 +140,31 @@ def main() -> None:
             exact_groups[clean_gamertag(p.gamertag).lower()].append(p)
         exact_collisions = [g for g in exact_groups.values() if len(g) > 1]
 
+        same_id_groups = [g for g in exact_collisions if same_account_ids(g)]
+        diff_id_groups = [g for g in exact_collisions if not same_account_ids(g)]
+
         print(f"Total active players scanned: {len(players)}\n")
         print(f"=== Pass 1: EXACT collisions after clean_gamertag() normalization ({len(exact_collisions)} group(s)) ===")
         if not exact_collisions:
             print("None found. (If you haven't run scripts/clean_player_gamertags.py --confirm yet, do that first -- it may surface more of these.)")
-        for group in exact_collisions:
+
+        print(
+            f"\n--- {len(same_id_groups)} group(s): SAME real Osirion accountId shared across rows "
+            "-- Osirion itself confirms these are the same Epic account. This is the stale-gamertag "
+            "first-match-miss bug, not a different real person. Highest-confidence merge candidates. ---"
+        )
+        for group in same_id_groups:
+            print(f"\n  These {len(group)} player(s) share a real accountId:")
+            for p in group:
+                print(f"    - {describe(p)}")
+
+        print(
+            f"\n--- {len(diff_id_groups)} group(s): name collision but DIFFERENT (or missing) accountId per row "
+            "-- Osirion has no record these are the same account. Could be the same human playing under two "
+            "separate registered Epic accounts (common across different circuits/events), or a genuine "
+            "coincidence. Needs a human eyeball, not an automatic merge. ---"
+        )
+        for group in diff_id_groups:
             print(f"\n  These {len(group)} player(s) normalize to the same cleaned gamertag:")
             for p in group:
                 print(f"    - {describe(p)}")
