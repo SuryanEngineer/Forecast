@@ -21,6 +21,17 @@ If you already ran deactivate_pre_cutoff_players.py, that's fine --
 re-running this one is still correct and will catch anything that
 two-pass approach missed.
 
+ALSO excludes any placement from a Zero Build (ZB) tournament -- see
+`_find_zero_build_tournament_ids` below. Zero Build tournaments are
+supposed to NEVER be auto-tracked (see osirion_service._is_zero_build),
+but that check only runs on the automatic auto-track path, not on a
+tournament tracked manually via the admin UI -- so a legacy manually
+-tracked ZB tournament can still be sitting in the database counting
+toward the active roster. Confirmed in production: one such tournament
+("Console Duos ZB Cash Cup") alone accounted for 16,141 of ~16,622 total
+2026 Cash Cup players -- a real Finals lobby is 40-350 real entrants, not
+16,000+, and the "ZB" marker is right there in its own name/eventId.
+
 A player's "year" is COALESCE(Tournament.start_time, Tournament.end_time,
 Tournament.created_at), same as deactivate_pre_cutoff_players.py. A
 LAN/global-tier placement counts regardless of what Tournament.region
@@ -55,6 +66,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.bot import BotProfile  # noqa: E402
+from app.models.osirion import OsirionTournamentMapping  # noqa: E402
 from app.models.player import Player, Position  # noqa: E402
 from app.models.tournament import PlacementResult, Tournament, TournamentType  # noqa: E402
 from app.models.user import User  # noqa: E402
@@ -66,21 +78,61 @@ from app.services.house_account import HOUSE_ACCOUNT_EMAIL  # noqa: E402
 # set ever changes.
 LAN_TOURNAMENT_TYPES = (TournamentType.GLOBAL_CHAMPIONSHIP, TournamentType.MAJOR)
 
+# Mirrors app/services/osirion_service.py's _ZERO_BUILD_MARKERS (not
+# imported, same reasoning as above). Checked against every text field
+# Osirion's own naming convention could carry a "ZB" marker in -- see
+# osirion_service._is_zero_build's docstring for why it's spread across
+# eventGroup/eventId/display name/playlistId there; here we only have
+# what actually got persisted (Tournament.name, and the tracked mapping's
+# own ids/display name), which is enough since all of those observed
+# "ZB" tournaments carry the marker directly in their name/eventId.
+_ZERO_BUILD_MARKERS = ("zb", "no build", "nobuild", "no-build")
 
-def _players_in_scope(db: Session, min_year: int, regions: list[str]) -> set:
-    """Players with at least one real placement that is BOTH dated
-    min_year-or-later AND (region in `regions` OR a LAN/global tier) --
-    checked on the same placement/tournament row, not as two independent
-    filters. Doing it as two separate passes (keep if any placement is
-    recent; separately, keep if any placement is in-region) would wrongly
-    spare a player whose only recent placement is out-of-region and whose
-    only in-region placement is stale -- neither placement alone satisfies
-    the real requirement, but a naive two-pass check would let both
-    conditions be satisfied by two DIFFERENT placements and incorrectly
-    treat the player as in scope."""
+
+def _find_zero_build_tournament_ids(db: Session) -> dict:
+    """Returns {tournament_id: tournament_name} for every tracked
+    Tournament whose own name or Osirion mapping ids/display name contain
+    a Zero Build marker. These should never have been auto-tracked (see
+    osirion_service._is_zero_build) -- this exists because that check only
+    runs on the AUTOMATIC track path, not on a tournament tracked manually
+    via the admin UI, so a legacy manually-tracked ZB tournament can still
+    be sitting in the database. This function only FINDS them -- see this
+    script's main() for what happens to players whose only placements come
+    from one of these; the Tournament row itself is never touched here
+    (if it's already FINALIZED, real dividends may already have been paid
+    out on it -- unwinding that is a separate, deliberately-not-automated
+    decision, same reasoning as every other script in this folder)."""
+    found: dict = {}
+    rows = (
+        db.query(Tournament.id, Tournament.name, OsirionTournamentMapping.leaderboard_event_id,
+                  OsirionTournamentMapping.leaderboard_event_window_id, OsirionTournamentMapping.osirion_display_name)
+        .outerjoin(OsirionTournamentMapping, OsirionTournamentMapping.tournament_id == Tournament.id)
+        .all()
+    )
+    for tournament_id, name, leaderboard_event_id, leaderboard_event_window_id, osirion_display_name in rows:
+        haystack = " ".join(
+            filter(None, [name, leaderboard_event_id, leaderboard_event_window_id, osirion_display_name])
+        ).lower()
+        if any(marker in haystack for marker in _ZERO_BUILD_MARKERS):
+            found[tournament_id] = name
+    return found
+
+
+def _players_in_scope(db: Session, min_year: int, regions: list[str], zero_build_tournament_ids: set) -> set:
+    """Players with at least one real placement that is dated min_year-or-later
+    AND (region in `regions` OR a LAN/global tier) AND NOT from a Zero Build
+    tournament -- all checked on the SAME placement/tournament row, not as
+    independent filters. Doing any of these as separate passes (keep if any
+    placement is recent; separately, keep if any placement is in-region;
+    separately, keep if any placement isn't ZB) would wrongly spare a player
+    whose only recent, in-region placement happens to be from a ZB
+    tournament and whose only non-ZB placement is stale/out-of-region --
+    no single placement actually satisfies every real requirement, but a
+    naive multi-pass check would let different placements each satisfy one
+    condition and incorrectly treat the player as in scope."""
     tournament_year = func.coalesce(Tournament.start_time, Tournament.end_time, Tournament.created_at)
     upper_regions = [r.strip().upper() for r in regions]
-    rows = (
+    query = (
         db.query(PlacementResult.player_id)
         .join(Tournament, Tournament.id == PlacementResult.tournament_id)
         .filter(extract("year", tournament_year) >= min_year)
@@ -90,9 +142,10 @@ def _players_in_scope(db: Session, min_year: int, regions: list[str]) -> set:
                 Tournament.tournament_type.in_(LAN_TOURNAMENT_TYPES),
             )
         )
-        .distinct()
-        .all()
     )
+    if zero_build_tournament_ids:
+        query = query.filter(Tournament.id.notin_(zero_build_tournament_ids))
+    rows = query.distinct().all()
     return {r[0] for r in rows}
 
 
@@ -135,7 +188,17 @@ def main() -> None:
     db = SessionLocal()
     try:
         total_active = db.query(func.count(Player.id)).filter(Player.is_active.is_(True)).scalar() or 0
-        in_scope_ids = _players_in_scope(db, args.min_year, args.regions)
+
+        zero_build_tournaments = _find_zero_build_tournament_ids(db)
+        if zero_build_tournaments:
+            print(f"Found {len(zero_build_tournaments)} tracked tournament(s) with a Zero Build marker "
+                  "in their name/ids -- placements from these never count toward scope:")
+            for tid, name in zero_build_tournaments.items():
+                pcount = db.query(func.count(PlacementResult.id)).filter(PlacementResult.tournament_id == tid).scalar() or 0
+                print(f"  - id={tid}  name={name!r}  placements={pcount}")
+            print()
+
+        in_scope_ids = _players_in_scope(db, args.min_year, args.regions, set(zero_build_tournaments.keys()))
 
         candidates = (
             db.query(Player)
