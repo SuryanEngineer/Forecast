@@ -104,11 +104,27 @@ def _real_user_ids(db: Session) -> set:
 
 
 def _build_groups(db: Session) -> list[list[Player]]:
-    players = db.query(Player).filter(Player.is_active.is_(True)).all()
+    """Groups by clean_gamertag() across BOTH active and inactive players
+    (not just active, unlike find_duplicate_players.py) -- a player who
+    made FNCS Global Championship / EWC almost certainly has real regular-
+    season FNCS Division history somewhere, but if that history is from a
+    region outside the current NAC/EU scope, scripts/deactivate_out_of_
+    scope_players.py would have already deactivated that "home" identity
+    while the LAN appearance (region-exempt) stayed active -- leaving
+    exactly this script's earlier active-only scan blind to it. Excludes
+    any gamertag already carrying a "[MERGED INTO ...]" tombstone marker
+    (from a previous run of this script) -- clean_gamertag() strips ALL
+    bracket segments, so a tombstone's own cleaned name collapses back to
+    its original one and would otherwise look like a fresh duplicate of
+    the player it was already merged into."""
+    players = db.query(Player).filter(~Player.gamertag.startswith("[MERGED INTO")).all()
     groups: dict = defaultdict(list)
     for p in players:
         groups[clean_gamertag(p.gamertag).lower()].append(p)
-    return [g for g in groups.values() if len(g) > 1]
+    # Only groups with at least one currently-active member are worth
+    # surfacing -- a group that's entirely inactive has nothing bearing on
+    # the current roster.
+    return [g for g in groups.values() if len(g) > 1 and any(p.is_active for p in g)]
 
 
 def _placement_count(db: Session, player_id) -> int:
@@ -117,7 +133,8 @@ def _placement_count(db: Session, player_id) -> int:
 
 def _describe(db: Session, p: Player) -> str:
     pcount = _placement_count(db, p.id)
-    return f"id={p.id}  gamertag={p.gamertag!r}  placements={pcount}"
+    status = "active" if p.is_active else "INACTIVE (region/year out of scope)"
+    return f"id={p.id}  gamertag={p.gamertag!r}  placements={pcount}  status={status}  region={p.region}"
 
 
 def _why_unsafe_to_merge_away(db: Session, player_id, real_user_ids: set) -> str | None:
@@ -204,6 +221,18 @@ def _merge_player(db: Session, source: Player, target: Player) -> dict:
     source.gamertag = merged_label[:100]
     source.is_active = False
 
+    # The target is, by definition, a confirmed currently-relevant real
+    # competitor (the whole premise of this merge) -- if it had been
+    # deactivated earlier (e.g. its own regular-season history is from a
+    # region outside the current NAC/EU scope, while this LAN appearance
+    # is region-exempt), reactivate it now rather than leaving a
+    # newly-consolidated, richer-history identity sitting inactive.
+    if not target.is_active:
+        summary["target_reactivated"] = True
+        target.is_active = True
+    else:
+        summary["target_reactivated"] = False
+
     db.commit()
     return summary
 
@@ -274,7 +303,8 @@ def main() -> None:
                     print(f"  SKIPPED {p.id} ({p.gamertag!r}) -- {reason}. Left completely untouched.")
                     continue
                 summary = _merge_player(db, p, target)
-                print(f"  Merged {p.id} ({p.gamertag!r}) into {target.id} ({target.gamertag!r}): "
+                reactivated_note = " (target was inactive -- reactivated)" if summary["target_reactivated"] else ""
+                print(f"  Merged {p.id} ({p.gamertag!r}) into {target.id} ({target.gamertag!r}){reactivated_note}: "
                       f"{summary['mappings_moved']} mapping(s), {summary['placements_moved']} placement(s) moved "
                       f"({summary['placements_conflicted']} skipped as duplicate tournament), "
                       f"{summary['dividends_moved']} dividend payout(s) moved "
