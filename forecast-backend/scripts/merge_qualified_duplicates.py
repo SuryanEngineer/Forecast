@@ -13,15 +13,29 @@ rules for each LAN circuit, instead of pure string similarity:
 
   FNCS Global Championship (tags containing "FNCSGC" / "GC26" / "GLOBAL"):
     Per Epic's published 2026 FNCS rules, a Duo reaches the Global
-    Championship by result in the REGULAR FNCS season -- the Major 1
-    Summit, Major 2 (which awarded direct GC slots), or the Global
-    Championship Last Chance qualifier. In this codebase those regular-
-    season results are tracked as TournamentType.MAJOR / FNCS_FINALS /
-    FNCS_QUALIFIER placements (never CASH_CUP, never GLOBAL_CHAMPIONSHIP
-    itself -- that's the LAN row we're trying to resolve). So for a
-    FNCSGC-tagged needle, candidates are restricted to players who have
-    at least one REAL placement in one of those three regular-season
-    tournament types. This is a structural, rules-based filter, not a
+    Championship by result in the REGULAR FNCS season -- the Division 1
+    regular rounds and the Global Championship Last Chance qualifier.
+
+    IMPORTANT, confirmed against real production data via
+    scripts/inspect_fncs_classification.py: TournamentType.MAJOR and
+    FNCS_QUALIFIER are never actually produced by any classification rule
+    in this codebase (they exist on the enum but no rule maps to them),
+    and the real "FNCS Division 1 -- Round N" tournaments are classified
+    as CASH_CUP (a deliberate product decision for payout purposes, but
+    it means `tournament_type` can't be used to find them), while "FNCS
+    Global Championship Last Chance -- Round N" -- an ONLINE QUALIFIER,
+    not the LAN itself -- is misclassified as GLOBAL_CHAMPIONSHIP because
+    its name contains that substring (a real classification bug, flagged
+    separately; it means that qualifier round is probably being paid out
+    on the same curve as the actual LAN Final).
+
+    Given all that, this script does NOT filter by tournament_type for
+    FNCSGC at all. It filters by tournament NAME instead: a player
+    qualifies into the candidate pool if they have a real placement in a
+    tournament named "FNCS Division 1" (excluding "Practice" rounds --
+    those are explicitly non-qualifying per the product decision above)
+    or containing "Last Chance". This is a structural, rules-based
+    filter grounded in what these tournaments actually are, not a
     spelling heuristic -- if nobody in that restricted set resembles the
     needle, that's real evidence the regular-season identity was never
     tracked here (e.g. they qualified through a region/split this app
@@ -90,19 +104,23 @@ from app.models.dividend import DividendLineItem, DividendPayout  # noqa: E402
 from app.models.order import Order, Trade  # noqa: E402
 from app.models.osirion import OsirionPlayerMapping  # noqa: E402
 from app.models.player import Player, Position  # noqa: E402
-from app.models.tournament import PlacementResult, Tournament, TournamentType  # noqa: E402
+from app.models.tournament import PlacementResult, Tournament  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.house_account import HOUSE_ACCOUNT_EMAIL  # noqa: E402
 from app.services.osirion_service import clean_gamertag  # noqa: E402
 
 _TOMBSTONE_PREFIX = "[MERGED INTO"
 
-# The real regular-season FNCS tournament types that feed Global
-# Championship qualification per Epic's published 2026 FNCS rules
-# (Major 1 Summit, Major 2 direct slots, Global Championship Last Chance).
-# Deliberately excludes CASH_CUP (not a GC qualifying path) and
-# GLOBAL_CHAMPIONSHIP (the LAN event itself).
-GC_QUALIFYING_TYPES = {TournamentType.MAJOR, TournamentType.FNCS_FINALS, TournamentType.FNCS_QUALIFIER}
+# The real regular-season FNCS tournaments that feed Global Championship
+# qualification, identified by NAME rather than tournament_type -- see the
+# module docstring for why: MAJOR/FNCS_QUALIFIER are never actually
+# produced by any classification rule, "FNCS Division 1" (non-practice)
+# rounds are classified as CASH_CUP, and "Last Chance" qualifier rounds
+# are misclassified as GLOBAL_CHAMPIONSHIP. Name matching is what actually
+# finds the right tournaments given that reality.
+# "FNCS Division 1 Practice" rounds are deliberately excluded -- per the
+# product decision in tournament_classification_service.py, those are
+# explicitly non-qualifying practice lobbies, not real qualifying rounds.
 
 _FNCSGC_MARKERS = ("FNCSGC", "GC26", "GC25", "GLOBALCHAMPIONSHIP", "GLOBAL CHAMPIONSHIP")
 _EWC_MARKERS = ("EWC",)
@@ -294,18 +312,29 @@ def main() -> None:
         print()
 
         print("STEP 2: Building the qualification-restricted candidate pool for FNCSGC needles...")
+        gc_qualifying_tournaments = (
+            db.query(Tournament)
+            .filter(
+                (Tournament.name.ilike("%fncs division%") & ~Tournament.name.ilike("%practice%"))
+                | Tournament.name.ilike("%last chance%")
+            )
+            .all()
+        )
+        print(f"  Found {len(gc_qualifying_tournaments)} real GC-qualifying tournament(s) by name "
+              f"('FNCS Division' excluding 'Practice', or 'Last Chance'):")
+        for t in gc_qualifying_tournaments:
+            print(f"    - {t.name!r} (type={t.tournament_type.value}, region={t.region})")
+        gc_qualifying_tournament_ids = {t.id for t in gc_qualifying_tournaments}
         qualified_player_ids = {
             r[0]
             for r in (
                 db.query(PlacementResult.player_id)
-                .join(Tournament, Tournament.id == PlacementResult.tournament_id)
-                .filter(Tournament.tournament_type.in_(GC_QUALIFYING_TYPES))
+                .filter(PlacementResult.tournament_id.in_(gc_qualifying_tournament_ids))
                 .distinct()
                 .all()
             )
-        }
-        print(f"  {len(qualified_player_ids)} player(s) have a real placement in a GC-qualifying tournament type "
-              f"({', '.join(t.value for t in GC_QUALIFYING_TYPES)}).")
+        } if gc_qualifying_tournament_ids else set()
+        print(f"  {len(qualified_player_ids)} player(s) have a real placement in one of these.")
         print()
 
         all_players = db.query(Player).filter(~Player.gamertag.startswith(_TOMBSTONE_PREFIX)).all()
