@@ -256,13 +256,34 @@ def main() -> None:
         )
         print("=" * 100)
         print("STEP 1: Checking whether this database tracks the EWC qualifying pathway (Reload Elite Series)...")
+        # NOTE: having SOME tournament with "reload" in the name is not the same as having the actual
+        # RES regional qualifiers tracked -- the 2024 "Reload Cash Cup" rows below are two years stale and
+        # irrelevant to 2026 EWC qualification, and the one real 2026 "Reload Elite Series Championship"
+        # row IS the EWC LAN itself (where the needles' own placements come from), not a regular-season
+        # identity to merge into. So this script restricts EWC candidates to players with a REAL placement
+        # in one of these tournaments too, exactly like the FNCSGC restriction below -- it does not just
+        # take "a Reload tournament exists somewhere" as license to trust the full unrestricted search.
+        reload_qualified_player_ids = {
+            r[0]
+            for r in (
+                db.query(PlacementResult.player_id)
+                .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+                .filter(Tournament.name.ilike("%reload%"))
+                .distinct()
+                .all()
+            )
+        }
         if reload_tournaments:
             print(f"  Found {len(reload_tournaments)} tournament(s) with 'Reload' in the name:")
             for t in reload_tournaments:
                 print(f"    - {t.name!r} (type={t.tournament_type.value}, region={t.region})")
-            print("  EWC candidates below CAN be evaluated against real qualifying placements.")
+            print(f"  {len(reload_qualified_player_ids)} player(s) have a real placement in one of these. EWC "
+                  f"candidates below are restricted to that pool -- but note most of these rows are 2024 Reload "
+                  f"Cash Cups (stale, pre-dates the current roster) or the EWC LAN itself, so this pool is likely "
+                  f"thin or empty even though the check technically 'passes'.")
             ewc_verified = True
         else:
+            reload_qualified_player_ids = set()
             print("  None found. The 2026 EWC Fortnite event qualifies through the Reload Elite Series (RES) -- a "
                   "separate game mode (Fortnite Reload, not Battle Royale) with its own regional qualifiers. This app "
                   "has no TournamentType for Reload and, confirmed above, no tracked Reload tournaments. That means "
@@ -290,6 +311,7 @@ def main() -> None:
         all_players = db.query(Player).filter(~Player.gamertag.startswith(_TOMBSTONE_PREFIX)).all()
         full_haystack = [(p, clean_gamertag(p.gamertag).lower()) for p in all_players]
         qualified_haystack = [(p, core) for p, core in full_haystack if p.id in qualified_player_ids]
+        reload_qualified_haystack = [(p, core) for p, core in full_haystack if p.id in reload_qualified_player_ids]
 
         needles = [p for p in all_players if p.is_active and p.gamertag.startswith("[") and len(p.placement_results) <= 2]
 
@@ -309,9 +331,12 @@ def main() -> None:
                 haystack = qualified_haystack
                 label = "QUALIFICATION-RESTRICTED (real FNCS Major/Qualifier/Finals placement -- the actual GC pathway)"
             elif circuit == "ewc":
-                haystack = full_haystack
-                label = "VERIFIED (real tracked Reload/RES placement)" if ewc_verified else \
-                    "UNVERIFIED (no Reload/RES data tracked -- spelling similarity only, no qualification signal)"
+                if ewc_verified:
+                    haystack = reload_qualified_haystack
+                    label = "QUALIFICATION-RESTRICTED (real placement in a tracked Reload/RES tournament)"
+                else:
+                    haystack = full_haystack
+                    label = "UNVERIFIED (no Reload/RES data tracked -- spelling similarity only, no qualification signal)"
             else:
                 haystack = full_haystack
                 label = "untagged circuit -- full-database spelling search, same as merge_fuzzy_duplicates.py"
@@ -326,6 +351,10 @@ def main() -> None:
                     print("    No candidates found in the qualification-restricted pool, even at this threshold. "
                           "Real evidence this player's regular-season FNCS result isn't tracked here (likely a "
                           "region/split this app doesn't track), not a search gap.")
+                elif circuit == "ewc" and ewc_verified:
+                    print("    No candidates found in the Reload/RES-qualified pool, even at this threshold. Most "
+                          "tracked Reload tournaments are 2024 Cash Cups or the EWC LAN itself, so an empty result "
+                          "here is expected, not a search gap.")
                 else:
                     print("    No candidates found above threshold.")
                 continue
