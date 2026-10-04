@@ -92,6 +92,7 @@ import argparse
 import re
 import sys
 import uuid
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
 sys.path.insert(0, ".")
@@ -311,7 +312,7 @@ def main() -> None:
             ewc_verified = False
         print()
 
-        print("STEP 2: Building the qualification-restricted candidate pool for FNCSGC needles...")
+        print("STEP 2: Building the qualification-restricted candidate pool for FNCSGC needles (all regions)...")
         gc_qualifying_tournaments = (
             db.query(Tournament)
             .filter(
@@ -321,26 +322,79 @@ def main() -> None:
             .all()
         )
         print(f"  Found {len(gc_qualifying_tournaments)} real GC-qualifying tournament(s) by name "
-              f"('FNCS Division' excluding 'Practice', or 'Last Chance'):")
+              f"('FNCS Division' excluding 'Practice', or 'Last Chance') -- deliberately NOT filtered by region, "
+              f"since GC draws qualifiers from every region:")
+        by_region: dict[str, int] = {}
         for t in gc_qualifying_tournaments:
-            print(f"    - {t.name!r} (type={t.tournament_type.value}, region={t.region})")
-        gc_qualifying_tournament_ids = {t.id for t in gc_qualifying_tournaments}
-        qualified_player_ids = {
-            r[0]
-            for r in (
-                db.query(PlacementResult.player_id)
-                .filter(PlacementResult.tournament_id.in_(gc_qualifying_tournament_ids))
-                .distinct()
+            print(f"    - {t.name!r} (type={t.tournament_type.value}, region={t.region}, start={t.start_time})")
+            by_region[t.region or "None"] = by_region.get(t.region or "None", 0) + 1
+        print(f"  Region breakdown: {by_region}" + (
+            "  -- only one region present; if other regions' FNCS Division/Last Chance rounds exist in Osirion "
+            "but aren't tracked here, those duos structurally can't be matched yet (a tracking gap, not a search "
+            "gap)." if len(by_region) <= 1 else ""
+        ))
+        # player_id -> list of (tournament) they have a real placement in, for the GC-qualifying pool.
+        # Kept as tournament objects (not just ids) so each needle can be restricted to tournaments from
+        # its OWN chapter/season below, not just "any GC-qualifying tournament ever tracked."
+        gc_qualifying_placements: list[tuple, ] = []  # type: ignore[type-arg]
+        if gc_qualifying_tournaments:
+            gc_qualifying_placements = list(
+                db.query(PlacementResult.player_id, Tournament)
+                .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+                .filter(Tournament.id.in_({t.id for t in gc_qualifying_tournaments}))
                 .all()
             )
-        } if gc_qualifying_tournament_ids else set()
-        print(f"  {len(qualified_player_ids)} player(s) have a real placement in one of these.")
+        print(f"  {len({pid for pid, _ in gc_qualifying_placements})} player(s) have a real placement in one of "
+              f"these, across all regions/rounds (further narrowed to the needle's own chapter below).")
         print()
 
         all_players = db.query(Player).filter(~Player.gamertag.startswith(_TOMBSTONE_PREFIX)).all()
         full_haystack = [(p, clean_gamertag(p.gamertag).lower()) for p in all_players]
-        qualified_haystack = [(p, core) for p, core in full_haystack if p.id in qualified_player_ids]
-        reload_qualified_haystack = [(p, core) for p, core in full_haystack if p.id in reload_qualified_player_ids]
+        player_by_id = {p.id: p for p in all_players}
+        reload_qualifying_placements: list[tuple] = []
+        if reload_tournaments:
+            reload_qualifying_placements = list(
+                db.query(PlacementResult.player_id, Tournament)
+                .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+                .filter(Tournament.id.in_({t.id for t in reload_tournaments}))
+                .all()
+            )
+
+        _CHAPTER_LOOKBACK = timedelta(days=365)
+
+        def _needle_chapter_window(needle_player: Player) -> tuple[datetime | None, datetime | None]:
+            """The needle's OWN tournament (the LAN placement that gave it its tag) anchors its
+            'chapter' -- the qualifying rounds that could plausibly feed that specific LAN appearance
+            are the ones within the year leading up to it, not every round this app has ever tracked.
+            This is the literal implementation of 'only look at finals lobbies from the same chapter,
+            not all of the rounds of FNCS' -- a GC25 duo's qualifying rounds should never be searched
+            against GC26 Division data and vice versa."""
+            rows = (
+                db.query(Tournament.start_time)
+                .join(PlacementResult, PlacementResult.tournament_id == Tournament.id)
+                .filter(PlacementResult.player_id == needle_player.id, Tournament.start_time.isnot(None))
+                .all()
+            )
+            start_times = [r[0] for r in rows]
+            if not start_times:
+                return None, None
+            anchor = max(start_times)
+            return anchor - _CHAPTER_LOOKBACK, anchor
+
+        def _chapter_restricted_player_ids(placements: list[tuple], window: tuple[datetime | None, datetime | None]) -> set:
+            window_start, window_end = window
+            if window_start is None:
+                # Needle's own tournament has no start_time on record -- can't determine its chapter,
+                # so fall back to the full (unrestricted-by-time) qualifying pool rather than silently
+                # returning nothing.
+                return {pid for pid, _ in placements}
+            result_ids = set()
+            for pid, tournament in placements:
+                if tournament.start_time is None:
+                    continue  # can't place this placement in any chapter -- exclude rather than guess
+                if window_start <= tournament.start_time <= window_end:
+                    result_ids.add(pid)
+            return result_ids
 
         needles = [p for p in all_players if p.is_active and p.gamertag.startswith("[") and len(p.placement_results) <= 2]
 
@@ -357,12 +411,25 @@ def main() -> None:
             circuit = _classify_needle_circuit(needle.gamertag)
 
             if circuit == "fncsgc":
-                haystack = qualified_haystack
-                label = "QUALIFICATION-RESTRICTED (real FNCS Major/Qualifier/Finals placement -- the actual GC pathway)"
+                window = _needle_chapter_window(needle)
+                chapter_player_ids = _chapter_restricted_player_ids(gc_qualifying_placements, window)
+                haystack = [(p, core) for p, core in full_haystack if p.id in chapter_player_ids]
+                if window[0] is None:
+                    label = ("QUALIFICATION-RESTRICTED, ALL CHAPTERS (needle has no dated tournament on record, so "
+                              "chapter couldn't be narrowed -- real GC Division/Last Chance placement, any season)")
+                else:
+                    label = (f"QUALIFICATION-RESTRICTED TO SAME CHAPTER (real FNCS Division/Last Chance placement "
+                              f"between {window[0].date()} and {window[1].date()}, all regions)")
             elif circuit == "ewc":
                 if ewc_verified:
-                    haystack = reload_qualified_haystack
-                    label = "QUALIFICATION-RESTRICTED (real placement in a tracked Reload/RES tournament)"
+                    window = _needle_chapter_window(needle)
+                    chapter_player_ids = _chapter_restricted_player_ids(reload_qualifying_placements, window)
+                    haystack = [(p, core) for p, core in full_haystack if p.id in chapter_player_ids]
+                    if window[0] is None:
+                        label = "QUALIFICATION-RESTRICTED, ALL CHAPTERS (real Reload/RES placement, any season)"
+                    else:
+                        label = (f"QUALIFICATION-RESTRICTED TO SAME CHAPTER (real Reload/RES placement between "
+                                  f"{window[0].date()} and {window[1].date()})")
                 else:
                     haystack = full_haystack
                     label = "UNVERIFIED (no Reload/RES data tracked -- spelling similarity only, no qualification signal)"
