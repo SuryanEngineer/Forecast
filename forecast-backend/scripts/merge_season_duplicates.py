@@ -253,9 +253,18 @@ def _find_candidates(
         ratio = SequenceMatcher(None, needle_core, other_core).ratio()
         if ratio >= threshold:
             candidates.append((ratio, other))
-    # Rank by placement count first (the actual signal this script adds over pure fuzzy
-    # matching), similarity second as a tiebreak.
-    candidates.sort(key=lambda t: (_placement_count(db, t[1].id), t[0]), reverse=True)
+    # Rank by similarity first, placement count second. Ranking by placement count first (an
+    # earlier version of this script did that) actively misleads: within a season pool, ANY two
+    # players who happen to share a team tag (duo teammates, e.g. "[FNCSGC26] twis boltz" and
+    # "[FNCSGC26] twis acorn" are almost certainly two DIFFERENT real people, not duplicates) can
+    # cross the similarity floor just from that shared prefix, and the one with the most
+    # placements would always win regardless of whether the rest of the name matches at all --
+    # e.g. ranking 'T1 demuś 10' (ratio 0.53, 16 placements) above 'T1 darmboss' (ratio 0.78, 12
+    # placements) as the suggested match for needle '[EWC2026] T1 darm', which is backwards.
+    # Similarity-first means the needle's own distinctive name (not just its team tag) has to
+    # actually match for a candidate to rank highly; placement count remains visible and still
+    # matters for judging which direction to merge, just not as the primary sort.
+    candidates.sort(key=lambda t: (t[0], _placement_count(db, t[1].id)), reverse=True)
     return candidates[:_MAX_CANDIDATES_SHOWN]
 
 
@@ -314,15 +323,24 @@ def main() -> None:
                       "regular-season identity isn't tracked in this database at all (not a search gap).")
                 continue
 
-            suggested_idx, suggested = max(
-                enumerate(candidates, start=1), key=lambda pair: _placement_count(db, pair[1][1].id)
-            )
-            suggested_candidate = suggested[1]
+            # Candidates are already sorted similarity-first -- the suggested pick is simply the
+            # top of that list, same as merge_fuzzy_duplicates.py. Still shown with placement
+            # count and "last seen" context so you can sanity-check it's a real identity and not
+            # just a coincidentally-similar teammate.
+            suggested_idx = 1
+            suggested_candidate = candidates[0][1]
 
             for idx, (ratio, cand) in enumerate(candidates, start=1):
-                marker = "  <-- suggested (most placements)" if idx == suggested_idx else ""
+                marker = "  <-- suggested (best name match)" if idx == suggested_idx else ""
                 print(f"    [{idx}] ratio={ratio:.2f}  {_describe(db, cand)}{marker}")
                 print(f"          last seen: {_most_recent_tournament(db, cand.id)}")
+            if needle.gamertag[1:].split("]", 1)[0].strip().lower() in [
+                cand.gamertag[1:].split("]", 1)[0].strip().lower()
+                for _, cand in candidates if cand.gamertag.startswith("[")
+            ]:
+                print("    NOTE: at least one candidate shares this needle's bracketed team tag. Duos mean "
+                      "teammates often share a tag while being two different real people -- check that the "
+                      "name AFTER the tag actually matches, not just the tag itself.")
 
             if not args.confirm:
                 continue
