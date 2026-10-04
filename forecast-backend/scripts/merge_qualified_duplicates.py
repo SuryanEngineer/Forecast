@@ -265,6 +265,16 @@ def main() -> None:
     args = parser.parse_args()
 
     db = SessionLocal()
+    # Without this, SQLAlchemy's default expire-on-commit behavior marks every object already
+    # loaded in this session (including all ~89k Player rows in full_haystack below) as expired
+    # after db.commit() runs inside _merge_player. The next access to any of their attributes
+    # (e.g. `p.id` while filtering full_haystack for the following needle) then triggers its own
+    # individual round-trip query to re-fetch that one row -- for every player in the haystack,
+    # one at a time. With a haystack this large that looks exactly like a frozen script; it's
+    # actually ~90,000 sequential single-row SELECTs. Disabling expire-on-commit keeps the
+    # in-memory snapshot valid across commits, which is safe here since nothing in this script
+    # re-reads a merged player's OLD state after merging it (merges handle their own fresh reads).
+    db.expire_on_commit = False
     try:
         real_user_ids = _real_user_ids(db)
 

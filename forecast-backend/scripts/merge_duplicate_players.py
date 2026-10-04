@@ -245,6 +245,11 @@ def main() -> None:
     args = parser.parse_args()
 
     db = SessionLocal()
+    # Keeps already-loaded group members valid across each merge's db.commit() instead of
+    # expiring them (which would force an individual re-fetch query per player on next access) --
+    # see the identical comment/incident in scripts/merge_fuzzy_duplicates.py for the full story.
+    # Low-impact here given how few players are in a duplicate group, but cheap and consistent.
+    db.expire_on_commit = False
     try:
         real_user_ids = _real_user_ids(db)
         groups = _build_groups(db)
