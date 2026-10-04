@@ -240,27 +240,42 @@ def main() -> None:
             if not candidates:
                 continue
 
+            # Suggested default: whichever candidate has the most real placements -- almost
+            # always the established "home" identity vs. the needle's one-off LAN appearance.
+            # Still only a suggestion, not blind trust: the ratio/placement data for every
+            # candidate is printed above it, so accepting the default is an informed choice,
+            # not a guess. (Per user request -- originally this tool had no default at all,
+            # since fuzzy matches are lower-confidence than exact ones; the per-candidate data
+            # shown is what makes a default safe to offer now.)
+            suggested_idx, suggested = max(
+                enumerate(candidates, start=1), key=lambda pair: _placement_count(db, pair[1][1].id)
+            )
+            suggested_candidate = suggested[1]
+
             print("=" * 100)
             print(f"[{i}/{len(needles)}] Needle: {_describe(db, needle)}")
             for idx, (ratio, cand) in enumerate(candidates, start=1):
-                print(f"    [{idx}] ratio={ratio:.2f}  {_describe(db, cand)}")
+                marker = "  <-- suggested (most placements)" if idx == suggested_idx else ""
+                print(f"    [{idx}] ratio={ratio:.2f}  {_describe(db, cand)}{marker}")
 
             if not args.confirm:
                 continue
 
             choice = input(
-                "\n  Which one is genuinely the SAME real person? Enter a number, a player id, "
-                "'s' to skip, or 'q' to quit: "
+                f"\n  Which one is genuinely the SAME real person? [Enter for suggested [{suggested_idx}] "
+                f"{suggested_candidate.gamertag!r}] Enter a number, a player id, 's' to skip, or 'q' to quit: "
             ).strip()
             if choice.lower() == "q":
                 print("Quitting -- no further needles processed.")
                 return
-            if choice.lower() == "s" or not choice:
+            if choice.lower() == "s":
                 print("  Skipped.")
                 continue
 
             chosen = None
-            if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+            if not choice:
+                chosen = suggested_candidate
+            elif choice.isdigit() and 1 <= int(choice) <= len(candidates):
                 chosen = candidates[int(choice) - 1][1]
             elif _looks_like_uuid(choice):
                 chosen = db.get(Player, uuid.UUID(choice))
