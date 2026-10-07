@@ -32,7 +32,9 @@ it -- it is left untouched and flagged. Placements/dividends colliding with the 
 for the same tournament are skipped and reported. Merged-away rows are tombstoned
 ("[MERGED INTO ...]") and deactivated; an inactive target is reactivated. A player claimed
 by two different pros is dropped from both and reported. If the pro name is already used
-by an unrelated player, the rename is skipped and reported (nothing is merged by name).
+by another player, that player is merged into the target too (so the rename can happen); the
+only exception is when it is itself another pro's surviving player, then the rename is skipped
+and reported.
 
 Usage:
     cd forecast-backend
@@ -260,10 +262,17 @@ def main() -> None:
                 not_found.append(label)
                 print(f"{label}: NOT FOUND (Epic ID(s) not in the database; no unique exact LAN-name match).")
                 continue
+            pro_name = g["pro"].strip()
+            # A player already carrying exactly the pro name (case-insensitive) is the same person
+            # (the sheet's Epic ID / LAN account is the verified link; a stray row of the same name is
+            # that pro's own duplicate) -- merge it in so the rename can happen.
+            have = {p.id for p, _ in g["sources"]}
+            for p in by_exact_lower.get(pro_name.casefold(), []):
+                if p.id != target.id and p.id not in have:
+                    g["sources"].append((p, f"already named {pro_name!r}"))
             # a different pro's target can never be this pro's source
             g["sources"] = [(p, r) for p, r in g["sources"] if p.id not in main_targets]
 
-            pro_name = g["pro"].strip()
             rename = bool(pro_name) and target.gamertag != pro_name
             source_ids = {p.id for p, _ in g["sources"]}
             blockers = [p for p in by_exact_lower.get(pro_name.casefold(), [])
