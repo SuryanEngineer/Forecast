@@ -67,9 +67,27 @@ from app.models.order import Order, Trade  # noqa: E402
 from app.models.osirion import OsirionPlayerMapping, OsirionTournamentMapping  # noqa: E402
 from app.models.player import Player, Position  # noqa: E402
 from app.models.tournament import PlacementResult, Tournament, TournamentStatus  # noqa: E402
+from scripts.deactivate_out_of_scope_players import (  # noqa: E402
+    LAN_TOURNAMENT_TYPES,
+    _find_zero_build_tournament_ids,
+    _players_in_scope,
+)
 from scripts.merge_fuzzy_duplicates import _TOMBSTONE_PREFIX, _real_user_ids  # noqa: E402
 
 STATE_FILE = Path("roster_reset_state.json")
+
+
+def classify_tournament(t: Tournament, zero_build_ids: set, min_year: int, regions: list[str]) -> tuple[str, str]:
+    """('in_scope' | 'out_of_scope' | 'zero_build', reason). Same rule as
+    deactivate_out_of_scope_players.py, applied to the tournament instead of a player."""
+    if t.id in zero_build_ids:
+        return "zero_build", "Zero Build tournament (never counts)"
+    when = t.start_time or t.end_time or t.created_at
+    if when is not None and when.year < min_year:
+        return "out_of_scope", f"before {min_year}"
+    if t.tournament_type in LAN_TOURNAMENT_TYPES or (t.region or "").upper() in regions:
+        return "in_scope", "LAN/global tier" if t.tournament_type in LAN_TOURNAMENT_TYPES else f"region {t.region}"
+    return "out_of_scope", f"region {t.region!r} not in {'/'.join(regions)}"
 _DELETE_CHUNK = 1000
 _PHRASE = "RESET ROSTER"
 
@@ -95,7 +113,12 @@ def main() -> None:
                         help="Proceed even though real users hold/ordered/traded/were paid by players (their cash is NOT refunded).")
     parser.add_argument("--allow-unmapped-loss", action="store_true",
                         help="Proceed even though some finalized tournaments have no Osirion mapping and can't be re-pulled.")
+    parser.add_argument("--min-year", type=int, default=datetime.now().year,
+                        help="Rebuild only tournaments dated this year or later (default: current year).")
+    parser.add_argument("--regions", nargs="+", default=["NAC", "EU"],
+                        help="Regions that count (LAN/global tiers always count). Default: NAC EU.")
     args = parser.parse_args()
+    regions = [r.strip().upper() for r in args.regions]
 
     db = SessionLocal()
     db.expire_on_commit = False
@@ -139,11 +162,31 @@ def main() -> None:
             if real_user_ids else 0
         )
 
+        zero_build_ids = set(_find_zero_build_tournament_ids(db).keys())
+        scope = {t.id: classify_tournament(t, zero_build_ids, args.min_year, regions) for t in finalized_mapped}
+        placements_per_tournament = dict(
+            db.query(PlacementResult.tournament_id, func.count(PlacementResult.id)).group_by(PlacementResult.tournament_id).all()
+        )
+        rebuilt_players = _players_in_scope(
+            db, args.min_year, regions, zero_build_ids
+        )  # exactly the players an in-scope-only rebuild recreates
+
         print("WOULD WIPE (via cascade):")
         print(f"  players: {n_players}  (active {n_active}, merged-away tombstones {n_tomb})")
         print(f"  osirion player mappings: {n_maps}   placement results: {n_place}   dividend payouts: {n_pay}")
-        print("\nWOULD BE RE-PULLED FROM OSIRION by step 2:")
-        print(f"  {len(finalized_mapped)} finalized tournament(s) with an Osirion mapping")
+        print(f"\nTHE {len(finalized_mapped)} FINALIZED TOURNAMENT(S) WITH AN OSIRION MAPPING, AND WHAT STEP 2 DOES WITH EACH")
+        print(f"  (scope: {args.min_year}+ and region {'/'.join(regions)} or LAN/global tier; Zero Build never counts)")
+        print(f"  {'verdict':<13} {'date':<11} {'type':<20} {'region':<8} {'entrants now':>12}  name")
+        for t in finalized_mapped:
+            kind, reason = scope[t.id]
+            label = {"in_scope": "REBUILD", "out_of_scope": "skip*", "zero_build": "SKIP (ZB)"}[kind]
+            when = (t.start_time or t.end_time or t.created_at)
+            print(f"  {label:<13} {str(when.date()) if when else '?':<11} {t.tournament_type.value:<20} "
+                  f"{str(t.region):<8} {placements_per_tournament.get(t.id, 0):>12}  {t.name}  [{reason}]")
+        print("  * out-of-scope tournaments are skipped by default; `resync_roster.py --with-history` can still attach "
+              "their results to players already on the roster (it never creates new players from them).")
+        print(f"\n  ROSTER AFTER AN IN-SCOPE REBUILD: {len(rebuilt_players)} player(s)   (vs {n_players} today, {n_active} active)")
+        print("  (counted from today's placements: exactly the players with a placement in a REBUILD tournament above)")
         print("\nREAL-USER EXPOSURE (real = not a bot, not House); cash is NOT refunded for any of this:")
         print(f"  open share positions: {real_positions}   orders: {real_orders}   dividend payouts received: "
               f"{real_dividends}   trades: {real_trades}")
@@ -184,7 +227,8 @@ def main() -> None:
             "export_dir": str(export_dir.resolve()),
             "tournaments": [
                 {"id": str(t.id), "name": t.name, "start_time": t.start_time.isoformat() if t.start_time else None,
-                 "was_historical_archive": bool(t.is_historical_archive)}
+                 "was_historical_archive": bool(t.is_historical_archive),
+                 "scope": scope[t.id][0], "scope_reason": scope[t.id][1]}
                 for t in finalized_mapped
             ],
             "done": [],

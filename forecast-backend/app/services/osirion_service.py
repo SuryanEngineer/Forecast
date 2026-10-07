@@ -394,8 +394,14 @@ def clean_gamertag(raw: str) -> str:
     return cleaned or raw.strip()
 
 
-def _match_player(db: Session, osirion_player: dict) -> Player | None:
-    """Finds (or creates) the Player for one Osirion competitor -- used
+def _match_player(db: Session, osirion_player: dict, create_missing: bool = True) -> Player | None:
+    """`create_missing=False` (only ever passed by scripts/resync_roster.py's
+    --with-history mode) makes this strictly look-up-only: someone who matches no
+    existing accountId mapping and no existing gamertag yields None instead of a
+    brand-new Player. That lets an out-of-scope tournament's results be attached to
+    players already on the roster without ever growing the roster itself.
+
+    Finds (or creates) the Player for one Osirion competitor -- used
     both for entrants discovered ahead of Finals (via a concluded heat's
     leaderboard, see `_seed_entrants_from_heat_windows`) and for anyone
     who only shows up once real placement results come in.
@@ -445,6 +451,8 @@ def _match_player(db: Session, osirion_player: dict) -> Player | None:
     player = db.query(Player).filter(Player.gamertag.ilike(escaped_username, escape="\\")).one_or_none()
 
     if player is None:
+        if not create_missing:
+            return None
         player = player_service.create_player(db, gamertag=cleaned_username)
         logger.info("Auto-created a real tradeable stock for Osirion competitor '%s' (raw: '%s')", cleaned_username, username)
 
@@ -619,8 +627,14 @@ class SyncResult:
     error: str | None = None
 
 
-def sync_tournament(db: Session, mapping: OsirionTournamentMapping, skip_finalize: bool = False) -> SyncResult:
-    """`skip_finalize=True` (only ever passed by backfill_historical_tournaments)
+def sync_tournament(
+    db: Session, mapping: OsirionTournamentMapping, skip_finalize: bool = False, create_missing_players: bool = True
+) -> SyncResult:
+    """`create_missing_players=False` (only ever passed by scripts/resync_roster.py's
+    --with-history mode) attaches placements only to players that already exist; it never
+    creates a new Player -- see `_match_player`.
+
+    `skip_finalize=True` (only ever passed by backfill_historical_tournaments)
     still does everything a normal sync does -- walks the full leaderboard,
     matches/creates real Player stocks, writes real PlacementResult rows,
     archives the raw results -- but once the window is fully synced, marks
@@ -692,7 +706,7 @@ def sync_tournament(db: Session, mapping: OsirionTournamentMapping, skip_finaliz
                 eliminations = _extract_eliminations(entry)
                 for osirion_player in entry.get("players", []):
                     result.entries_seen += 1
-                    player = _match_player(db, osirion_player)
+                    player = _match_player(db, osirion_player, create_missing=create_missing_players)
                     if player is None:
                         if osirion_player.get("username"):
                             result.unmatched_usernames.append(osirion_player["username"])
