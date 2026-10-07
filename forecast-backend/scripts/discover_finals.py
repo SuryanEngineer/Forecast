@@ -126,7 +126,8 @@ def main() -> None:
     ap.add_argument("--max-br", type=int, default=100, help="Max entries in a Battle Royale finals lobby (default 100).")
     ap.add_argument("--max-reload", type=int, default=40, help="Max entries in a Reload finals lobby (default 40).")
     ap.add_argument("--min-field", type=int, default=10, help="Min entries for a real finals field (default 10).")
-    ap.add_argument("--min-cash", type=float, default=0.0, help="Min top cash prize in USD (default: any > 0).")
+    ap.add_argument("--min-cash", type=float, default=1000.0,
+                    help="Min top cash prize in USD (default 1000; filters tiny side-windows like a $500 'Major').")
     ap.add_argument("--ignore-exclude-rules", action="store_true")
     ap.add_argument("--grep", default="")
     ap.add_argument("--show-failed", action="store_true")
@@ -153,7 +154,7 @@ def main() -> None:
         for event_id, group in by_event.items():
             best = None
             best_cash = Decimal("-1")
-            reasons = []
+            reasons = []  # (window, why, top cash seen) -- the report shows the reason for the closest-to-passing window
             for w in group:
                 when = w.begin_time or w.end_time
                 if when is None or when.year < args.min_year:
@@ -162,35 +163,36 @@ def main() -> None:
                 if args.grep and args.grep.lower() not in hay:
                     continue
                 if w.is_zero_build:
-                    reasons.append((w, "zero build"))
+                    reasons.append((w, "zero build", -1))
                     continue
                 if not (regions & {r.upper() for r in w.regions}):
-                    reasons.append((w, f"region {w.regions}"))
+                    reasons.append((w, f"region {w.regions}", -1))
                     continue
                 end = w.end_time
                 if end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) >= now:
-                    reasons.append((w, "not ended yet"))
+                    reasons.append((w, "not ended yet", -1))
                     continue
                 hit = None if args.ignore_exclude_rules else next(
                     (r for r in rules if r.pattern.lower() in w.classification_text.lower()), None)
                 if hit is not None and hit.tournament_type is None:
-                    reasons.append((w, f"excluded by rule '{hit.pattern}'"))
+                    reasons.append((w, f"excluded by rule '{hit.pattern}'", -1))
                     continue
                 sl = _score_location(w)
                 cash = cash_prize(sl)
                 if cash <= 0 or float(cash) < args.min_cash:
-                    reasons.append((w, "no cash prize"))
+                    reasons.append((w, "no cash prize" if cash <= 0 else f"top cash ${float(cash):,.0f} < min", float(cash)))
                     continue
                 kill, place, summary = scoring_summary(sl)
                 if not (kill and place):
-                    reasons.append((w, f"scoring: {summary}"))
+                    reasons.append((w, f"scoring: {summary}", float(cash)))
                     continue
                 if cash > best_cash:
                     best, best_cash = (w, hit, cash, summary), cash
             if best is not None:
                 cheap_pass.append(best)
             else:
-                for w, why in reasons[:1]:
+                if reasons:
+                    w, why, _ = max(reasons, key=lambda r: r[2])
                     failed.append((w, why))
 
         print(f"{len(by_event)} events; {len(cheap_pass)} pass cash+scoring+scope; checking each one's lobby size "
@@ -202,12 +204,13 @@ def main() -> None:
                 continue
             entries, players, note = field_size(w)
             cap = args.max_reload if is_reload(w) else args.max_br
+            size = players if players else entries  # compare PLAYERS (a duos lobby of 50 teams = 100 players)
             if entries is None:
                 failed.append((w, f"lobby size unknown ({note})"))
-            elif entries > cap:
-                failed.append((w, f"field {entries} entries > {cap} cap ({'reload' if is_reload(w) else 'BR'}) {note}"))
-            elif entries < args.min_field:
-                failed.append((w, f"field only {entries} entries"))
+            elif size > cap:
+                failed.append((w, f"field {size} players > {cap} cap ({'reload' if is_reload(w) else 'BR'}) {note}"))
+            elif size < args.min_field:
+                failed.append((w, f"field only {size} players"))
             else:
                 passed.append((w, hit, cash, summary, entries, players))
 
