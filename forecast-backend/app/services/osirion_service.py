@@ -247,8 +247,33 @@ def _pick_score_location(score_locations: list[dict]) -> dict:
 
 def list_available_windows(region: str | None = None, include_historic_data: bool = False) -> list[AvailableWindow]:
     """Flattens Osirion's /v1/tournaments response into one row per
-    trackable window, for an admin picker UI. See _pick_score_location for
-    which of a window's scoreLocations gets used."""
+    trackable window. See _pick_score_location for which of a window's
+    scoreLocations gets used.
+
+    IMPORTANT: Osirion's listing is PER REGION and silently defaults to EU
+    when no `region` is sent -- so a call with region=None used to return
+    only EU events (plus the shared ONSITE/LAN ones), and every NAC-only
+    tournament was invisible to auto-tracking, the historical backfill and
+    the discovery scripts. With region=None this now queries every region in
+    ALLOWED_TRACKING_REGIONS and merges the results (LAN events appear under
+    every region, so rows are de-duplicated by window). Passing an explicit
+    `region` behaves exactly as before."""
+    if region is not None:
+        return _list_windows_for_region(region, include_historic_data)
+
+    merged: list[AvailableWindow] = []
+    seen: set[tuple] = set()
+    for r in sorted(ALLOWED_TRACKING_REGIONS):
+        for w in _list_windows_for_region(r, include_historic_data):
+            key = (w.event_id, w.event_window_id, w.leaderboard_event_id, w.leaderboard_event_window_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(w)
+    return merged
+
+
+def _list_windows_for_region(region: str | None, include_historic_data: bool) -> list[AvailableWindow]:
     tournaments = osirion_client.list_tournaments(region=region, include_historic_data=include_historic_data)
     windows: list[AvailableWindow] = []
 
