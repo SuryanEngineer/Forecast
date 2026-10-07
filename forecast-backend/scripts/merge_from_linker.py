@@ -211,8 +211,13 @@ def main() -> None:
                         help="With --confirm: skip the prompts. Merge each pro's verified sources PLUS optional candidates "
                              "whose similarity is >= MIN_SIM (e.g. 0.85) and that are a candidate for exactly ONE pro "
                              "(a look-alike offered to two different pros is never auto-merged). Dry run marks them [auto].")
+    parser.add_argument("--exact-only", action="store_true",
+                        help="Trust only the sheet: merge accounts that match a sheet Epic ID or an exact sheet name "
+                             "(EWC/Global Championship names). No fuzzy look-alike suggestions, no prompts with --confirm.")
     parser.add_argument("--only", default="", help="Comma-separated Player IDs (e.g. P011,P130) to restrict to.")
     args = parser.parse_args()
+    if args.exact_only:
+        args.auto_optionals = 2.0  # prompt-free; no optional can reach similarity 2.0 (and none are generated)
 
     rows = load_rows(args.file)
     groups = build_groups(rows)
@@ -317,7 +322,7 @@ def main() -> None:
                     why = f"similarity {ratio:.2f}" + (f", contains pro name {g['pro']!r}" if contains else "")
                     optionals.append((max(ratio, 0.99 if contains else 0.0), p, why))
             optionals.sort(key=lambda t: t[0], reverse=True)
-            g["optionals"] = optionals[:_MAX_OPTIONALS]
+            g["optionals"] = [] if args.exact_only else optionals[:_MAX_OPTIONALS]
 
         import re as _re
         _optional_claims: dict = defaultdict(int)
