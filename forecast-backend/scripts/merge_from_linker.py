@@ -26,8 +26,8 @@ person as the pro. The MAIN (target) is the verified player that is not a
 bracket-tagged LAN row, preferring the most placements; every other verified
 player is merged into it.
 
-OPTIONAL (UNVERIFIED) candidates: active bracket-tagged LAN players that did NOT
-match by ID or exact name but whose name looks like this pro's (fuzzy similarity
+OPTIONAL (UNVERIFIED) candidates: active players with at most 2 placements (typically
+LAN-only accounts) that did NOT match by ID or exact name but whose name looks like this pro's (fuzzy similarity
 to the sheet names, or containing the pro's name). These are only ever merged if
 you explicitly pick them by number at the prompt -- never automatically.
 
@@ -276,7 +276,10 @@ def main() -> None:
         for g in groups:
             ranked = sorted(
                 g["verified"].values(),
-                key=lambda pr: (not is_lan_tagged(pr[0]), "epic-id" in pr[1], _placement_count(db, pr[0].id), pr[0].is_active),
+                # untagged first, then the player with the most placements (the established "home"
+                # identity), then epic-id evidence, then active -- placements outrank epic-id because
+                # the sheet's id may belong to the thin LAN account rather than the home account.
+                key=lambda pr: (not is_lan_tagged(pr[0]), _placement_count(db, pr[0].id), "epic-id" in pr[1], pr[0].is_active),
                 reverse=True,
             )
             g["target"] = ranked[0][0] if ranked else None
@@ -288,7 +291,10 @@ def main() -> None:
         lan_pool = [
             (p, skeleton(p.gamertag), clean_gamertag(p.gamertag).casefold())
             for p in all_players
-            if p.is_active and is_lan_tagged(p) and len(p.placement_results) <= 2
+            # Thin active players (<= 2 placements). Not restricted to bracket-tagged names: after a
+            # fresh re-sync (scripts/reset_roster.py) Osirion's tags are stripped at creation, so LAN
+            # accounts are plain-named.
+            if p.is_active and len(p.placement_results) <= 2
         ]
         claimed_ids = set(claims)
         for g in groups:
