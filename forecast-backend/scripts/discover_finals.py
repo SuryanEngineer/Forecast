@@ -9,7 +9,8 @@ A window counts as a finals when ALL of these hold:
                      placement points beyond just winning (PLACEMENT stat with points for places other than 1st).
   3. FINALS LOBBY    the leaderboard is one small field: <= 100 entries for Battle Royale, <= 40 for Reload
                      (and >= --min-field). Open qualifier / cup lobbies have hundreds or thousands of entrants.
-Per event, only the highest-paying window that passes is kept (so heats / earlier rounds of the same event drop out).
+Every window of an event that passes is kept (e.g. each weekly FNCS Division 1 final); qualifier-sized rounds drop out
+via the lobby-size check. LAN (ONSITE) events are the exception: one tournament over several days -> biggest window only.
 
 Also required: dated --min-year or later, region NAC/EU or ONSITE (LAN), not Zero Build, window already ended.
 Explicit exclude rules in tournament_classification_service (Performance Evaluation, Victory Cup) are still honoured
@@ -129,6 +130,9 @@ def main() -> None:
     ap.add_argument("--min-cash", type=float, default=1000.0,
                     help="Min top cash prize in USD (default 1000; filters tiny side-windows like a $500 'Major').")
     ap.add_argument("--ignore-exclude-rules", action="store_true")
+    ap.add_argument("--one-per-event", action="store_true",
+                    help="Keep only the highest-paying passing window per event (default: every passing window, "
+                         "except LAN events which are always one).")
     ap.add_argument("--grep", default="")
     ap.add_argument("--show-failed", action="store_true")
     ap.add_argument("--attempts", type=int, default=6)
@@ -152,8 +156,7 @@ def main() -> None:
         failed: list[tuple] = []
         cheap_pass: list[tuple] = []
         for event_id, group in by_event.items():
-            best = None
-            best_cash = Decimal("-1")
+            ok = []
             reasons = []  # (window, why, top cash seen) -- the report shows the reason for the closest-to-passing window
             for w in group:
                 when = w.begin_time or w.end_time
@@ -186,10 +189,16 @@ def main() -> None:
                 if not (kill and place):
                     reasons.append((w, f"scoring: {summary}", float(cash)))
                     continue
-                if cash > best_cash:
-                    best, best_cash = (w, hit, cash, summary), cash
-            if best is not None:
-                cheap_pass.append(best)
+                ok.append((w, hit, cash, summary))
+            if ok:
+                # A LAN (ONSITE) event is one tournament played over several day-windows -> keep only its biggest
+                # window. Everything else (e.g. FNCS Division 1 weekly rounds, each its own final lobby) keeps EVERY
+                # window that passes; the lobby-size check below is what drops qualifier-sized rounds.
+                is_lan = any("ONSITE" in {r.upper() for r in w.regions} for w, *_ in ok)
+                if is_lan or args.one_per_event:
+                    cheap_pass.append(max(ok, key=lambda t: t[2]))
+                else:
+                    cheap_pass.extend(ok)
             else:
                 if reasons:
                     w, why, _ = max(reasons, key=lambda r: r[2])

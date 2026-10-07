@@ -82,6 +82,8 @@ def main() -> None:
             mt = _ROUND_RE.match(t.name or "")
             if not mt:
                 return True, ""
+            if "fncs division" in (t.name or "").lower():
+                return True, ""  # each Division 1 round is its own 100-player final lobby (see discover_finals.py)
             key = (mt.group(1).strip().lower(), t.start_time.year if t.start_time else None)
             if int(mt.group(2)) == last_round.get(key):
                 return True, ""
