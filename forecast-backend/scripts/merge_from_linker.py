@@ -1,60 +1,45 @@
 #!/usr/bin/env python3
 """
-Merge LAN/duplicate accounts into each pro's MAIN account, driven by the
-hand-verified spreadsheet scripts/data/lan_main_linker.csv (converted from
-"LAN to Main Account Fortnite Linker.xlsx").
+Merge each pro's accounts into ONE player, driven by the hand-verified spreadsheet
+scripts/data/lan_main_linker.csv ("LAN to Main Account Fortnite Linker").
 
-Why this exists: every earlier merge script had to GUESS which rows are the same
-person from gamertag spelling and/or tournament overlap. The spreadsheet replaces
-guessing with verified ground truth: one row per (pro, Epic account), with the
-account's permanent Epic ID and the name it carried at EWC 2026 / the Global
-Championship. A pro who has two main accounts shows up on two rows sharing a
-Player ID (e.g. P130 "Ark" -- main "dignitas ark!" plus "dig ark2x", the account
-that won the NA West Last Chance Finals); all of a Player ID's rows are treated as
-ONE person and merged together.
+HOW IT WORKS (no pro-name matching, no fuzzy matching):
+  1. EPIC ID   Each sheet row's permanent Epic account ID is looked up in
+               OsirionPlayerMapping.osirion_account_id (already stored by every sync;
+               nothing external is queried). The player it points to is the pro's
+               SURVIVING player (the "target"). If a pro has several IDs (e.g. P130 Ark,
+               two rows) and they map to different players, the one with the most
+               placements survives and the others are merged into it.
+  2. LAN NAMES Any other player whose name EXACTLY equals one of the sheet's LAN
+               account names for that pro ("Account Name at EWC 2026", "... at Global
+               Championship", plus any name quoted in Notes) is merged into the target.
+               "Exactly" = ignoring [tags], case, accents, look-alike letters and
+               punctuation.
+  3. RENAME    The sheet's "Pro Name (auto)" becomes the target's gamertag, so the
+               display name is the one WE list, whatever the account calls itself in game.
+               (Future syncs still match the player by Epic account ID, so the name
+               never flips back.)
 
-HOW A ROW IS RESOLVED TO DATABASE PLAYERS (strongest evidence first):
-  1. EPIC ID  -- the sheet's permanent Epic ID, compared (case/dash-insensitive)
-                 against OsirionPlayerMapping.osirion_account_id. This is an exact
-                 identity match, no spelling involved.
-  2. EXACT NAME -- the sheet's EWC / Global Championship account names (and any
-                 name quoted in the Notes column), compared after removing bracket
-                 tags and normalizing case, accents and look-alike characters
-                 (Cyrillic "o" vs Latin "o", "ÿ" vs "y", decorative "!" etc.).
-Every database player found by either method is "verified" -- it is the same
-person as the pro. The MAIN (target) is the verified player that is not a
-bracket-tagged LAN row, preferring the most placements; every other verified
-player is merged into it.
+If a pro's Epic ID isn't in the database (e.g. a pro from another region who only shows up
+at LAN events) but players carrying the sheet's LAN account names exist, all of those are
+combined into one (most placements survives, marked [name-only]) and renamed to the pro
+name. Only a pro with neither an ID nor a LAN-name match is NOT FOUND. The pro name itself
+is never used to find players.
 
-OPTIONAL (UNVERIFIED) candidates: active players with at most 2 placements (typically
-LAN-only accounts) that did NOT match by ID or exact name but whose name looks like this pro's (fuzzy similarity
-to the sheet names, or containing the pro's name). These are only ever merged if
-you explicitly pick them by number at the prompt -- never automatically.
-
-SAFETY (reused from merge_fuzzy_duplicates.py, not re-implemented): a player is
-never merged away if a real (non-bot, non-House) user holds shares, has an order,
-received a dividend from it, or traded it -- it is left untouched and flagged.
-Placements/dividends that would collide with the target's own for the same
-tournament are skipped and reported. The merged-away row is tombstoned
-("[MERGED INTO ...]") and deactivated; an inactive target is reactivated. A
-player claimed by TWO different pros (name coincidence) is dropped from both and
-reported rather than merged anywhere. A player that is itself the main account
-of a different pro is never used as another pro's source.
-
-Pros with no main account in the database (only a LAN row exists, or nobody
-matched at all -- e.g. a region this app never ingested) are reported, not
-merged: there is nothing to merge INTO.
+SAFETY (reused from merge_fuzzy_duplicates.py): a player is never merged away if a real
+(non-bot, non-House) user holds shares, has an order, got a dividend from it, or traded
+it -- it is left untouched and flagged. Placements/dividends colliding with the target's
+for the same tournament are skipped and reported. Merged-away rows are tombstoned
+("[MERGED INTO ...]") and deactivated; an inactive target is reactivated. A player claimed
+by two different pros is dropped from both and reported. If the pro name is already used
+by an unrelated player, the rename is skipped and reported (nothing is merged by name).
 
 Usage:
     cd forecast-backend
-    python3 scripts/merge_from_linker.py                  # dry run: shows every
-                                                            pro's resolution, no writes
-    python3 scripts/merge_from_linker.py --confirm        # interactive, one prompt
-                                                            per pro that has something
-                                                            to merge
-    python3 scripts/merge_from_linker.py --only P011,P130 # restrict to some Player IDs
-    python3 scripts/merge_from_linker.py --file other.xlsx  # .csv or .xlsx (xlsx
-                                                            needs `pip install openpyxl`)
+    python3 scripts/merge_from_linker.py                   # dry run: no writes
+    python3 scripts/merge_from_linker.py --confirm         # apply (no prompts)
+    python3 scripts/merge_from_linker.py --only P001,P130  # restrict to some Player IDs
+    python3 scripts/merge_from_linker.py --file other.xlsx # .csv or .xlsx (needs openpyxl)
 """
 from __future__ import annotations
 
@@ -64,7 +49,6 @@ import re
 import sys
 import unicodedata
 from collections import defaultdict
-from difflib import SequenceMatcher
 from pathlib import Path
 
 sys.path.insert(0, ".")
@@ -84,8 +68,6 @@ from scripts.merge_fuzzy_duplicates import (  # noqa: E402
 )
 
 DEFAULT_FILE = Path(__file__).parent / "data" / "lan_main_linker.csv"
-_FUZZY_OPTIONAL_THRESHOLD = 0.72
-_MAX_OPTIONALS = 8
 
 # Look-alike characters used in Fortnite names (Cyrillic/Greek/etc. -> Latin).
 _HOMOGLYPHS = str.maketrans({
@@ -94,7 +76,6 @@ _HOMOGLYPHS = str.maketrans({
     "ν": "v", "ο": "o", "ρ": "p", "α": "a", "ι": "i", "τ": "t", "κ": "k", "ε": "e", "υ": "u",
     "β": "b", "ⅰ": "i", "ɑ": "a", "ı": "i", "ɡ": "g", "ø": "o", "đ": "d", "ł": "l",
 })
-_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _QUOTED = re.compile(r'["“]([^"”]+)["”]')
 
 
@@ -105,18 +86,12 @@ def skeleton(name: str) -> str:
     cleaned = clean_gamertag(name)
     decomposed = unicodedata.normalize("NFKD", cleaned)
     stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
-    # Keep letters/digits of ANY script (so a name like "QTD ふーくん" stays distinct from a bare "QTD"),
-    # but drop whitespace/punctuation and the decorative "ǃ" (U+01C3, a letter-lookalike for "!").
     key = "".join(ch for ch in stripped.translate(_HOMOGLYPHS) if ch.isalnum() and ch != "ǃ")
     return key or ("raw:" + cleaned.casefold().strip())
 
 
 def norm_id(value: str) -> str:
     return value.strip().lower().replace("-", "")
-
-
-def is_lan_tagged(p: Player) -> bool:
-    return p.gamertag.startswith("[")
 
 
 # --------------------------------------------------------------------------- sheet loading
@@ -154,33 +129,11 @@ def load_rows(path: Path) -> list[dict]:
 
 
 def build_groups(rows: list[dict]) -> list[dict]:
-    """One group per real person: rows sharing a Player ID (or the same pro name) are merged."""
-    parent: dict[str, str] = {}
-
-    def find(x: str) -> str:
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        parent[find(a)] = find(b)
-
-    first_by_pro: dict[str, str] = {}
-    for r in rows:
-        key = r["player_id"] or ("pro:" + r["pro"].lower())
-        find(key)
-        pro_key = r["pro"].strip().lower()
-        if pro_key:
-            if pro_key in first_by_pro:
-                union(key, first_by_pro[pro_key])
-            else:
-                first_by_pro[pro_key] = key
-
+    """One group per Player ID (rows sharing a Player ID are one person). Pro name is only the
+    display name -- it is not used to group or match."""
     grouped: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        grouped[find(r["player_id"] or ("pro:" + r["pro"].lower()))].append(r)
+        grouped[r["player_id"] or ("id:" + norm_id(r["epic_id"]))].append(r)
 
     groups = []
     for members in grouped.values():
@@ -200,24 +153,15 @@ def build_groups(rows: list[dict]) -> list[dict]:
     return groups
 
 
-# --------------------------------------------------------------------------- resolution
+# --------------------------------------------------------------------------- main
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE, help="Linker spreadsheet (.csv or .xlsx).")
-    parser.add_argument("--confirm", action="store_true",
-                        help="Interactively confirm and perform merges. Without it, a dry run: no prompts, no writes.")
-    parser.add_argument("--auto-optionals", type=float, default=None, metavar="MIN_SIM",
-                        help="With --confirm: skip the prompts. Merge each pro's verified sources PLUS optional candidates "
-                             "whose similarity is >= MIN_SIM (e.g. 0.85) and that are a candidate for exactly ONE pro "
-                             "(a look-alike offered to two different pros is never auto-merged). Dry run marks them [auto].")
-    parser.add_argument("--exact-only", action="store_true",
-                        help="Trust only the sheet: merge accounts that match a sheet Epic ID or an exact sheet name "
-                             "(EWC/Global Championship names). No fuzzy look-alike suggestions, no prompts with --confirm.")
+    parser.add_argument("--confirm", action="store_true", help="Apply merges + renames. Without it, a dry run.")
+    parser.add_argument("--exact-only", action="store_true", help=argparse.SUPPRESS)  # legacy no-op (always exact now)
     parser.add_argument("--only", default="", help="Comma-separated Player IDs (e.g. P011,P130) to restrict to.")
     args = parser.parse_args()
-    if args.exact_only:
-        args.auto_optionals = 2.0  # prompt-free; no optional can reach similarity 2.0 (and none are generated)
 
     rows = load_rows(args.file)
     groups = build_groups(rows)
@@ -227,15 +171,17 @@ def main() -> None:
     print(f"Loaded {len(rows)} sheet row(s) -> {len(groups)} pro(s) from {args.file.name}.")
 
     db = SessionLocal()
-    # Keeps already-loaded Player objects valid across commits (see merge_qualified_duplicates.py).
-    db.expire_on_commit = False
+    db.expire_on_commit = False  # keep loaded Players valid across the commits inside _merge_player
     try:
         real_user_ids = _real_user_ids(db)
         all_players = db.query(Player).filter(~Player.gamertag.startswith(_TOMBSTONE_PREFIX)).all()
         by_skeleton: dict[str, list[Player]] = defaultdict(list)
+        by_exact_lower: dict[str, list[Player]] = defaultdict(list)
         for p in all_players:
             by_skeleton[skeleton(p.gamertag)].append(p)
+            by_exact_lower[p.gamertag.strip().casefold()].append(p)
 
+        # ---- Epic ID -> player
         sheet_ids = {norm_id(i) for g in groups for i in g["epic_ids"]}
         id_to_player: dict[str, Player] = {}
         if sheet_ids:
@@ -250,170 +196,105 @@ def main() -> None:
                     id_to_player[norm_id(m.osirion_account_id)] = player
         total_ids = sum(len(g["epic_ids"]) for g in groups)
         hit_ids = sum(1 for g in groups for i in g["epic_ids"] if norm_id(i) in id_to_player)
-        print(f"Epic-ID matches against OsirionPlayerMapping: {hit_ids}/{total_ids} sheet account(s).")
-        if total_ids and hit_ids == 0:
-            print("  (None matched -- Osirion's LAN account ids evidently differ from these permanent Epic ids, "
-                  "so everything below resolves by exact name instead.)")
-        print()
+        print(f"Epic-ID matches against OsirionPlayerMapping: {hit_ids}/{total_ids} sheet account(s).\n")
 
-        # ---- pass 1: verified players per group (ID + exact name)
+        # ---- pass 1: ID players (targets) and exact-LAN-name players (sources) per group
         for g in groups:
-            verified: dict = {}  # player.id -> [Player, set(reasons)]
+            id_players: dict = {}
             for i in g["epic_ids"]:
                 p = id_to_player.get(norm_id(i))
                 if p is not None:
-                    verified.setdefault(p.id, [p, set()])[1].add("epic-id")
+                    id_players[p.id] = p
+            name_players: dict = {}
             for n in g["names"]:
                 for p in by_skeleton.get(skeleton(n), []):
-                    verified.setdefault(p.id, [p, set()])[1].add(f"exact name {clean_gamertag(n)!r}")
-            g["verified"] = verified
+                    name_players[p.id] = (p, clean_gamertag(n))
+            g["id_players"] = id_players
+            g["name_players"] = name_players
 
-        # ---- players claimed by more than one pro are ambiguous: drop from all, report
-        claims: dict = defaultdict(list)
-        for g in groups:
-            for pid in g["verified"]:
-                claims[pid].append(g)
+        # ---- a player claimed by two different pros is ambiguous: drop from both
+        claims: dict = defaultdict(set)
+        for gi, g in enumerate(groups):
+            for pid in list(g["id_players"]) + list(g["name_players"]):
+                claims[pid].add(gi)
         conflicts = []
-        for pid, claimants in claims.items():
-            if len(claimants) > 1:
-                who = ", ".join(f"{c['player_ids'][0] if c['player_ids'] else '?'} {c['pro']}" for c in claimants)
-                conflicts.append((claimants[0]["verified"][pid][0].gamertag, who))
-                for c in claimants:
-                    c["verified"].pop(pid, None)
+        for pid, gis in claims.items():
+            if len(gis) > 1:
+                p = next((groups[gi]["id_players"].get(pid) or groups[gi]["name_players"][pid][0]) for gi in gis)
+                conflicts.append((p.gamertag, ", ".join(f"{(groups[gi]['player_ids'] or ['?'])[0]} {groups[gi]['pro']}"
+                                                         for gi in sorted(gis))))
+                for gi in gis:
+                    groups[gi]["id_players"].pop(pid, None)
+                    groups[gi]["name_players"].pop(pid, None)
 
-        # ---- pick targets
+        # ---- pick target + sources
         for g in groups:
-            ranked = sorted(
-                g["verified"].values(),
-                # untagged first, then the player with the most placements (the established "home"
-                # identity), then epic-id evidence, then active -- placements outrank epic-id because
-                # the sheet's id may belong to the thin LAN account rather than the home account.
-                key=lambda pr: (not is_lan_tagged(pr[0]), _placement_count(db, pr[0].id), "epic-id" in pr[1], pr[0].is_active),
-                reverse=True,
-            )
-            g["target"] = ranked[0][0] if ranked else None
-            g["target_is_lan_only"] = bool(ranked) and is_lan_tagged(ranked[0][0])
-            g["sources"] = [pr for pr in ranked[1:]]
+            basis = "epic-id"
+            pool = list(g["id_players"].values())
+            if not pool:
+                # Epic ID not in the DB (e.g. a pro from another region who only appears at LAN events):
+                # combine every player carrying one of the sheet's LAN account names under the pro name.
+                pool = [p for p, _n in g["name_players"].values()]
+                basis = "name-only"
+            pool.sort(key=lambda p: (_placement_count(db, p.id), p.is_active), reverse=True)
+            g["target"] = pool[0] if pool else None
+            g["basis"] = basis
+            sources = {}
+            for p in g["id_players"].values():
+                sources[p.id] = (p, "epic-id")
+            for p, n in g["name_players"].values():
+                sources.setdefault(p.id, (p, f"LAN name {n!r}"))
+            if g["target"] is not None:
+                sources.pop(g["target"].id, None)
+            g["sources"] = list(sources.values())
         main_targets = {g["target"].id for g in groups if g["target"] is not None}
 
-        # ---- optional (unverified) LAN candidates
-        lan_pool = [
-            (p, skeleton(p.gamertag), clean_gamertag(p.gamertag).casefold())
-            for p in all_players
-            # Thin active players (<= 2 placements). Not restricted to bracket-tagged names: after a
-            # fresh re-sync (scripts/reset_roster.py) Osirion's tags are stripped at creation, so LAN
-            # accounts are plain-named.
-            if p.is_active and len(p.placement_results) <= 2
-        ]
-        claimed_ids = set(claims)
-        for g in groups:
-            taken = set(g["verified"]) | claimed_ids | main_targets
-            probes = [skeleton(n) for n in g["names"]]
-            if g["target"] is not None:
-                probes.append(skeleton(g["target"].gamertag))
-            pro_key = skeleton(g["pro"]) if len(_NON_ALNUM.sub("", g["pro"].casefold())) >= 4 else ""
-            optionals = []
-            for p, sk, _core in lan_pool:
-                if p.id in taken or p.gamertag.startswith(_TOMBSTONE_PREFIX):
-                    continue
-                ratio = max((SequenceMatcher(None, sk, pr).ratio() for pr in probes if pr and not pr.startswith("raw:")), default=0.0)
-                contains = bool(pro_key) and pro_key in sk
-                if ratio >= _FUZZY_OPTIONAL_THRESHOLD or contains:
-                    why = f"similarity {ratio:.2f}" + (f", contains pro name {g['pro']!r}" if contains else "")
-                    optionals.append((max(ratio, 0.99 if contains else 0.0), p, why))
-            optionals.sort(key=lambda t: t[0], reverse=True)
-            g["optionals"] = [] if args.exact_only else optionals[:_MAX_OPTIONALS]
-
-        import re as _re
-        _optional_claims: dict = defaultdict(int)
-        for g in groups:
-            for _s, p, _why in g["optionals"]:
-                _optional_claims[p.id] += 1
-
-        def _auto_ok(why: str, p) -> bool:
-            if args.auto_optionals is None or _optional_claims[p.id] != 1:
-                return False
-            m = _re.search(r"similarity ([0-9.]+)", why)
-            return bool(m) and float(m.group(1)) >= args.auto_optionals
-
-        # ---- report / merge
+        # ---- report / apply
         stats = defaultdict(int)
-        not_found, lan_only, nothing_to_merge, skipped_unsafe = [], [], [], []
+        not_found, skipped_unsafe, rename_blocked = [], [], []
         for g in groups:
             label = f"[{'/'.join(g['player_ids']) or '?'}] {g['pro']}"
             target = g["target"]
             if target is None:
                 stats["not found"] += 1
                 not_found.append(label)
-                print("=" * 100)
-                print(f"{label}: NOT FOUND in the database (no Epic-ID mapping, no exact-name match).")
-                for _score, p, why in g["optionals"]:
-                    print(f"    unverified look-alike (no main account to merge into): {p.gamertag!r}  ({why})")
+                print(f"{label}: NOT FOUND (Epic ID(s) not in the database; no unique exact LAN-name match).")
                 continue
-            if g["target_is_lan_only"]:
-                stats["lan only"] += 1
-                lan_only.append(label)
-            if not g["sources"] and not g["optionals"]:
-                stats["nothing to merge"] += 1
-                nothing_to_merge.append(label)
+            # a different pro's target can never be this pro's source
+            g["sources"] = [(p, r) for p, r in g["sources"] if p.id not in main_targets]
+
+            pro_name = g["pro"].strip()
+            rename = bool(pro_name) and target.gamertag != pro_name
+            source_ids = {p.id for p, _ in g["sources"]}
+            blockers = [p for p in by_exact_lower.get(pro_name.casefold(), [])
+                        if p.id != target.id and p.id not in source_ids]
+            if rename and blockers:
+                rename = False
+                rename_blocked.append(f"{label}: name {pro_name!r} already used by unrelated player(s) "
+                                      + ", ".join(f"{p.gamertag!r} (placements={_placement_count(db, p.id)})" for p in blockers))
+
+            if not g["sources"] and not rename:
+                stats["nothing to do"] += 1
                 continue
 
             print("=" * 100)
-            print(f"{label}   sheet account(s): {', '.join(g['names']) or '(none)'}")
+            print(f"{label}   sheet LAN name(s): {', '.join(g['names']) or '(none)'}")
             if g["notes"]:
                 print(f"    note: {g['notes']}")
-            t_reasons = ", ".join(sorted(g["verified"][target.id][1]))
-            print(f"    TARGET (main): id={target.id}  {target.gamertag!r}  placements={_placement_count(db, target.id)}  "
-                  f"{'active' if target.is_active else 'INACTIVE'}   [{t_reasons}]"
-                  + ("   (only LAN-tagged rows exist -- no untagged main account)" if g["target_is_lan_only"] else ""))
-            for p, reasons in g["sources"]:
-                print(f"    VERIFIED SOURCE: id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  "
-                      f"{'active' if p.is_active else 'INACTIVE'}   [{', '.join(sorted(reasons))}]")
-            for idx, (_s, p, why) in enumerate(g["optionals"], start=1):
-                shared = f"  [offered to {_optional_claims[p.id]} pros -- never auto]" if _optional_claims[p.id] > 1 else ""
-                print(f"    [{idx}] OPTIONAL (unverified): id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  "
-                      f"({why}){'  [auto]' if _auto_ok(why, p) else ''}{shared}")
+            print(f"    TARGET: id={target.id}  {target.gamertag!r}  placements={_placement_count(db, target.id)}  "
+                  f"{'active' if target.is_active else 'INACTIVE'}   [{g['basis']}]")
+            for p, why in g["sources"]:
+                print(f"    MERGE IN: id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  "
+                      f"{'active' if p.is_active else 'INACTIVE'}   [{why}]")
+            if rename:
+                print(f"    RENAME: {target.gamertag!r} -> {pro_name!r}")
 
-            if not g["sources"] and not g["optionals"]:
-                continue
             if not args.confirm:
                 stats["would merge"] += len(g["sources"])
-                stats["would auto-merge optionals"] += sum(1 for _s, p, why in g["optionals"] if _auto_ok(why, p))
+                stats["would rename"] += int(rename)
                 continue
 
-            if args.auto_optionals is not None:
-                to_merge = [p for p, _ in g["sources"]] + [p for _s, p, why in g["optionals"] if _auto_ok(why, p)]
-                if not to_merge:
-                    print("  (auto) nothing qualifies for this pro.")
-                    continue
-                choice = "auto"
-            else:
-                to_merge = None
-            hint = "Enter=merge verified source(s)" if g["sources"] else "no verified sources"
-            opt_hint = ", numbers like 1,3 to ALSO merge optional candidates" if g["optionals"] else ""
-            choice = choice if to_merge is not None else input(
-                f"\n  {hint}{opt_hint}, 'n' to skip this pro, 'q' to quit: ").strip().lower()
-            if choice == "q":
-                print("Quitting -- no further pros processed.")
-                break
-            if choice == "n":
-                print("  Skipped.")
-                stats["skipped by you"] += 1
-                continue
-
-            if to_merge is None:
-                to_merge = [p for p, _ in g["sources"]]
-            if choice and choice not in ("y", "auto"):
-                for tok in choice.replace(" ", "").split(","):
-                    if tok.isdigit() and 1 <= int(tok) <= len(g["optionals"]):
-                        to_merge.append(g["optionals"][int(tok) - 1][1])
-                    elif tok:
-                        print(f"  Ignoring {tok!r} (not a valid optional number).")
-            if not to_merge:
-                print("  Nothing selected.")
-                continue
-
-            for source in to_merge:
+            for source, _why in g["sources"]:
                 if source.id == target.id or source.gamertag.startswith(_TOMBSTONE_PREFIX):
                     continue
                 reason = _why_unsafe_to_merge_away(db, source.id, real_user_ids)
@@ -430,26 +311,44 @@ def main() -> None:
                       f"tournament), {s['dividends_moved']} dividend payout(s) moved "
                       f"({s['dividends_conflicted']} skipped as duplicate tournament).")
 
+            if rename:
+                # re-check right before writing: a merged source may have held a clashing name (now tombstoned)
+                clash = (
+                    db.query(Player)
+                    .filter(func.lower(Player.gamertag) == pro_name.casefold(), Player.id != target.id)
+                    .first()
+                )
+                if clash is not None:
+                    print(f"  RENAME SKIPPED -- {clash.gamertag!r} still uses that name.")
+                    rename_blocked.append(f"{label}: {pro_name!r} still used by {clash.gamertag!r}")
+                else:
+                    old = target.gamertag
+                    target.gamertag = pro_name
+                    db.commit()
+                    stats["renamed"] += 1
+                    print(f"  Renamed {old!r} -> {pro_name!r}")
+
         print("\n" + "=" * 100)
         print("SUMMARY")
-        for k in ("merged", "would merge", "would auto-merge optionals", "skipped by you", "skipped unsafe", "nothing to merge", "lan only", "not found"):
+        for k in ("merged", "renamed", "would merge", "would rename", "skipped unsafe", "nothing to do", "not found"):
             if stats.get(k):
                 print(f"  {k}: {stats[k]}")
         if conflicts:
-            print(f"  {len(conflicts)} player(s) matched TWO different pros and were left alone (name coincidence):")
+            print(f"  {len(conflicts)} player(s) matched TWO different pros and were left alone:")
             for gamertag, who in conflicts:
                 print(f"    {gamertag!r} claimed by {who}")
-        if lan_only:
-            print(f"  Only LAN-tagged rows exist for {len(lan_only)} pro(s) (no untagged main to merge into): "
-                  + ", ".join(lan_only))
+        if rename_blocked:
+            print("  Rename blocked (name already used by another, unlinked player):")
+            for line in rename_blocked:
+                print(f"    {line}")
         if not_found:
-            print(f"  Not found in the database at all ({len(not_found)}): " + ", ".join(not_found))
+            print(f"  Not found ({len(not_found)}): " + ", ".join(not_found))
         if skipped_unsafe:
             print("  Left untouched because a real user holds/ordered/traded them:")
             for line in skipped_unsafe:
                 print(f"    {line}")
         if not args.confirm:
-            print("\nDry run only -- nothing changed. Re-run with --confirm to interactively apply merges.")
+            print("\nDry run only -- nothing changed. Re-run with --confirm to apply.")
     finally:
         db.close()
 
