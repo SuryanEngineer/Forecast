@@ -281,6 +281,10 @@ def _list_windows_for_region(region: str | None, include_historic_data: bool) ->
         name = _display_name(tournament)
         event_id = tournament.get("eventId", "")
         regions = tournament.get("regions", [])
+        # NAC and EU run identically named events on the same dates; tag NAC-only ones so the two are tellable apart
+        # in lists (some NAC titles already start with "[NAC]" from Osirion -- don't double-tag those).
+        if [r.upper() for r in regions] == ["NAC"] and "[nac]" not in name.lower():
+            name = f"[NAC] {name}"
 
         for event_window in tournament.get("eventWindows", []):
             score_locations = event_window.get("scoreLocations", [])
