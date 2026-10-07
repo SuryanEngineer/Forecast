@@ -52,21 +52,35 @@ def main() -> None:
             hay = f"{w.display_name} {w.event_group} {w.event_id}".lower()
             if args.grep and args.grep.lower() not in hay:
                 continue
-            ttype = tournament_classification_service.classify(db, w.classification_text)
+            hit = next((r for r in tournament_classification_service.get_active_rules(db)
+                        if r.pattern.lower() in w.classification_text.lower()), None)
+            ttype = hit.tournament_type if hit else None
             is_tracked = (w.leaderboard_event_id, w.leaderboard_event_window_id) in tracked
             if not args.all and (ttype is not None or is_tracked):
                 continue
             end = w.end_time
             ended = end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) < now
-            rows.append((when, w, ttype, is_tracked, ended))
+            if is_tracked:
+                tag = "tracked"
+            elif hit is None:
+                tag = "NO RULE MATCHES"
+            elif ttype is None:
+                tag = f"EXCLUDED:{hit.pattern}"
+            else:
+                tag = ttype.value
+            rows.append((when, w, tag, ended))
 
         rows.sort(key=lambda r: r[0])
-        for when, w, ttype, is_tracked, ended in rows:
-            tag = "tracked" if is_tracked else (ttype.value if ttype else "UNCLASSIFIED")
-            print(f"{str(when.date()):<11} {tag:<20} ${float(w.top_cash_amount):>11,.0f} {'ended' if ended else 'open ':<5} "
+        for when, w, tag, ended in rows:
+            print(f"{str(when.date()):<11} {tag:<28} ${float(w.top_cash_amount):>11,.0f} {'ended' if ended else 'open ':<5} "
                   f"{','.join(w.regions) or '-':<10} {w.display_name}\n"
                   f"{'':<11} group={w.event_group!r} event_id={w.event_id!r}")
         print(f"\n{len(rows)} event(s) shown.")
+        counts: dict[str, int] = {}
+        for _, _, tag, _ in rows:
+            counts[tag] = counts.get(tag, 0) + 1
+        for tag, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:>4}  {tag}")
     finally:
         db.close()
 
