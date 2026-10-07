@@ -82,6 +82,20 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "confirmed to match no existing rule and therefore never get auto-tracked at all.",
     ),
     (
+        "fncsmajor", TournamentType.MAJOR, 35,
+        "FNCS Majors (eventGroup 'Season40_FNCSMajor1' etc.). Osirion's title is just 'Fortnite Championship "
+        "Series', so the signal is only in eventGroup/eventId. Real $60k-$125k finals; the ONSITE one is a LAN.",
+    ),
+    (
+        "fncs_major", TournamentType.MAJOR, 35,
+        "FNCS Major eventGroup spelled with an underscore (e.g. 'FNCS_Major_Bratwurst', a $125k LAN).",
+    ),
+    (
+        "fncssolo", TournamentType.FNCS_FINALS, 41,
+        "FNCS Solos Finals (eventGroup 'Season42_FNCSSolo') -- the title 'FNCS Solos Finals' has 'Solos' "
+        "between 'FNCS' and 'Finals', so the plain 'fncs finals' rule never matched it.",
+    ),
+    (
         "fncs finals", TournamentType.FNCS_FINALS, 40,
         "Basic FNCS Finals -- auto-tracked once per season, and skipped entirely during a season that has a "
         "Globals event instead (see osirion_service.auto_track_new_tournaments for that dedup logic).",
