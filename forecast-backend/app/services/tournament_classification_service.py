@@ -94,7 +94,7 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "is deduped to one per season in auto-tracking, which would wrongly drop 5 of 6 events.",
     ),
     (
-        "solosseriescup", TournamentType.CASH_CUP, 36,
+        "soloseriescup", TournamentType.CASH_CUP, 36,
         "Solo Series Cup final ($15k, eventGroup 'Season39_SoloSeriesCup').",
     ),
     (
