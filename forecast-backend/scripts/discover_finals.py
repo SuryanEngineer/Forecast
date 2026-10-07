@@ -85,6 +85,20 @@ def scoring_summary(sl: dict) -> tuple[bool, bool, str]:
     return kill, place, f"kill={'Y' if kill else 'N'} placement-tiers={place_tiers}{'(beyond win)' if place else '(win only)'}"
 
 
+def platform_restriction(window) -> str:
+    """Non-empty reason if this event is console-only or mobile-only (not open to PC). Uses Osirion's `platforms`
+    list (must include Windows), with a name check as a backstop (e.g. 'PlayStation Cup', 'Console ...', 'Mobile ...')."""
+    plats = {str(p).lower() for p in (window.raw_tournament.get("platforms") or [])}
+    if plats and "windows" not in plats:
+        mobile = {"android", "ios", "helios", "heliosmobile", "gfnmobile", "lunamobile", "xcloudmobile"}
+        return "mobile-only" if plats <= mobile else "console-only / no PC"
+    name = f"{window.display_name} {window.event_group}".lower()
+    for word in ("playstation", "console", "mobile", "xbox", "switch"):
+        if word in name:
+            return f"{word}-only event (by name)"
+    return ""
+
+
 def is_reload(window) -> bool:
     text = f"{window.display_name} {window.event_group} {window.event_id} {window.raw_event_window.get('playlistId', '')}".lower()
     return "reload" in text or "_re_" in text or "rescup" in text
@@ -133,6 +147,8 @@ def main() -> None:
     ap.add_argument("--one-per-event", action="store_true",
                     help="Keep only the highest-paying passing window per event (default: every passing window, "
                          "except LAN events which are always one).")
+    ap.add_argument("--allow-restricted-platforms", action="store_true",
+                    help="Also allow console-only / mobile-only events (excluded by default).")
     ap.add_argument("--grep", default="")
     ap.add_argument("--show-failed", action="store_true")
     ap.add_argument("--attempts", type=int, default=6)
@@ -168,6 +184,11 @@ def main() -> None:
                 if w.is_zero_build:
                     reasons.append((w, "zero build", -1))
                     continue
+                if not args.allow_restricted_platforms:
+                    restricted = platform_restriction(w)
+                    if restricted:
+                        reasons.append((w, restricted, -1))
+                        continue
                 if not (regions & {r.upper() for r in w.regions}):
                     reasons.append((w, f"region {w.regions}", -1))
                     continue
