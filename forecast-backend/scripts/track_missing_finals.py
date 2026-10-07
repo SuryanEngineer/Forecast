@@ -10,7 +10,8 @@ cash cup, which is how the roster ballooned to ~89k players. This wrapper applie
   * dated --min-year or later (default: current year)
   * region NAC/EU (--regions) or LAN/global tier (global_championship / major)
   * never Zero Build, never "Performance Evaluation", never "Practice"
-  * cash-cup-typed events are skipped unless the name contains "FNCS" (--include-cash-cups lifts this)
+  * cash-cup-typed events need a top payout >= $5,000 (--min-cash-cup-payout / --include-cash-cups)
+  * major-typed events need a top payout >= $10,000 (filters qualifier-sized windows)
 
 Dry run by default: prints every candidate with its verdict and the reason. --confirm tracks+syncs the KEEP rows.
 New tournaments are created hidden (is_historical_archive=True) and FINALIZED without payouts, same as the backfill.
@@ -35,7 +36,7 @@ from app.services import osirion_service  # noqa: E402
 _LAN_TYPES = (TournamentType.GLOBAL_CHAMPIONSHIP, TournamentType.MAJOR)
 
 
-def _verdict(c, min_year: int, regions: list[str], include_cash_cups: bool) -> tuple[bool, str]:
+def _verdict(c, min_year: int, regions: list[str], include_cash_cups: bool, min_cash: float = 5000) -> tuple[bool, str]:
     w = c.window
     name = w.display_name.lower()
     if "performance evaluation" in name:
@@ -51,8 +52,10 @@ def _verdict(c, min_year: int, regions: list[str], include_cash_cups: bool) -> t
     in_region = any(r.upper() in regions for r in w.regions) if w.regions else False
     if not (is_lan or in_region):
         return False, f"region {w.regions} not in {regions}"
-    if c.tournament_type == TournamentType.CASH_CUP and not include_cash_cups and "fncs" not in name:
-        return False, "cash cup (not FNCS)"
+    if c.tournament_type == TournamentType.CASH_CUP and not include_cash_cups and float(w.top_cash_amount) < min_cash:
+        return False, f"cash cup with top payout < ${min_cash:,.0f}"
+    if c.tournament_type == TournamentType.MAJOR and float(w.top_cash_amount) < 10000:
+        return False, "major-typed but top payout < $10,000 (looks like a qualifier/heat)"
     return True, "LAN/global tier" if is_lan else f"region {','.join(w.regions)}"
 
 
@@ -61,7 +64,9 @@ def main() -> None:
     ap.add_argument("--confirm", action="store_true")
     ap.add_argument("--min-year", type=int, default=time.gmtime().tm_year)
     ap.add_argument("--regions", nargs="+", default=["NAC", "EU"])
-    ap.add_argument("--include-cash-cups", action="store_true")
+    ap.add_argument("--include-cash-cups", action="store_true", help="Don't apply the cash-cup payout floor.")
+    ap.add_argument("--min-cash-cup-payout", type=float, default=5000,
+                    help="Cash-cup-typed events need at least this top payout (default 5000).")
     ap.add_argument("--show-skipped", action="store_true")
     ap.add_argument("--only", default="", help="Only candidates whose name contains this text.")
     ap.add_argument("--attempts", type=int, default=6)
@@ -83,7 +88,7 @@ def main() -> None:
         for c in scan.candidates:
             if args.only and args.only.lower() not in c.window.display_name.lower():
                 continue
-            ok, why = _verdict(c, args.min_year, regions, args.include_cash_cups)
+            ok, why = _verdict(c, args.min_year, regions, args.include_cash_cups, args.min_cash_cup_payout)
             (keep if ok else skipped).append((c, why))
         keep.sort(key=lambda t: t[0].window.begin_time or t[0].window.end_time)
 

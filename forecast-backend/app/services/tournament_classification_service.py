@@ -82,6 +82,22 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "confirmed to match no existing rule and therefore never get auto-tracked at all.",
     ),
     (
+        "heat", None, 8,
+        "Heats/qualifier rounds of an event (e.g. 'Season39_ReloadEliteSeries1Heat1_EU', $250) are never "
+        "tracked on their own -- only the event's Final is. Checked before every other rule.",
+    ),
+    (
+        "reloadeliteseries", TournamentType.CASH_CUP, 36,
+        "Reload Elite Series Finals ($15k, EU). Matches the eventGroup ('Season39_ReloadEliteSeries1'); the "
+        "spaced display name never matches this, and the EWC 'Reload Elite Series Championship' is caught "
+        "by the EWC/global rules above (lower priority number) first. Cash Cup tier on purpose: FNCS_FINALS "
+        "is deduped to one per season in auto-tracking, which would wrongly drop 5 of 6 events.",
+    ),
+    (
+        "solosseriescup", TournamentType.CASH_CUP, 36,
+        "Solo Series Cup final ($15k, eventGroup 'Season39_SoloSeriesCup').",
+    ),
+    (
         "fncsmajor", TournamentType.MAJOR, 35,
         "FNCS Majors (eventGroup 'Season40_FNCSMajor1' etc.). Osirion's title is just 'Fortnite Championship "
         "Series', so the signal is only in eventGroup/eventId. Real $60k-$125k finals; the ONSITE one is a LAN.",
