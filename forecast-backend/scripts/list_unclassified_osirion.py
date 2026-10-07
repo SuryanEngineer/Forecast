@@ -28,6 +28,9 @@ def main() -> None:
     ap.add_argument("--year", type=int, default=datetime.now().year, help="Only events beginning in this year or later.")
     ap.add_argument("--min-payout", type=float, default=0, help="Only events whose top cash payout is at least this.")
     ap.add_argument("--grep", default="", help="Only events whose name/group/id contains this text.")
+    ap.add_argument("--include-no-cash", action="store_true",
+                    help="Also list events with NO cash payout. The normal scan drops these entirely, which would hide "
+                         "practice/qualifier-style events (e.g. FNCS Division 1 Practice).")
     ap.add_argument("--all", action="store_true", help="Also show classified + already-tracked events.")
     args = ap.parse_args()
 
@@ -42,7 +45,10 @@ def main() -> None:
         now = datetime.now(timezone.utc)
         rows = []
         for event_id, group in by_event.items():
-            elig = [w for w in group if w.has_cash_payout and not w.is_zero_build]
+            if args.include_no_cash:
+                elig = [w for w in group if not w.is_zero_build]  # events with no cash payout (e.g. practice/qualifier)
+            else:
+                elig = [w for w in group if w.has_cash_payout and not w.is_zero_build]
             if not elig:
                 continue
             w = max(elig, key=lambda x: x.top_cash_amount)

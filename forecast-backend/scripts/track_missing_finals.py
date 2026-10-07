@@ -41,8 +41,6 @@ def _verdict(c, min_year: int, regions: list[str], include_cash_cups: bool, min_
     name = w.display_name.lower()
     if "performance evaluation" in name:
         return False, "performance evaluation"
-    if "practice" in name:
-        return False, "practice"
     if w.is_zero_build:
         return False, "zero build"
     when = w.begin_time or w.end_time

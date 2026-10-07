@@ -77,8 +77,6 @@ def main() -> None:
                 last_round[key] = max(last_round.get(key, 0), int(mt.group(2)))
 
         def is_final(t: Tournament) -> tuple[bool, str]:
-            if "practice" in (t.name or "").lower():
-                return False, "practice"
             if "performance evaluation" in (t.name or "").lower():
                 return False, "performance evaluation (excluded)"
             mt = _ROUND_RE.match(t.name or "")
