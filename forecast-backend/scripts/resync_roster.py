@@ -71,8 +71,10 @@ def main() -> None:
     all_entries = state["tournaments"]
 
     # Phase 1 = in-scope (creates players). Phase 2 = out-of-scope history (existing players only). Zero Build = never.
-    # Old state files without a "scope" field are treated as in-scope (previous behaviour).
-    phase1 = [t for t in all_entries if t.get("scope", "in_scope") == "in_scope"]
+    if any("scope" not in t for t in all_entries):
+        sys.exit("State file has no scope info (it was written by the old reset_roster.py). Refusing: re-pulling "
+                 "everything would recreate ~89k players. Add a \"scope\" field to each tournament, or ask for help.")
+    phase1 = [t for t in all_entries if t["scope"] == "in_scope"]
     phase2 = [t for t in all_entries if t.get("scope") == "out_of_scope"] if args.with_history else []
     skipped = [t for t in all_entries if t not in phase1 and t not in phase2]
     for t in phase1:
