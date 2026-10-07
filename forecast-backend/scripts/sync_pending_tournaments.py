@@ -6,10 +6,7 @@ Pull and finalize tournaments that are tracked but stuck in RESULTS_PENDING / SC
 Same safe path as resync_roster.py: skip_finalize=True (marks FINALIZED, creates NO dividend payouts),
 tournament flagged is_historical_archive=True while syncing so the live loop can't race it.
 FINALS ONLY: for a multi-round event ("FNCS Division 1 — Round 1..4") just the highest-numbered round is synced;
-earlier rounds and anything named "Practice" are skipped and hidden. Single events are their own final.
-EXCEPTION: "FNCS Division 1 — Round N" rounds are separate weekly final cups, so every one of them is synced
-(Practice rounds are still skipped).
-Scope rule is the same as reset_roster.py (--min-year, --regions NAC EU, LAN/global tier always counts,
+earlier rounds and anything named "Practice" are skipped and hidden. Single events are their own final.Scope rule is the same as reset_roster.py (--min-year, --regions NAC EU, LAN/global tier always counts,
 Zero Build never). Only tournaments that have already started are touched.
 
 Dry run by default (prints the plan). Add --confirm to sync.
@@ -87,8 +84,6 @@ def main() -> None:
             mt = _ROUND_RE.match(t.name or "")
             if not mt:
                 return True, ""
-            if "fncs division" in (t.name or "").lower():
-                return True, ""  # each Division 1 "Round N" is its own weekly final cup, not a stage of one event
             key = (mt.group(1).strip().lower(), t.start_time.year if t.start_time else None)
             if int(mt.group(2)) == last_round.get(key):
                 return True, ""
