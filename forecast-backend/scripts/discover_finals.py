@@ -133,7 +133,71 @@ def field_size(window) -> tuple[int | None, int | None, str]:
     return len(entries), players, ""
 
 
-def main() -> None:
+def collect_cheap_pass(windows, args, regions, now, rules):
+    """Cash + scoring + scope checks (no network). Returns (cheap_pass, failed, n_events)."""
+    by_event: dict[str, list] = {}
+    for w in windows:
+        by_event.setdefault(w.event_id, []).append(w)
+
+    failed: list[tuple] = []
+    cheap_pass: list[tuple] = []
+    for event_id, group in by_event.items():
+        ok = []
+        reasons = []  # (window, why, top cash seen) -- the report shows the reason for the closest-to-passing window
+        for w in group:
+            when = w.begin_time or w.end_time
+            if when is None or when.year < args.min_year:
+                continue
+            hay = f"{w.display_name} {w.event_group} {w.event_id}".lower()
+            if args.grep and args.grep.lower() not in hay:
+                continue
+            if w.is_zero_build:
+                reasons.append((w, "zero build", -1))
+                continue
+            if not args.allow_restricted_platforms:
+                restricted = platform_restriction(w)
+                if restricted:
+                    reasons.append((w, restricted, -1))
+                    continue
+            if not (regions & {r.upper() for r in w.regions}):
+                reasons.append((w, f"region {w.regions}", -1))
+                continue
+            end = w.end_time
+            if end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) >= now:
+                reasons.append((w, "not ended yet", -1))
+                continue
+            hit = None if args.ignore_exclude_rules else next(
+                (r for r in rules if r.pattern.lower() in w.classification_text.lower()), None)
+            if hit is not None and hit.tournament_type is None:
+                reasons.append((w, f"excluded by rule '{hit.pattern}'", -1))
+                continue
+            sl = _score_location(w)
+            cash = cash_prize(sl)
+            if cash <= 0 or float(cash) < args.min_cash:
+                reasons.append((w, "no cash prize" if cash <= 0 else f"top cash ${float(cash):,.0f} < min", float(cash)))
+                continue
+            kill, place, summary = scoring_summary(sl)
+            if not (kill and place):
+                reasons.append((w, f"scoring: {summary}", float(cash)))
+                continue
+            ok.append((w, hit, cash, summary))
+        if ok:
+            # A LAN (ONSITE) event is one tournament played over several day-windows -> keep only its biggest
+            # window. Everything else (e.g. FNCS Division 1 weekly rounds, each its own final lobby) keeps EVERY
+            # window that passes; the lobby-size check below is what drops qualifier-sized rounds.
+            is_lan = any("ONSITE" in {r.upper() for r in w.regions} for w, *_ in ok)
+            if is_lan or args.one_per_event:
+                cheap_pass.append(max(ok, key=lambda t: t[2]))
+            else:
+                cheap_pass.extend(ok)
+        else:
+            if reasons:
+                w, why, _ = max(reasons, key=lambda r: r[2])
+                failed.append((w, why))
+    return cheap_pass, failed, len(by_event)
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm", action="store_true")
     ap.add_argument("--min-year", type=int, default=datetime.now().year)
@@ -153,7 +217,11 @@ def main() -> None:
     ap.add_argument("--show-failed", action="store_true")
     ap.add_argument("--attempts", type=int, default=6)
     ap.add_argument("--retry-wait", type=int, default=30)
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     regions = {r.upper() for r in args.regions}
     now = datetime.now(timezone.utc)
 
@@ -165,67 +233,8 @@ def main() -> None:
         tracked = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()}
         rules = tournament_classification_service.get_active_rules(db)
 
-        by_event: dict[str, list] = {}
-        for w in windows:
-            by_event.setdefault(w.event_id, []).append(w)
-
-        failed: list[tuple] = []
-        cheap_pass: list[tuple] = []
-        for event_id, group in by_event.items():
-            ok = []
-            reasons = []  # (window, why, top cash seen) -- the report shows the reason for the closest-to-passing window
-            for w in group:
-                when = w.begin_time or w.end_time
-                if when is None or when.year < args.min_year:
-                    continue
-                hay = f"{w.display_name} {w.event_group} {w.event_id}".lower()
-                if args.grep and args.grep.lower() not in hay:
-                    continue
-                if w.is_zero_build:
-                    reasons.append((w, "zero build", -1))
-                    continue
-                if not args.allow_restricted_platforms:
-                    restricted = platform_restriction(w)
-                    if restricted:
-                        reasons.append((w, restricted, -1))
-                        continue
-                if not (regions & {r.upper() for r in w.regions}):
-                    reasons.append((w, f"region {w.regions}", -1))
-                    continue
-                end = w.end_time
-                if end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) >= now:
-                    reasons.append((w, "not ended yet", -1))
-                    continue
-                hit = None if args.ignore_exclude_rules else next(
-                    (r for r in rules if r.pattern.lower() in w.classification_text.lower()), None)
-                if hit is not None and hit.tournament_type is None:
-                    reasons.append((w, f"excluded by rule '{hit.pattern}'", -1))
-                    continue
-                sl = _score_location(w)
-                cash = cash_prize(sl)
-                if cash <= 0 or float(cash) < args.min_cash:
-                    reasons.append((w, "no cash prize" if cash <= 0 else f"top cash ${float(cash):,.0f} < min", float(cash)))
-                    continue
-                kill, place, summary = scoring_summary(sl)
-                if not (kill and place):
-                    reasons.append((w, f"scoring: {summary}", float(cash)))
-                    continue
-                ok.append((w, hit, cash, summary))
-            if ok:
-                # A LAN (ONSITE) event is one tournament played over several day-windows -> keep only its biggest
-                # window. Everything else (e.g. FNCS Division 1 weekly rounds, each its own final lobby) keeps EVERY
-                # window that passes; the lobby-size check below is what drops qualifier-sized rounds.
-                is_lan = any("ONSITE" in {r.upper() for r in w.regions} for w, *_ in ok)
-                if is_lan or args.one_per_event:
-                    cheap_pass.append(max(ok, key=lambda t: t[2]))
-                else:
-                    cheap_pass.extend(ok)
-            else:
-                if reasons:
-                    w, why, _ = max(reasons, key=lambda r: r[2])
-                    failed.append((w, why))
-
-        print(f"{len(by_event)} events; {len(cheap_pass)} pass cash+scoring+scope; checking each one's lobby size "
+        cheap_pass, failed, n_events = collect_cheap_pass(windows, args, regions, now, rules)
+        print(f"{n_events} events; {len(cheap_pass)} pass cash+scoring+scope; checking each one's lobby size "
               f"({len(cheap_pass)} leaderboard request(s)) ...")
         passed = []
         for n, (w, hit, cash, summary) in enumerate(sorted(cheap_pass, key=lambda t: t[0].begin_time or t[0].end_time), 1):
