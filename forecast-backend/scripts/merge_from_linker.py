@@ -207,6 +207,10 @@ def main() -> None:
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE, help="Linker spreadsheet (.csv or .xlsx).")
     parser.add_argument("--confirm", action="store_true",
                         help="Interactively confirm and perform merges. Without it, a dry run: no prompts, no writes.")
+    parser.add_argument("--auto-optionals", type=float, default=None, metavar="MIN_SIM",
+                        help="With --confirm: skip the prompts. Merge each pro's verified sources PLUS optional candidates "
+                             "whose similarity is >= MIN_SIM (e.g. 0.85) and that are a candidate for exactly ONE pro "
+                             "(a look-alike offered to two different pros is never auto-merged). Dry run marks them [auto].")
     parser.add_argument("--only", default="", help="Comma-separated Player IDs (e.g. P011,P130) to restrict to.")
     args = parser.parse_args()
 
@@ -315,6 +319,18 @@ def main() -> None:
             optionals.sort(key=lambda t: t[0], reverse=True)
             g["optionals"] = optionals[:_MAX_OPTIONALS]
 
+        import re as _re
+        _optional_claims: dict = defaultdict(int)
+        for g in groups:
+            for _s, p, _why in g["optionals"]:
+                _optional_claims[p.id] += 1
+
+        def _auto_ok(why: str, p) -> bool:
+            if args.auto_optionals is None or _optional_claims[p.id] != 1:
+                return False
+            m = _re.search(r"similarity ([0-9.]+)", why)
+            return bool(m) and float(m.group(1)) >= args.auto_optionals
+
         # ---- report / merge
         stats = defaultdict(int)
         not_found, lan_only, nothing_to_merge, skipped_unsafe = [], [], [], []
@@ -349,17 +365,29 @@ def main() -> None:
                 print(f"    VERIFIED SOURCE: id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  "
                       f"{'active' if p.is_active else 'INACTIVE'}   [{', '.join(sorted(reasons))}]")
             for idx, (_s, p, why) in enumerate(g["optionals"], start=1):
-                print(f"    [{idx}] OPTIONAL (unverified): id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  ({why})")
+                shared = f"  [offered to {_optional_claims[p.id]} pros -- never auto]" if _optional_claims[p.id] > 1 else ""
+                print(f"    [{idx}] OPTIONAL (unverified): id={p.id}  {p.gamertag!r}  placements={_placement_count(db, p.id)}  "
+                      f"({why}){'  [auto]' if _auto_ok(why, p) else ''}{shared}")
 
             if not g["sources"] and not g["optionals"]:
                 continue
             if not args.confirm:
                 stats["would merge"] += len(g["sources"])
+                stats["would auto-merge optionals"] += sum(1 for _s, p, why in g["optionals"] if _auto_ok(why, p))
                 continue
 
+            if args.auto_optionals is not None:
+                to_merge = [p for p, _ in g["sources"]] + [p for _s, p, why in g["optionals"] if _auto_ok(why, p)]
+                if not to_merge:
+                    print("  (auto) nothing qualifies for this pro.")
+                    continue
+                choice = "auto"
+            else:
+                to_merge = None
             hint = "Enter=merge verified source(s)" if g["sources"] else "no verified sources"
             opt_hint = ", numbers like 1,3 to ALSO merge optional candidates" if g["optionals"] else ""
-            choice = input(f"\n  {hint}{opt_hint}, 'n' to skip this pro, 'q' to quit: ").strip().lower()
+            choice = choice if to_merge is not None else input(
+                f"\n  {hint}{opt_hint}, 'n' to skip this pro, 'q' to quit: ").strip().lower()
             if choice == "q":
                 print("Quitting -- no further pros processed.")
                 break
@@ -368,8 +396,9 @@ def main() -> None:
                 stats["skipped by you"] += 1
                 continue
 
-            to_merge = [p for p, _ in g["sources"]]
-            if choice and choice != "y":
+            if to_merge is None:
+                to_merge = [p for p, _ in g["sources"]]
+            if choice and choice not in ("y", "auto"):
                 for tok in choice.replace(" ", "").split(","):
                     if tok.isdigit() and 1 <= int(tok) <= len(g["optionals"]):
                         to_merge.append(g["optionals"][int(tok) - 1][1])
@@ -398,7 +427,7 @@ def main() -> None:
 
         print("\n" + "=" * 100)
         print("SUMMARY")
-        for k in ("merged", "would merge", "skipped by you", "skipped unsafe", "nothing to merge", "lan only", "not found"):
+        for k in ("merged", "would merge", "would auto-merge optionals", "skipped by you", "skipped unsafe", "nothing to merge", "lan only", "not found"):
             if stats.get(k):
                 print(f"  {k}: {stats[k]}")
         if conflicts:
