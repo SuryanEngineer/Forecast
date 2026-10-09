@@ -16,6 +16,11 @@ Dry run by default.
 
     python3 scripts/merge_skeleton_dupes.py
     python3 scripts/merge_skeleton_dupes.py --confirm
+
+Manual pairs (exact gamertags; when given, ONLY these are processed). The dry run shows how many tournaments the two
+players share -- a real person can't place twice in one tournament, so any overlap means "probably NOT the same person":
+    python3 scripts/merge_skeleton_dupes.py --merge "falcon pollo=>Pollo" --merge "T1 demus=>Demus"
+    python3 scripts/merge_skeleton_dupes.py --merge "falcon pollo=>Pollo" --confirm
 """
 from __future__ import annotations
 
@@ -42,6 +47,8 @@ from scripts.merge_fuzzy_duplicates import (  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm", action="store_true")
+    ap.add_argument("--merge", action="append", default=[], metavar="SOURCE=>TARGET",
+                    help="Merge the player with this exact gamertag into the other. Repeatable.")
     args = ap.parse_args()
 
     db = SessionLocal()
@@ -52,6 +59,38 @@ def main() -> None:
         sk = defaultdict(list)
         for p in live:
             sk[skeleton(p.gamertag)].append(p)
+        if args.merge:
+            by_tag = {p.gamertag: p for p in live}
+            real = _real_user_ids(db)
+            done = 0
+            for spec in args.merge:
+                if "=>" not in spec:
+                    print(f"Bad --merge {spec!r}: use SOURCE=>TARGET")
+                    continue
+                a, b = (x.strip() for x in spec.split("=>", 1))
+                src, tgt = by_tag.get(a), by_tag.get(b)
+                if src is None or tgt is None or src.id == tgt.id:
+                    print(f"{spec}: could not find both players by exact active gamertag (source found: {src is not None}, target found: {tgt is not None})")
+                    continue
+                s_t = {r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == src.id)}
+                t_t = {r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == tgt.id)}
+                overlap = len(s_t & t_t)
+                print(f"{src.gamertag!r} ({len(s_t)} pl) => {tgt.gamertag!r} ({len(t_t)} pl)   shared tournaments: {overlap}"
+                      + ("   <-- OVERLAP: probably two different people" if overlap else ""))
+                if not args.confirm:
+                    continue
+                if overlap:
+                    print("  SKIPPED (overlap).")
+                    continue
+                reason = _why_unsafe_to_merge_away(db, src.id, real)
+                if reason is not None:
+                    print(f"  SKIPPED: {reason}")
+                    continue
+                r = _merge_player(db, src, tgt)
+                done += 1
+                print(f"  merged: {r['mappings_moved']} mapping(s), {r['placements_moved']} placement(s) moved")
+            print("\n" + (f"Merged {done}." if args.confirm else "Dry run only. Re-run with --confirm."))
+            return
         groups = {k: v for k, v in sk.items() if len(v) > 1}
         print(f"{len(groups)} group(s) of active players with the same name skeleton.\n")
         real = _real_user_ids(db)
