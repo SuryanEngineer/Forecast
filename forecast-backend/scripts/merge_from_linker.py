@@ -159,6 +159,14 @@ def main() -> None:
         by_exact_lower: dict[str, list[Player]] = defaultdict(list)
         for p in all_players:
             by_skeleton[skeleton(p.gamertag)].append(p)
+        live_by_id = {p.id: p for p in all_players}
+        # Every account the sync has ever attached to a player remembers the name it played under
+        # (OsirionPlayerMapping.osirion_username). After a pro is renamed to the sheet's pro name, THIS is
+        # how their LAN account name still resolves to them on a re-run.
+        by_mapped_name: dict[str, set] = defaultdict(set)
+        for mp in db.query(OsirionPlayerMapping).all():
+            if mp.osirion_username and mp.player_id in live_by_id:
+                by_mapped_name[skeleton(mp.osirion_username)].add(mp.player_id)
             by_exact_lower[p.gamertag.strip().casefold()].append(p)
 
         # ---- Epic ID -> player
@@ -189,6 +197,8 @@ def main() -> None:
             for n in g["names"]:
                 for p in by_skeleton.get(skeleton(n), []):
                     name_players[p.id] = (p, clean_gamertag(n))
+                for pid in by_mapped_name.get(skeleton(n), ()):
+                    name_players.setdefault(pid, (live_by_id[pid], clean_gamertag(n)))
             g["id_players"] = id_players
             g["name_players"] = name_players
 

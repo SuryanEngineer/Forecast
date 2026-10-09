@@ -43,12 +43,15 @@ def main() -> None:
         maps = {norm_id(m.osirion_account_id): m for m in db.query(OsirionPlayerMapping).all()}
         aliases = {a.alias_key for a in db.query(PlayerAlias).all()}
 
+        mapped_names = {skeleton(m.osirion_username) for m in maps.values()
+                        if m.osirion_username and m.player_id in by_id and not by_id[m.player_id].gamertag.startswith(_TOMB)}
+
         def resolvable(g) -> bool:
             for i in g["epic_ids"]:
                 m = maps.get(norm_id(i))
                 if m is not None and m.player_id in by_id and not by_id[m.player_id].gamertag.startswith(_TOMB):
                     return True
-            return any(skeleton(n) in live_sk or skeleton(n) in aliases for n in g["names"])
+            return any(skeleton(n) in live_sk or skeleton(n) in aliases or skeleton(n) in mapped_names for n in g["names"])
 
         missing = [g for g in groups if not resolvable(g)]
         print(f"{len(missing)} sheet pro(s) have no live player.\n")

@@ -118,6 +118,10 @@ def main() -> None:
         for p in live:
             skeleton_to_live[skeleton(p.gamertag)].append(p)
 
+        mapped_name = defaultdict(set)
+        for m in maps.values():
+            if m.osirion_username and m.player_id in by_id and not by_id[m.player_id].gamertag.startswith(_TOMB):
+                mapped_name[skeleton(m.osirion_username)].add(m.player_id)
         print("\n[PER-PRO] checking sheet rows ...")
         pro_issues, ok, not_resolved = [], 0, []
         inactive_pros = 0
@@ -136,6 +140,8 @@ def main() -> None:
                         targets[a.player_id] = by_id[a.player_id]
                     for p in skeleton_to_live.get(skeleton(n), []):
                         targets[p.id] = p
+                    for pid in mapped_name.get(skeleton(n), ()):
+                        targets[pid] = by_id[pid]
                 via = "name/alias"
             if not targets:
                 not_resolved.append(label)
