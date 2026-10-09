@@ -39,6 +39,30 @@ def skeleton(name: str) -> str:
     return key or ("raw:" + cleaned.casefold().strip())
 
 
+def lan_core_keys(name: str) -> set[str]:
+    """Candidate 'core name' skeletons of a LAN account name, so "HAVOK SwizzY", "PWR ZDоg 7" and "SwizzY"
+    can be recognised as the same person: tries the name as-is and with its leading team-prefix word dropped,
+    and for each drops trailing digit/punctuation-only words ("10ǃ") and trailing digits on the last word
+    ("Sphinx281"). Keys shorter than 3 characters are ignored.
+
+    Deliberately conservative -- a leading word is only ever dropped, never fuzzy-matched -- and the scripts
+    using it add further guards (LAN-only players, no shared tournament, human-reviewed dry run)."""
+    tokens = strip_tags(name).split()
+    variants = [tokens] + ([tokens[1:]] if len(tokens) >= 2 else [])
+    keys: set[str] = set()
+    for toks in variants:
+        toks = list(toks)
+        while toks and not any(ch.isalpha() for ch in toks[-1]):
+            toks.pop()
+        if not toks:
+            continue
+        keys.add(skeleton(" ".join(toks)))
+        last = re.sub(r"\d+$", "", toks[-1])
+        if last and last != toks[-1]:
+            keys.add(skeleton(" ".join(toks[:-1] + [last])))
+    return {k for k in keys if len(k) >= 3 and not k.startswith("raw:")}
+
+
 def norm_id(value: str) -> str:
     """Epic account ids compare case- and dash-insensitively."""
     return value.strip().lower().replace("-", "")
