@@ -1,0 +1,142 @@
+{
+  "created": "2026-10-07T12:34:47.225535",
+  "export_dir": "C:\\Users\\poopi\\OneDrive\\Desktop\\Forecast\\forecast-backend\\roster_backup_20261007_123429",
+  "tournaments": [
+    {
+      "id": "8ca086be-3510-4e99-85b7-ad7961cd90b5",
+      "name": "Fortnite Performance Evaluation \u2014 May 28, 2024",
+      "start_time": "2024-05-28T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "18844e8c-fbdd-4cf9-b216-4171fac35ea5",
+      "name": "Duos Console Cash Cup \u2014 Jun 29, 2024",
+      "start_time": "2024-06-29T13:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "c1e5bb36-3c02-42f2-82bc-d86d55bab298",
+      "name": "Fortnite Performance Evaluation \u2014 Aug 17, 2024",
+      "start_time": "2024-08-17T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "5cfb617c-187e-4a9c-875b-e1bd0f651af5",
+      "name": "Duos Cash Cup \u2014 Aug 29, 2024",
+      "start_time": "2024-08-29T17:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "99354ea6-125f-4e2d-b01e-d8d6a69776d1",
+      "name": "Reload Duos Cash Cup (PC) \u2014 Aug 30, 2024",
+      "start_time": "2024-08-30T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "737b267c-e773-4471-a2d4-ae683ad10601",
+      "name": "Reload Duos Cash Cup (Mobile) \u2014 Aug 30, 2024",
+      "start_time": "2024-08-30T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "6f85352a-1fcb-4b4f-9c4f-6b3deea3b897",
+      "name": "Reload Duos Cash Cup (Console) \u2014 Aug 30, 2024",
+      "start_time": "2024-08-30T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "f938f064-9742-4f15-ae6c-4905e85e4339",
+      "name": "FNCS Global Championship \u2014 Sep 08, 2024",
+      "start_time": "2024-09-08T05:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "aafef716-60b2-4347-932e-769f204275ec",
+      "name": "Trios Cash Cup \u2014 Oct 06, 2024",
+      "start_time": "2024-10-06T17:30:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "44790e89-ce55-40b2-af11-977e168d25ac",
+      "name": "Fortnite Performance Evaluation \u2014 Nov 03, 2024",
+      "start_time": "2024-11-03T20:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "4cf1e816-7702-40a3-ae66-a052a2ac1640",
+      "name": "Reload Duos Cash Cup (Mobile) \u2014 Nov 09, 2024",
+      "start_time": "2024-11-09T16:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "07c14998-4571-4399-b014-1dfdb0465988",
+      "name": "Reload Duos Cash Cup (Console) \u2014 Nov 09, 2024",
+      "start_time": "2024-11-09T16:00:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "d70559de-64bf-4c6b-ae73-1ff487834543",
+      "name": "Fortnite Global Championship \u2014 Sep 05, 2025",
+      "start_time": "2025-09-05T21:59:00+00:00",
+      "was_historical_archive": true,
+      "scope": "out_of_scope",
+      "scope_reason": "before 2026 (patched manually)"
+    },
+    {
+      "id": "604262c7-b665-4fbb-92b8-c095efdc0187",
+      "name": "Fortnite Performance Evaluation \u2014 Jun 25, 2026",
+      "start_time": "2026-06-25T19:00:00+00:00",
+      "was_historical_archive": false,
+      "scope": "in_scope",
+      "scope_reason": "region EU (patched manually; matches dry-run table)",
+      "_create": true
+    },
+    {
+      "id": "e8172fc9-a86f-4752-93c7-9161499fe1a6",
+      "name": "Fortnite Performance Evaluation \u2014 Aug 23, 2026",
+      "start_time": "2026-08-23T19:00:00+00:00",
+      "was_historical_archive": false,
+      "scope": "in_scope",
+      "scope_reason": "region EU (patched manually; matches dry-run table)",
+      "_create": true
+    },
+    {
+      "id": "c604764f-083b-4cfc-8726-79cb473e26a8",
+      "name": "Arenas Performance Evaluation \u2014 Sep 09, 2026",
+      "start_time": "2026-09-09T17:00:00+00:00",
+      "was_historical_archive": false,
+      "scope": "in_scope",
+      "scope_reason": "region EU (patched manually; matches dry-run table)",
+      "_create": true
+    }
+  ],
+  "done": [
+    "604262c7-b665-4fbb-92b8-c095efdc0187",
+    "c604764f-083b-4cfc-8726-79cb473e26a8",
+    "e8172fc9-a86f-4752-93c7-9161499fe1a6"
+  ]
+}

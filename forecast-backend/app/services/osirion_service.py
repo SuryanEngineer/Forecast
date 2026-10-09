@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.integrations import osirion_client
 from app.integrations.osirion_client import OsirionApiError
-from app.models.osirion import OsirionPlayerMapping, OsirionSeededHeatWindow, OsirionTournamentMapping
+from app.models.osirion import OsirionPlayerMapping, OsirionSeededHeatWindow, OsirionTournamentMapping, PlayerAlias
 from app.models.player import Player
 from app.models.tournament import (
     PlacementResult,
@@ -64,6 +64,7 @@ from app.models.tournament import (
     TournamentType,
 )
 from app.services import player_service, tournament_classification_service, tournament_service
+from app.services.player_identity import skeleton
 
 logger = logging.getLogger("forecast.osirion")
 
@@ -473,6 +474,23 @@ def _match_player(db: Session, osirion_player: dict, create_missing: bool = True
     # See clean_gamertag's docstring.
     cleaned_username = clean_gamertag(username)
 
+    # Known alternate name (e.g. a pro's LAN account name registered from the linker sheet --
+    # scripts/merge_from_linker.py): checked BEFORE gamertag matching/creation, because a linked
+    # player's gamertag is the pro name we list ("Shxrk"), not the name this account plays under
+    # ("AUR shxrkÿ"). Compared by skeleton, so tags/case/accents/look-alike letters don't matter.
+    alias = db.query(PlayerAlias).filter(PlayerAlias.alias_key == skeleton(username)).one_or_none()
+    if alias is not None:
+        aliased = db.get(Player, alias.player_id)
+        if aliased is not None and not aliased.gamertag.startswith("[MERGED INTO"):
+            if account_id:
+                db.add(
+                    OsirionPlayerMapping(
+                        id=uuid.uuid4(), osirion_account_id=account_id, osirion_username=username, player_id=aliased.id
+                    )
+                )
+                db.flush()
+            return aliased
+
     # Escape SQL LIKE wildcards (% and _) that could theoretically appear
     # in a Fortnite display name -- ilike() would otherwise treat them as
     # pattern characters instead of literal ones.
@@ -654,6 +672,24 @@ class SyncResult:
     unmatched_usernames: list[str] = field(default_factory=list)
     finalized: bool = False
     error: str | None = None
+    # LAN hold (see sync_tournament): accounts in a LAN/global event that matched no existing
+    # player/alias and were therefore NOT auto-created -- [(accountId, username, rank)].
+    unlinked: list = field(default_factory=list)
+
+
+def _lan_hold_applies(tournament: Tournament, skip_finalize: bool) -> bool:
+    """True for a LIVE (dividend-paying) sync of a LAN/global-tier tournament.
+
+    LAN accounts are separate Epic accounts with different ids/names than the pro's main account, so
+    a LAN account nobody linked beforehand would otherwise be auto-created as a brand-new stock --
+    and since finalization pays dividends to whoever holds the shares at that moment, a placement on
+    a duplicate stock is paid to the wrong holders and can't be repaired afterwards. For these events
+    unknown accounts are therefore held back (not created) and finalization waits until they are
+    linked with scripts/link_lan_accounts.py. Backfills (skip_finalize=True) never pay dividends and
+    keep the old create-as-you-go behavior."""
+    if skip_finalize or not getattr(settings, "LAN_HOLD_UNLINKED_ACCOUNTS", True):
+        return False
+    return tournament.tournament_type in _REGION_EXEMPT_TOURNAMENT_TYPES
 
 
 def sync_tournament(
@@ -682,6 +718,9 @@ def sync_tournament(
         return result
 
     now = datetime.now(timezone.utc)
+    lan_hold = _lan_hold_applies(tournament, skip_finalize)
+    if lan_hold:
+        create_missing_players = False
 
     # SQLite (demo mode) drops tzinfo on DateTime(timezone=True) columns on
     # read-back -- see password_reset_service.confirm_reset for the same
@@ -739,6 +778,10 @@ def sync_tournament(
                     if player is None:
                         if osirion_player.get("username"):
                             result.unmatched_usernames.append(osirion_player["username"])
+                        if lan_hold:
+                            result.unlinked.append(
+                                (osirion_player.get("accountId"), osirion_player.get("username"), rank)
+                            )
                         continue
                     tournament_service.upsert_placement_result(
                         db,
@@ -820,6 +863,17 @@ def sync_tournament(
     # ValueError, and leave the tournament stuck showing as perpetually
     # "Live"/"Sync stalled" on the frontend even though it finished
     # normally and simply had no involvement from anyone we track.
+    if reached_end_of_leaderboard and window_ended and lan_hold and result.unlinked:
+        # Never pay dividends on an incomplete/misattributed LAN field. Resolve with
+        # scripts/link_lan_accounts.py; the next sync pass (45s) finalizes automatically.
+        result.error = (
+            f"finalization HELD: {len(result.unlinked)} LAN account(s) not linked to a player "
+            f"(run scripts/link_lan_accounts.py): "
+            + ", ".join(f"{u or a} (#{r})" for a, u, r in result.unlinked[:10])
+        )
+        logger.warning("Tournament %s: %s", tournament.id, result.error)
+        return result
+
     if reached_end_of_leaderboard and window_ended:
         has_any_results = (
             db.query(PlacementResult.id).filter(PlacementResult.tournament_id == tournament.id).first() is not None

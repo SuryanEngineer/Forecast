@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     # needed. Set to false to go back to the old fully-manual flow (POST
     # /admin/osirion/track-tournament for every tournament).
     OSIRION_AUTO_TRACK_ENABLED: bool = True
+    # When true (default), a LIVE sync of a LAN/global-tier tournament (EWC, Global Championship,
+    # Majors) never auto-creates a Player for an unrecognised account and refuses to FINALIZE (pay
+    # dividends) while any such account is unlinked -- LAN accounts are separate Epic accounts, so an
+    # unlinked one would become a duplicate stock that steals the pro's dividend. Link them with
+    # scripts/link_lan_accounts.py (or prepare the event beforehand with scripts/merge_from_linker.py).
+    LAN_HOLD_UNLINKED_ACCOUNTS: bool = True
 
     # --- Bot trading loop (app/services/bot_trading_service.py) ---
     # This is operational config (is the loop running at all, how often),

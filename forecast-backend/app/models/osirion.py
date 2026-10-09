@@ -120,3 +120,29 @@ class OsirionPlayerMapping(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     player: Mapped["Player"] = relationship()
+
+
+class PlayerAlias(Base):
+    """A known alternate NAME for a player -- chiefly the LAN account names ("[EWC 2026] AUR shxrkÿ")
+    a pro competes under at EWC / the Global Championship, which are separate Epic accounts with
+    different ids and different names than their main account.
+
+    Why this exists: a player's `gamertag` is the pro name WE list ("Shxrk"), so a brand-new LAN
+    account id showing up in a leaderboard can no longer be recognised by name against gamertag.
+    `_match_player` therefore checks this table (by `alias_key` = player_identity.skeleton(name):
+    tags/case/accents/look-alike letters/punctuation ignored) BEFORE it would create a new Player,
+    and records the new account id in OsirionPlayerMapping so later syncs are an id lookup.
+
+    Populated by scripts/merge_from_linker.py from the linker spreadsheet (run it before each LAN
+    event) and by scripts/link_lan_accounts.py when an unknown LAN account is resolved by hand."""
+
+    __tablename__ = "player_aliases"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    alias_key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    alias_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    player_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    player: Mapped["Player"] = relationship()

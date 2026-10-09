@@ -49,7 +49,6 @@ import argparse
 import csv
 import re
 import sys
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -58,9 +57,10 @@ sys.path.insert(0, ".")
 from sqlalchemy import func  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
-from app.models.osirion import OsirionPlayerMapping  # noqa: E402
+from app.models.osirion import OsirionPlayerMapping, PlayerAlias  # noqa: E402
 from app.models.player import Player  # noqa: E402
 from app.services.osirion_service import clean_gamertag  # noqa: E402
+from app.services.player_identity import norm_id, skeleton  # noqa: E402
 from scripts.merge_fuzzy_duplicates import (  # noqa: E402
     _TOMBSTONE_PREFIX,
     _merge_player,
@@ -71,29 +71,7 @@ from scripts.merge_fuzzy_duplicates import (  # noqa: E402
 
 DEFAULT_FILE = Path(__file__).parent / "data" / "lan_main_linker.csv"
 
-# Look-alike characters used in Fortnite names (Cyrillic/Greek/etc. -> Latin).
-_HOMOGLYPHS = str.maketrans({
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "і": "i", "ѕ": "s",
-    "ј": "j", "һ": "h", "ԁ": "d", "к": "k", "м": "m", "н": "h", "т": "t", "в": "b", "ӏ": "l",
-    "ν": "v", "ο": "o", "ρ": "p", "α": "a", "ι": "i", "τ": "t", "κ": "k", "ε": "e", "υ": "u",
-    "β": "b", "ⅰ": "i", "ɑ": "a", "ı": "i", "ɡ": "g", "ø": "o", "đ": "d", "ł": "l",
-})
 _QUOTED = re.compile(r'["“]([^"”]+)["”]')
-
-
-def skeleton(name: str) -> str:
-    """Comparison key: tags stripped, accents removed, look-alikes folded, case and every
-    non-alphanumeric dropped. Names with no Latin/digit content at all (e.g. Japanese)
-    fall back to the raw casefolded text so they still compare."""
-    cleaned = clean_gamertag(name)
-    decomposed = unicodedata.normalize("NFKD", cleaned)
-    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
-    key = "".join(ch for ch in stripped.translate(_HOMOGLYPHS) if ch.isalnum() and ch != "ǃ")
-    return key or ("raw:" + cleaned.casefold().strip())
-
-
-def norm_id(value: str) -> str:
-    return value.strip().lower().replace("-", "")
 
 
 # --------------------------------------------------------------------------- sheet loading
@@ -337,9 +315,38 @@ def main() -> None:
                     stats["renamed"] += 1
                     print(f"  Renamed {old!r} -> {pro_name!r}")
 
+        # ---- register every sheet LAN account name as an alias of its pro, so a LAN account the
+        # sync has never seen (new account id, same name) is attached to the right player instead of
+        # becoming a duplicate stock. Also the safety net for events after this one.
+        existing_aliases = {a.alias_key: a for a in db.query(PlayerAlias).all()}
+        alias_new, alias_conflicts = 0, []
+        for g in groups:
+            target = g["target"]
+            if target is None:
+                continue
+            for n in g["names"]:
+                key = skeleton(n)
+                have = existing_aliases.get(key)
+                if have is not None:
+                    if have.player_id != target.id:
+                        alias_conflicts.append(f"[{'/'.join(g['player_ids'])}] {g['pro']}: {clean_gamertag(n)!r} already an alias of another player")
+                    continue
+                if args.confirm:
+                    row = PlayerAlias(alias_key=key, alias_name=clean_gamertag(n)[:200], player_id=target.id, source="linker")
+                    db.add(row)
+                    existing_aliases[key] = row
+                alias_new += 1
+        if args.confirm:
+            db.commit()
+        stats["aliases registered" if args.confirm else "aliases to register"] += alias_new
+
         print("\n" + "=" * 100)
         print("SUMMARY")
-        for k in ("merged", "renamed", "would merge", "would rename", "skipped unsafe", "nothing to do", "not found"):
+        if alias_conflicts:
+            print("  Alias conflicts (left as-is):")
+            for line in alias_conflicts:
+                print(f"    {line}")
+        for k in ("merged", "renamed", "would merge", "would rename", "aliases registered", "aliases to register", "skipped unsafe", "nothing to do", "not found"):
             if stats.get(k):
                 print(f"  {k}: {stats[k]}")
         if conflicts:
