@@ -157,8 +157,9 @@ export function useTournamentsList() {
 // refreshes at the same cadence new tournaments get auto-tracked and
 // standings get pulled, so the calendar's status/payout figures update on
 // their own with no admin action needed.
-export function useTournamentCalendar() {
-  return usePolledFetch<CalendarTournamentResponse[]>('/tournaments/calendar', [], 45_000);
+export function useTournamentCalendar(includeCompleted = false) {
+  return usePolledFetch<CalendarTournamentResponse[]>(
+    includeCompleted ? '/tournaments/calendar?include_completed=true' : '/tournaments/calendar', [], 45_000);
 }
 
 export function useLeaderboard() {

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class MarketSnapshotResponse(BaseModel):
     id: uuid.UUID
     gamertag: str
+    is_verified: bool = False
     real_name: str | None
     team: str | None
     region: str | None

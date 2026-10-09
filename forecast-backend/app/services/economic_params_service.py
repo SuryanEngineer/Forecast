@@ -71,10 +71,10 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "app/services/order_service.py).",
     ),
     "auction.entry_fee": (
-        Decimal("10000"),
+        Decimal("100"),
         "One-time flat fee charged when a user joins a player-share IPO auction round (not per bid -- "
-        "one fee unlocks bidding on every player in that round). Matches the simulation's $10,000 flat "
-        "auction entry fee. See app/services/auction_service.py.",
+        "one fee unlocks bidding on every player in that round). $100 = 1% of the $10,000 starting balance, "
+        "the same ratio as the simulation's $10,000 fee on $1,000,000. See app/services/auction_service.py.",
     ),
     "dividend.cash_cup_pool": (
         Decimal("300000"),
@@ -93,9 +93,10 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "simulation's locked-in economics (1 Global/chapter x $3M = $3M).",
     ),
     "wallet.starting_balance": (
-        Decimal("1000000"),
-        "Fantasy cash every new user is credited with automatically at registration, matching the "
-        "simulation's $1,000,000-per-participant starting capital (see app/api/v1/auth.py). This is the "
+        Decimal("10000"),
+        "Fantasy cash every new user is credited with automatically at registration ($10,000; the original "
+        "simulation used $1,000,000 -- scaled down 100x, with auction.entry_fee scaled to match; see "
+        "app/api/v1/auth.py). This is the "
         "ONLY source of starting cash -- the self-serve /wallet/deposit endpoint is admin-gated for "
         "top-ups so the simulated economy's total money supply stays meaningful.",
     ),

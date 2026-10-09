@@ -45,7 +45,10 @@ def list_tournaments(db: Session = Depends(get_db)) -> list[TournamentResponse]:
 
 
 @router.get("/calendar", response_model=list[CalendarTournamentResponse])
-def get_tournament_calendar(db: Session = Depends(get_db)) -> list[CalendarTournamentResponse]:
+def get_tournament_calendar(
+    include_completed: bool = Query(False, description="Also include finished (finalized) tournaments -- the full calendar, past and upcoming."),
+    db: Session = Depends(get_db),
+) -> list[CalendarTournamentResponse]:
     """Every tournament that hasn't finished yet (SCHEDULED or
     RESULTS_PENDING), soonest first, with a total-dividend-pool figure for
     each -- meant to be polled every ~45s (see this response's docstring)
@@ -53,17 +56,15 @@ def get_tournament_calendar(db: Session = Depends(get_db)) -> list[CalendarTourn
     scheduled -> in progress -> finalized, with no admin action needed.
     Registered ABOVE /{tournament_id} on purpose -- otherwise FastAPI
     would try to parse "calendar" as a tournament_id UUID and 422 first."""
-    tournaments = (
-        db.query(Tournament)
-        .filter(Tournament.status != TournamentStatus.FINALIZED)
-        .limit(200)
-        .all()
-    )
+    query = db.query(Tournament).filter(Tournament.is_historical_archive.is_(False))  # hidden rows never show
+    if not include_completed:
+        query = query.filter(Tournament.status != TournamentStatus.FINALIZED)
+    tournaments = query.limit(500).all()
     # Sorted in Python rather than via SQL nulls-handling -- cheap at this
     # size (capped at 200 rows) and guarantees a stable, dialect-independent
     # chronological order with every null start_time pushed to the end,
     # instead of relying on ORDER BY ... NULLS LAST behavior.
-    tournaments.sort(key=lambda t: (t.start_time is None, t.start_time, t.created_at))
+    tournaments.sort(key=lambda t: (t.start_time is None, t.start_time or t.created_at, t.created_at))
 
     tournament_ids = [t.id for t in tournaments]
     mappings_by_tournament = {
@@ -125,7 +126,7 @@ def get_tournament_entrants(tournament_id: uuid.UUID, db: Session = Depends(get_
         .order_by(Player.gamertag.asc())
         .all()
     )
-    return [TournamentEntrantResponse(player_id=player.id, gamertag=player.gamertag) for _, player in rows]
+    return [TournamentEntrantResponse(player_id=player.id, gamertag=player.gamertag, is_verified=player.is_verified) for _, player in rows]
 
 
 @router.get("/{tournament_id}", response_model=TournamentResponse)
@@ -220,6 +221,7 @@ def get_live_leaderboard(
             LiveLeaderboardEntry(
                 player_id=player.id,
                 gamertag=player.gamertag,
+                is_verified=player.is_verified,
                 placement=result.placement,
                 points=result.points,
                 eliminations=result.eliminations,

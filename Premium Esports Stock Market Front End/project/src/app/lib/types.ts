@@ -30,6 +30,7 @@ export interface WalletResponse {
 export interface MarketSnapshot {
   id: string;
   gamertag: string;
+  is_verified?: boolean;
   real_name: string | null;
   team: string | null;
   region: string | null;
@@ -157,11 +158,13 @@ export interface CalendarTournamentResponse {
 export interface TournamentEntrantResponse {
   player_id: string;
   gamertag: string;
+  is_verified?: boolean;
 }
 
 export interface LiveLeaderboardEntry {
   player_id: string;
   gamertag: string;
+  is_verified?: boolean;
   placement: number;
   points: Money | null;
   eliminations: number | null;

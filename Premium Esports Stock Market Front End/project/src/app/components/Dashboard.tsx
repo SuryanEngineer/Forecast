@@ -5,6 +5,7 @@ import { useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, use
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { LiveLeaderboard } from './LiveLeaderboard';
+import { VerifiedBadge } from './HelpModal';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -156,7 +157,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                       {isUp ? '↑' : '↓'} {Math.abs(changePct).toFixed(1)}%
                     </span>
                   </div>
-                  <p className="text-foreground font-bold" style={{ fontSize: 16 }}>{playerName(m)}</p>
+                  <p className="text-foreground font-bold" style={{ fontSize: 16 }}>{playerName(m)}<VerifiedBadge show={m.is_verified} /></p>
                   <p className="text-muted-foreground mb-2" style={{ fontSize: 12 }}>{m.team ?? ' '}</p>
                   <p className="font-mono font-bold" style={{ fontSize: 20, color: 'var(--foreground)' }}>${toNumber(m.last_price).toFixed(2)}</p>
                 </button>
@@ -191,7 +192,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
               >
                 <PlayerAvatar name={playerName(h.market)} color={colorForId(h.market.id)} size={40} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-foreground font-semibold" style={{ fontSize: 15 }}>{playerName(h.market)}</p>
+                  <p className="text-foreground font-semibold" style={{ fontSize: 15 }}>{playerName(h.market)}<VerifiedBadge show={h.market.is_verified} /></p>
                   <p className="text-muted-foreground" style={{ fontSize: 12 }}>{h.position.quantity} shares{h.market.team ? ` · ${h.market.team}` : ''}</p>
                 </div>
                 <div className="text-right shrink-0">

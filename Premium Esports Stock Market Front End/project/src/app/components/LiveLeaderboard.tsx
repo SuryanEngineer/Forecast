@@ -5,6 +5,7 @@ import { toNumber } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { placementBadgeStyle, placementRowTint } from '../lib/placement';
 import { PlayerAvatar } from './Dashboard';
+import { VerifiedBadge } from './HelpModal';
 
 // Shows a tournament's current standings, polling
 // GET /tournaments/{id}/live-leaderboard every 8s (see lib/hooks.ts's
@@ -102,7 +103,7 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
                 </div>
                 <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={compact ? 22 : 26} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{entry.gamertag}</p>
+                  <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
                   {subline && !compact && (
                     <p className="truncate" style={{ fontSize: 10.5, color: 'var(--muted-foreground)' }}>{subline}</p>
                   )}

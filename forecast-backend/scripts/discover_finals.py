@@ -163,7 +163,8 @@ def collect_cheap_pass(windows, args, regions, now, rules):
                 reasons.append((w, f"region {w.regions}", -1))
                 continue
             end = w.end_time
-            if end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) >= now:
+            if end is not None and (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) >= now \
+                    and not getattr(args, "include_upcoming", False):
                 reasons.append((w, "not ended yet", -1))
                 continue
             hit = None if args.ignore_exclude_rules else next(

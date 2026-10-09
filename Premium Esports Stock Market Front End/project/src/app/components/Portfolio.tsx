@@ -5,7 +5,7 @@ import { useMarketsByIds, useMyPositions } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
-import { HelpButton } from './HelpModal';
+import { HelpButton, VerifiedBadge } from './HelpModal';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -148,7 +148,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                 <div className="flex items-center gap-3 mb-3">
                   <PlayerAvatar name={playerName(activeHolding.market)} color={activeHolding.color} size={44} />
                   <div className="flex-1">
-                    <p className="text-foreground font-bold" style={{ fontSize: 16 }}>{playerName(activeHolding.market)}</p>
+                    <p className="text-foreground font-bold" style={{ fontSize: 16 }}>{playerName(activeHolding.market)}<VerifiedBadge show={activeHolding.market.is_verified} /></p>
                     <p className="text-muted-foreground" style={{ fontSize: 12 }}>{activeHolding.shares} shares{activeHolding.market.team ? ` · ${activeHolding.market.team}` : ''}</p>
                   </div>
                   <div className="text-right">
@@ -191,7 +191,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                 <div className="w-1 h-10 rounded-full shrink-0" style={{ background: h.color }} />
                 <PlayerAvatar name={playerName(h.market)} color={h.color} size={44} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-foreground font-semibold" style={{ fontSize: 15 }}>{playerName(h.market)}</p>
+                  <p className="text-foreground font-semibold" style={{ fontSize: 15 }}>{playerName(h.market)}<VerifiedBadge show={h.market.is_verified} /></p>
                   <p className="text-muted-foreground" style={{ fontSize: 12 }}>{h.shares} shares{h.market.team ? ` · ${h.market.team}` : ''}</p>
                 </div>
                 <div className="text-right shrink-0">

@@ -86,6 +86,7 @@ class AutoTrackResultResponse(BaseModel):
 class LiveLeaderboardEntry(BaseModel):
     player_id: uuid.UUID
     gamertag: str
+    is_verified: bool = False
     placement: int
     points: Decimal | None
     eliminations: int | None = None

@@ -677,6 +677,10 @@ class SyncResult:
     unlinked: list = field(default_factory=list)
 
 
+# A finals lobby is ~100 players (Reload 40). Anything with more than this many ENTRIES is an open field.
+_MAX_FINALS_FIELD_ENTRIES = 200
+
+
 def _lan_hold_applies(tournament: Tournament, skip_finalize: bool) -> bool:
     """True for a LIVE (dividend-paying) sync of a LAN/global-tier tournament.
 
@@ -763,6 +767,27 @@ def sync_tournament(
             total_pages = leaderboard.get("totalPages") or 1
             entries = leaderboard.get("entries", [])
             all_entries.extend(entries)
+
+            # Open-field guard (live path, non-LAN only): a finals lobby is <=~100 players, so a leaderboard
+            # with far more than a couple hundred entries is an open cup/qualifier that must never become
+            # tradeable players (that is how the roster once reached 89k). Pre-start tracking of upcoming
+            # events (scripts/track_upcoming_finals.py) relies on this: a mis-tracked open event is hidden
+            # the moment its field is visible, before a single player is created.
+            if (
+                page == 0
+                and not skip_finalize
+                and tournament.tournament_type not in _REGION_EXEMPT_TOURNAMENT_TYPES
+                and total_pages > 1
+                and len(entries) * (total_pages - 1) > _MAX_FINALS_FIELD_ENTRIES
+            ):
+                tournament.is_historical_archive = True
+                db.commit()
+                result.error = (
+                    f"open field (~{len(entries) * (total_pages - 1)}+ entries over {total_pages} pages) -- not a finals; "
+                    f"tournament hidden and not synced"
+                )
+                logger.warning("Tournament %s (%s): %s", tournament.id, tournament.name, result.error)
+                return result
 
             for entry in entries:
                 rank = entry.get("rank")

@@ -15,10 +15,10 @@
 // verbatim from the demo. If those backend defaults ever change, this
 // copy should be updated alongside them.
 import { useState, type ReactNode } from 'react';
-import { HelpCircle, X } from 'lucide-react';
+import { BadgeCheck, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-export type HelpTopicId = 'orders' | 'dividends' | 'tournaments' | 'rankings' | 'portfolio' | 'market';
+export type HelpTopicId = 'orders' | 'dividends' | 'tournaments' | 'rankings' | 'portfolio' | 'market' | 'verified';
 
 interface HelpSection {
   heading: string;
@@ -256,6 +256,41 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       },
     ],
   },
+  verified: {
+    emoji: '✅',
+    title: 'Verified Pros',
+    intro: 'A verified badge means this listing is the real, confirmed pro -- not a look-alike account.',
+    sections: [
+      {
+        heading: 'What it means',
+        body: (
+          <p>We keep a hand-checked list of pro players and the Epic accounts each one plays on -- including the
+          separate accounts they use at LAN events like EWC and the Global Championship. A <strong>verified</strong>{' '}
+          player is one we matched to that list, and we show the pro name <em>we</em> list, not whatever name a
+          particular account happened to play under that day.</p>
+        ),
+      },
+      {
+        heading: 'Why it matters',
+        body: (
+          <p>Anyone can pick a name that looks almost identical to a pro’s (swapping in a look-alike letter, adding a
+          symbol) and enter an open qualifier. Without a check, that copy could show up on the market next to the real
+          player. Only the real pro carries the badge, so if two similar names appear, <strong>buy the verified one</strong>.</p>
+        ),
+      },
+      {
+        heading: 'No badge?',
+        body: (
+          <List
+            items={[
+              'It does not automatically mean a player is fake -- plenty of real players simply aren’t on our verified list yet.',
+              'If a name looks like a verified pro’s but has no badge, treat it as a different person and double-check before buying.',
+            ]}
+          />
+        ),
+      },
+    ],
+  },
 };
 
 function HelpModal({ topicId, onClose }: { topicId: HelpTopicId; onClose: () => void }) {
@@ -334,6 +369,33 @@ export function HelpButton({ topic, size = 15, title, className = '' }: HelpButt
       </button>
       <AnimatePresence>
         {open && <HelpModal topicId={topic} onClose={() => setOpen(false)} />}
+      </AnimatePresence>
+    </>
+  );
+}
+
+/** A small clickable "verified" check shown next to a pro's name. Clicking it opens the "Verified Pros"
+ * explanation. Renders nothing unless `show` is true. A <span role="button"> (not a <button>) so it can sit
+ * inside rows/cards that are themselves buttons without producing invalid nested-button markup. */
+export function VerifiedBadge({ show, size = 14 }: { show?: boolean; size?: number }) {
+  const [open, setOpen] = useState(false);
+  if (!show) return null;
+  const openIt = (e: { stopPropagation: () => void; preventDefault?: () => void }) => { e.stopPropagation(); e.preventDefault?.(); setOpen(true); };
+  return (
+    <>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={openIt}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openIt(e); }}
+        title="Verified pro -- click to learn what this means"
+        className="inline-flex align-middle ml-1 cursor-pointer shrink-0"
+        style={{ color: 'var(--primary)' }}
+      >
+        <BadgeCheck style={{ width: size, height: size }} />
+      </span>
+      <AnimatePresence>
+        {open && <HelpModal topicId="verified" onClose={() => setOpen(false)} />}
       </AnimatePresence>
     </>
   );

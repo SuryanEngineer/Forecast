@@ -77,6 +77,7 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
     return {
         "id": player.id,
         "gamertag": player.gamertag,
+        "is_verified": player.is_verified,
         "real_name": player.real_name,
         "team": player.team,
         "region": player.region,
@@ -189,6 +190,7 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
             {
                 "id": player.id,
                 "gamertag": player.gamertag,
+                "is_verified": player.is_verified,
                 "real_name": player.real_name,
                 "team": player.team,
                 "region": player.region,

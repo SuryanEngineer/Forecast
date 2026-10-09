@@ -7,7 +7,7 @@ import { useAuth } from '../lib/auth';
 import { toNumber, type MarketSnapshot, type PositionResponse, type PriceHistoryPoint, type TradeResponse } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
-import { HelpButton } from './HelpModal';
+import { HelpButton, VerifiedBadge } from './HelpModal';
 
 interface Props {
   playerId: string;
@@ -212,7 +212,7 @@ export function PlayerModal({ playerId, onClose }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-foreground font-bold" style={{ fontSize: 24 }}>{playerName(market)}</h2>
+                <h2 className="text-foreground font-bold" style={{ fontSize: 24 }}>{playerName(market)}<VerifiedBadge show={market.is_verified} /></h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   {market.team && (
                     <span className="px-2 py-0.5 rounded-lg text-sm font-medium" style={{ background: color + '22', color }}>{market.team}</span>

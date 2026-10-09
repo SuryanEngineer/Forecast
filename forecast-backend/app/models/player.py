@@ -27,6 +27,10 @@ class Player(Base):
     team: Mapped[str | None] = mapped_column(String(150), nullable=True)
     region: Mapped[str | None] = mapped_column(String(50), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # True for a pro listed in the LAN-to-main linker sheet whose gamertag was normalized to the pro name WE list
+    # (set by scripts/merge_from_linker.py). The UI shows a clickable "Verified" badge so a look-alike account
+    # (e.g. a Cyrillic "е" copy of a pro's name) that happens to land in a qualifier isn't mistaken for the real pro.
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     total_shares_outstanding: Mapped[int] = mapped_column(Integer, nullable=False, default=10_000)
     ipo_price: Mapped[Decimal] = mapped_column(MONEY, nullable=False, default=Decimal("10.0000"))
     # A player's competitive skill tier, roughly on a 1-99 scale (elite

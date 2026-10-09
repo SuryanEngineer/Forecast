@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../lib/api';
 import { useTournamentCalendar, useTournamentsList } from '../lib/hooks';
@@ -248,6 +248,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
   // tournament that hadn't even started yet).
   const isLive = tournament.phase === 'live';
   const isFinalizing = tournament.phase === 'finalizing';
+  const isCompleted = tournament.phase === 'completed';
   // No explicit `timeZone` option -- Date/toLocaleDateString/toLocaleTimeString
   // default to the browser's own local timezone, so this automatically
   // shows each viewer their own local date/time with no extra plumbing.
@@ -272,6 +273,11 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
           {isLive && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
               ● Live
+            </span>
+          )}
+          {isCompleted && (
+            <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(0,214,143,0.15)', color: '#00d68f' }}>
+              ✓ Completed
             </span>
           )}
           {isFinalizing && (
@@ -302,7 +308,10 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
 }
 
 function TournamentCalendar({ openTournament }: { openTournament: (t: TournamentResponse) => void }) {
-  const { data: calendar, loading } = useTournamentCalendar();
+  // The full calendar: upcoming/live/finalizing first (soonest first), then everything already completed (newest first).
+  const { data: calendar, loading } = useTournamentCalendar(true);
+  const upcomingRows = calendar.filter(t => t.phase !== 'completed');
+  const completedRows = calendar.filter(t => t.phase === 'completed').reverse();
 
   if (loading && calendar.length === 0) {
     return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>;
@@ -316,9 +325,15 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
       <p className="text-muted-foreground" style={{ fontSize: 12 }}>
         Updates automatically as tournaments are tracked and results come in.
       </p>
-      {calendar.map(t => (
+      {upcomingRows.length === 0 && (
+        <p className="text-muted-foreground italic" style={{ fontSize: 12.5 }}>No upcoming tournaments tracked yet — new ones are picked up automatically.</p>
+      )}
+      {[...upcomingRows, ...completedRows].map((t, i) => (
+        <React.Fragment key={t.id}>
+        {i === upcomingRows.length && completedRows.length > 0 && (
+          <p className="font-bold pt-3" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
+        )}
         <CalendarRow
-          key={t.id}
           tournament={t}
           onOpen={() =>
             openTournament({
@@ -335,6 +350,7 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
             })
           }
         />
+        </React.Fragment>
       ))}
     </div>
   );

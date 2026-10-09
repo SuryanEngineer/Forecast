@@ -6,7 +6,7 @@ import { useLeaderboard, useMarkets, useMarketSummary } from '../lib/hooks';
 import { toNumber, type MarketSnapshot, type TradeResponse } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
-import { HelpButton } from './HelpModal';
+import { HelpButton, VerifiedBadge } from './HelpModal';
 import { InfoDot } from './InfoTooltip';
 
 interface Props {
@@ -129,7 +129,7 @@ function PlayerCard({ market, navigate }: { market: MarketSnapshot; navigate: Pr
       </div>
 
       <div className="px-4 pb-4 flex flex-col flex-1">
-        <p className="text-foreground font-bold" style={{ fontSize: 18 }}>{displayName(market)}</p>
+        <p className="text-foreground font-bold" style={{ fontSize: 18 }}>{displayName(market)}<VerifiedBadge show={market.is_verified} /></p>
         <div className="flex items-center gap-2 mt-0.5 mb-3">
           {market.team && (
             <span className="px-2 py-0.5 rounded-lg text-xs font-medium" style={{ background: color + '22', color }}>
@@ -431,7 +431,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
                     <div className="space-y-1.5">
                       {topGainers.map(m => (
                         <button key={m.id} onClick={() => navigate('player', m.id)} className="w-full flex items-center justify-between hover:opacity-80">
-                          <span className="text-foreground" style={{ fontSize: 12.5 }}>{displayName(m)}</span>
+                          <span className="text-foreground" style={{ fontSize: 12.5 }}>{displayName(m)}<VerifiedBadge show={m.is_verified} /></span>
                           <span className="font-mono font-bold" style={{ fontSize: 12.5, color: 'var(--gain)' }}>+{toNumber(m.change_pct).toFixed(2)}%</span>
                         </button>
                       ))}
@@ -448,7 +448,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
                     <div className="space-y-1.5">
                       {topLosers.map(m => (
                         <button key={m.id} onClick={() => navigate('player', m.id)} className="w-full flex items-center justify-between hover:opacity-80">
-                          <span className="text-foreground" style={{ fontSize: 12.5 }}>{displayName(m)}</span>
+                          <span className="text-foreground" style={{ fontSize: 12.5 }}>{displayName(m)}<VerifiedBadge show={m.is_verified} /></span>
                           <span className="font-mono font-bold" style={{ fontSize: 12.5, color: 'var(--loss)' }}>{toNumber(m.change_pct).toFixed(2)}%</span>
                         </button>
                       ))}

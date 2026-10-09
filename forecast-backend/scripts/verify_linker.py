@@ -137,6 +137,7 @@ def main() -> None:
                 mapped_name[skeleton(m.osirion_username)].add(m.player_id)
         print("\n[PER-PRO] checking sheet rows ...")
         pro_issues, ok, not_resolved = [], 0, []
+        sheet_verified: set = set()
         inactive_pros = 0
         for g in groups:
             label = f"[{'/'.join(g['player_ids']) or '?'}] {g['pro']}"
@@ -166,6 +167,9 @@ def main() -> None:
             msgs = []
             if t.gamertag != g["pro"]:
                 msgs.append(f"gamertag is {t.gamertag!r}, sheet says {g['pro']!r}")
+            if not t.is_verified:
+                msgs.append("not marked verified (run merge_from_linker.py --confirm)")
+            sheet_verified.add(t.id)
             if not t.is_active:
                 msgs.append("player is INACTIVE")
                 inactive_pros += 1
@@ -186,6 +190,10 @@ def main() -> None:
             else:
                 ok += 1
 
+        stray = [p for p in live if p.is_verified and p.id not in sheet_verified]
+        if stray:
+            pro_issues.append(f"{len(stray)} player(s) are marked verified but are not in the sheet (or not resolvable): "
+                              + ", ".join(repr(p.gamertag) for p in stray[:10]))
         print(f"    OK: {ok}   with issues: {len(pro_issues)}   not resolvable (no ID mapping / alias / LAN-name player): {len(not_resolved)}")
         for line in pro_issues:
             print("      ! " + line)

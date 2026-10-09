@@ -12,6 +12,7 @@ import {
 import { colorForId } from '../lib/colors';
 import { placementBadgeStyle } from '../lib/placement';
 import { PlayerAvatar } from './Dashboard';
+import { VerifiedBadge } from './HelpModal';
 
 interface Props {
   tournament: TournamentResponse;
@@ -112,7 +113,7 @@ function LiveStandingsSection({
             </div>
             <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={36} />
             <div className="flex-1 min-w-0">
-              <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{entry.gamertag}</p>
+              <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
               <p className="text-muted-foreground" style={{ fontSize: 11 }}>
                 {entry.eliminations !== null ? `${entry.eliminations} elims` : ''}
                 {entry.points !== null ? `${entry.eliminations !== null ? ' · ' : ''}${toNumber(entry.points)} pts` : ''}
@@ -346,7 +347,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                       style={{ background: 'var(--muted)' }}
                     >
                       <PlayerAvatar name={gamertag} color={colorForId(e.player_id)} size={28} />
-                      <p className="text-foreground font-semibold truncate" style={{ fontSize: 12.5 }}>{gamertag}</p>
+                      <p className="text-foreground font-semibold truncate" style={{ fontSize: 12.5 }}>{gamertag}<VerifiedBadge show={(market?.is_verified ?? e.is_verified)} /></p>
                     </button>
                   );
                 })}
@@ -408,7 +409,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                       )}
                       <PlayerAvatar name={gamertag} color={colorForId(r.player_id)} size={isTeam ? 30 : 36} />
                       <div className="flex-1 min-w-0">
-                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}</p>
+                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}<VerifiedBadge show={market?.is_verified} /></p>
                         <p className="text-muted-foreground" style={{ fontSize: 11 }}>
                           {r.eliminations !== null ? `${r.eliminations} elims` : ''}
                           {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}

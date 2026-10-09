@@ -172,5 +172,6 @@ class TournamentEntrantResponse(BaseModel):
 
     player_id: uuid.UUID
     gamertag: str
+    is_verified: bool = False
 
     model_config = {"from_attributes": True}

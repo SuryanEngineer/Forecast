@@ -329,11 +329,16 @@ def main() -> None:
         # sync has never seen (new account id, same name) is attached to the right player instead of
         # becoming a duplicate stock. Also the safety net for events after this one.
         existing_aliases = {a.alias_key: a for a in db.query(PlayerAlias).all()}
-        alias_new, alias_conflicts = 0, []
+        alias_new, alias_conflicts, verify_new = 0, [], 0
         for g in groups:
             target = g["target"]
             if target is None:
                 continue
+            # Every pro listed in the sheet (whose name we normalized) gets the "Verified" badge.
+            if not target.is_verified:
+                verify_new += 1
+                if args.confirm:
+                    target.is_verified = True
             for n in g["names"]:
                 key = skeleton(n)
                 have = existing_aliases.get(key)
@@ -349,6 +354,7 @@ def main() -> None:
         if args.confirm:
             db.commit()
         stats["aliases registered" if args.confirm else "aliases to register"] += alias_new
+        stats["marked verified" if args.confirm else "to mark verified"] += verify_new
 
         print("\n" + "=" * 100)
         print("SUMMARY")
@@ -356,7 +362,7 @@ def main() -> None:
             print("  Alias conflicts (left as-is):")
             for line in alias_conflicts:
                 print(f"    {line}")
-        for k in ("merged", "renamed", "would merge", "would rename", "aliases registered", "aliases to register", "skipped unsafe", "nothing to do", "not found"):
+        for k in ("merged", "renamed", "would merge", "would rename", "aliases registered", "aliases to register", "marked verified", "to mark verified", "skipped unsafe", "nothing to do", "not found"):
             if stats.get(k):
                 print(f"  {k}: {stats[k]}")
         if conflicts:
