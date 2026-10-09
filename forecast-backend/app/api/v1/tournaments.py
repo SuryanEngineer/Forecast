@@ -315,6 +315,10 @@ _PLACEMENT_KEYS = ("PLACEMENT_STAT_INDEX", "PLACEMENT", "placement", "Placement"
 _ELIM_KEYS = ("TEAM_ELIMS_STAT_INDEX", "PLAYER_ELIMS_STAT_INDEX", "Eliminations", "eliminations")
 
 
+# The only raw per-game stats passed through to the UI (placement/elims are lifted out separately).
+_KEPT_GAME_STATS = {"TIME_ALIVE_STAT", "DamageDealt", "DamageReceived"}
+
+
 def _first_int(stats: dict, keys: tuple) -> int | None:
     for key in keys:
         if key in stats:
@@ -385,7 +389,7 @@ def get_team_games(
                 placement=_first_int(stats, _PLACEMENT_KEYS),
                 eliminations=_first_int(stats, _ELIM_KEYS),
                 points=pts_dec,
-                stats={k: v for k, v in stats.items()},
+                stats={k: v for k, v in stats.items() if k in _KEPT_GAME_STATS},
             )
         )
 

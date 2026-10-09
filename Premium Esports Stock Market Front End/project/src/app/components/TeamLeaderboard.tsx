@@ -13,15 +13,21 @@ import { PlayerAvatar } from './Dashboard';
 import { VerifiedBadge } from './HelpModal';
 
 const PAGE_SIZE = 50;
+const COLS = '44px 1fr 1fr 1fr 1fr 1fr';
 
 function money(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-// "TIME_ALIVE_STAT" -> "Time alive"
-function prettyStatName(key: string): string {
-  const s = key.replace(/_STAT(_INDEX)?$/i, '').replace(/_/g, ' ').toLowerCase();
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function statNum(stats: Record<string, unknown>, key: string): number | null {
+  const v = stats[key];
+  return typeof v === 'number' ? v : null;
+}
+
+function mmss(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const r = Math.round(seconds % 60);
+  return `${m}:${String(r).padStart(2, '0')}`;
 }
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -37,7 +43,6 @@ function Chip({ label, value }: { label: string; value: string }) {
 function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId: string }) {
   const [data, setData] = useState<TeamGamesResponse | null>(null);
   const [failed, setFailed] = useState(false);
-  const [openGame, setOpenGame] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,44 +78,30 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
       </div>
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
-        <div className="grid items-center px-3 py-1.5 text-muted-foreground uppercase" style={{ gridTemplateColumns: '48px 1fr 1fr 1fr 20px', fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Game</span><span>Placed</span><span>Elims</span><span>Points</span><span />
+        <div className="grid items-center px-3 py-1.5 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
+          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Dealt</span><span>Taken</span>
         </div>
         {data.games.map(g => {
-          const extra = Object.entries(g.stats).filter(
-            ([k]) => !/PLACEMENT|ELIMS|Eliminations/i.test(k) && ['number', 'string'].includes(typeof g.stats[k])
-          );
-          const isOpen = openGame === g.game;
+          const alive = statNum(g.stats, 'TIME_ALIVE_STAT');
+          const dealt = statNum(g.stats, 'DamageDealt');
+          const taken = statNum(g.stats, 'DamageReceived');
           return (
-            <div key={g.game} className="border-t" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-              <button
-                onClick={() => extra.length > 0 && setOpenGame(isOpen ? null : g.game)}
-                className="w-full grid items-center px-3 py-2 text-left"
-                style={{ gridTemplateColumns: '48px 1fr 1fr 1fr 20px', cursor: extra.length > 0 ? 'pointer' : 'default' }}
+            <div
+              key={g.game}
+              className="grid items-center px-3 py-2 border-t"
+              style={{ gridTemplateColumns: COLS, borderColor: 'rgba(255,255,255,0.05)' }}
+            >
+              <span className="font-mono text-muted-foreground" style={{ fontSize: 12 }}>#{g.game}</span>
+              <span
+                className="font-mono font-bold"
+                style={{ fontSize: 13, color: g.placement === 1 ? '#fbbf24' : 'var(--foreground)' }}
               >
-                <span className="font-mono text-muted-foreground" style={{ fontSize: 12 }}>#{g.game}</span>
-                <span
-                  className="font-mono font-bold"
-                  style={{ fontSize: 13, color: g.placement === 1 ? '#fbbf24' : 'var(--foreground)' }}
-                >
-                  {g.placement !== null ? `${g.placement}${g.placement === 1 ? ' 🏆' : ''}` : '–'}
-                </span>
-                <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{g.eliminations ?? '–'}</span>
-                <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{g.points !== null ? toNumber(g.points) : '–'}</span>
-                {extra.length > 0 ? (
-                  isOpen ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                ) : <span />}
-              </button>
-              {isOpen && extra.length > 0 && (
-                <div className="px-3 pb-2.5 grid grid-cols-2 gap-x-4 gap-y-1">
-                  {extra.map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between">
-                      <span className="text-muted-foreground" style={{ fontSize: 11 }}>{prettyStatName(k)}</span>
-                      <span className="font-mono text-foreground" style={{ fontSize: 11.5 }}>{String(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {g.placement !== null ? `${g.placement}${g.placement === 1 ? ' 🏆' : ''}` : '–'}
+              </span>
+              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{g.eliminations ?? '–'}</span>
+              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{alive !== null ? mmss(alive) : '–'}</span>
+              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{dealt !== null ? dealt.toLocaleString() : '–'}</span>
+              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{taken !== null ? taken.toLocaleString() : '–'}</span>
             </div>
           );
         })}
