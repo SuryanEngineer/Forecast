@@ -91,10 +91,23 @@ def main() -> None:
             if p.is_active:
                 sk[skeleton(p.gamertag)].append(p)
         dupes = {k: v for k, v in sk.items() if len(v) > 1}
-        print(f"\n[3] Active players sharing a name skeleton: {len(dupes)}")
-        for k, v in list(dupes.items())[:30]:
+        tset = defaultdict(set)
+        if dupes:
+            ids = [p.id for v in dupes.values() for p in v]
+            for pid, tid in db.query(PlacementResult.player_id, PlacementResult.tournament_id).filter(PlacementResult.player_id.in_(ids)).all():
+                tset[pid].add(tid)
+        real_dupes, distinct = {}, {}
+        for k, v in dupes.items():
+            shared = any(tset[a.id] & tset[b.id] for i, a in enumerate(v) for b in v[i + 1:])
+            (distinct if shared else real_dupes)[k] = v
+        print(f"\n[3] Active players sharing a name skeleton: {len(real_dupes)}")
+        for k, v in list(real_dupes.items())[:30]:
             print("      " + "  |  ".join(f"{p.gamertag!r} ({pcount.get(p.id, 0)} pl)" for p in v))
-        problems += len(dupes)
+        problems += len(real_dupes)
+        if distinct:
+            print(f"    look-alike names that placed in the SAME tournament (two different people -- fine, not merged): {len(distinct)}")
+            for k, v in distinct.items():
+                print("      " + "  |  ".join(f"{p.gamertag!r}" for p in v))
 
         # 4. case-insensitive gamertag equality
         ci = defaultdict(list)
