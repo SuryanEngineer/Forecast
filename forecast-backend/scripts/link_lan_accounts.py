@@ -38,7 +38,7 @@ from app.models.player import Player  # noqa: E402
 from app.models.tournament import PlacementResult, Tournament, TournamentResultArchive, TournamentStatus, TournamentType  # noqa: E402
 from app.services import player_service  # noqa: E402
 from app.services.osirion_service import clean_gamertag  # noqa: E402
-from app.services.player_identity import norm_id, skeleton  # noqa: E402
+from app.services.player_identity import norm_id, skeleton  # noqa: E402, lan_core_keys
 
 LAN_TYPES = (TournamentType.GLOBAL_CHAMPIONSHIP, TournamentType.MAJOR)
 _TOMB = "[MERGED INTO"
@@ -95,6 +95,11 @@ def main() -> None:
                 key = skeleton(uname) if uname else ""
                 sugg = []
                 if key:
+                    # Exact "core name" match first: "[EWC2026] HAVOK SwizzY" -> core "swizzy" == player "SwizzY".
+                    core = lan_core_keys(uname)
+                    for p, sk in pool:
+                        if sk in core and sk != key:
+                            sugg.append((1.0, p, f"{p.gamertag} (same name without team prefix)"))
                     for p, sk in pool:
                         r = SequenceMatcher(None, key, sk).ratio()
                         if r >= 0.55:
