@@ -225,7 +225,7 @@ export function AuthScreen() {
 
             {mode === 'register' && (
               <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                New accounts start with $10,000 in fantasy cash to invest.
+                New accounts start with $1,000,000 in fantasy cash to invest.
               </p>
             )}
 

@@ -2,8 +2,8 @@
 """
 Set the economy knobs that were changed in code defaults (existing databases keep their OLD stored values until updated):
 
-    wallet.starting_balance  -> 10000   (cash every NEW user receives; existing users' wallets are not touched)
-    auction.entry_fee        -> 100     (1% of the starting balance, same ratio as the original $10k on $1M)
+    wallet.starting_balance  -> 1000000 (cash every NEW user receives; existing users' wallets are not touched)
+    auction.entry_fee        -> 10000   (1% of the starting balance, matching the simulation)
 
     python3 scripts/set_economy_params.py            # dry run: shows current -> new
     python3 scripts/set_economy_params.py --confirm
@@ -20,7 +20,7 @@ sys.path.insert(0, ".")
 from app.db.session import SessionLocal  # noqa: E402
 from app.services import economic_params_service  # noqa: E402
 
-WANTED = {"wallet.starting_balance": Decimal("10000"), "auction.entry_fee": Decimal("100")}
+WANTED = {"wallet.starting_balance": Decimal("1000000"), "auction.entry_fee": Decimal("10000")}
 
 
 def main() -> None:

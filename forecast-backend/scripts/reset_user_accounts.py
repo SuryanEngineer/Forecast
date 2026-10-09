@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Reset every REAL user's account to a clean $10,000 start (bots and the House are not touched unless asked).
+Reset every REAL user's account to a clean starting balance (default $1,000,000) (bots and the House are not touched unless asked).
 
 For each real user (everyone except bots and the House account):
   * open / partially-filled orders are CANCELLED (history kept) and held cash/shares released
   * every share they own is returned to the House (so each player's shares still sum to the fixed float)
   * active treasury holdings are marked redeemed WITHOUT paying out (the cash is being reset anyway)
-  * cash is set to the amount (default 10000) with a ledger entry ("Account reset"), held cash = 0
+  * cash is set to the amount (default 1000000) with a ledger entry ("Account reset"), held cash = 0
   Their trade history, dividend history and ledger rows are kept; only balances/holdings change.
 
 STOP THE BACKEND FIRST and restart it afterwards: the live order books are rebuilt from the database at startup, so a
@@ -16,7 +16,7 @@ Dry run by default (prints exactly what would change).
 
     python3 scripts/reset_user_accounts.py
     python3 scripts/reset_user_accounts.py --confirm
-    python3 scripts/reset_user_accounts.py --confirm --amount 10000
+    python3 scripts/reset_user_accounts.py --confirm --amount 1000000
     python3 scripts/reset_user_accounts.py --keep-holdings --confirm      # only reset cash; leave shares and orders alone
     python3 scripts/reset_user_accounts.py --email someone@example.com    # just one account
     python3 scripts/reset_user_accounts.py --include-bots --confirm       # also bots (cash + holdings back to the House)
@@ -49,7 +49,7 @@ _OPEN = (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED)
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm", action="store_true")
-    ap.add_argument("--amount", type=Decimal, default=Decimal("10000"))
+    ap.add_argument("--amount", type=Decimal, default=Decimal("1000000"))
     ap.add_argument("--keep-holdings", action="store_true", help="Only reset cash.")
     ap.add_argument("--include-bots", action="store_true")
     ap.add_argument("--email", default="", help="Only this user.")
