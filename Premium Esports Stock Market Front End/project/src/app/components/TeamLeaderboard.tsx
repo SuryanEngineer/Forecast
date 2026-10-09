@@ -5,6 +5,7 @@ import {
   toNumber,
   type PaginatedTeamResultResponse,
   type TeamGamesResponse,
+  type TournamentGamesResponse,
   type TeamResultResponse,
 } from '../lib/types';
 import { colorForId } from '../lib/colors';
@@ -110,13 +111,17 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
   );
 }
 
+const GOLD = '#fbbf24';
+
 function TeamCard({
   team,
   tournamentId,
+  estimate,
   onOpenPlayer,
 }: {
   team: TeamResultResponse;
   tournamentId: string;
+  estimate: boolean;
   onOpenPlayer: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -135,66 +140,90 @@ function TeamCard({
         boxShadow: hasStake ? '0 0 0 1px rgba(251,191,36,0.15), 0 0 18px rgba(251,191,36,0.10)' : undefined,
       }}
     >
-      <div className="flex items-start gap-3 p-3">
+      <div className="flex items-stretch gap-4 p-3.5">
         <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-          style={{ fontSize: 12, ...placementBadgeStyle(team.placement) }}
+          className="w-10 h-10 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
+          style={{ fontSize: 13, ...placementBadgeStyle(team.placement) }}
         >
           #{team.placement}
         </div>
 
-        <div className="flex-1 min-w-0 space-y-1">
-          {label && (
-            <p className="text-muted-foreground uppercase" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>{label}</p>
-          )}
-          {team.members.map(m => (
-            <button
-              key={m.player_id}
-              onClick={() => onOpenPlayer(m.player_id)}
-              className="flex items-center gap-2 text-left w-full hover:opacity-80 transition-opacity"
-            >
-              <PlayerAvatar name={m.gamertag} color={colorForId(m.player_id)} size={26} />
-              <span className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>
-                {m.gamertag}
-                <VerifiedBadge show={m.is_verified} />
-              </span>
-              {(m.my_shares_at_start ?? 0) > 0 && (
-                <span className="shrink-0 rounded-full px-1.5 py-0.5 font-bold" style={{ fontSize: 9.5, background: 'rgba(251,191,36,0.18)', color: '#fbbf24' }}>
-                  YOU OWN
-                </span>
-              )}
-            </button>
-          ))}
-          {/* Team-wide numbers, shown ONCE (they're cumulative for the whole team). */}
-          <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
-            {team.eliminations !== null ? `${team.eliminations} elims` : ''}
-            {team.points !== null ? `${team.eliminations !== null ? ' · ' : ''}${toNumber(team.points)} pts` : ''}
-          </p>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            {label && (
+              <span className="text-muted-foreground uppercase" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>{label}</span>
+            )}
+            {/* Team-wide numbers, shown ONCE (they're cumulative for the whole team). */}
+            <span className="text-muted-foreground" style={{ fontSize: 12 }}>
+              {team.eliminations !== null ? `${team.eliminations} elims` : ''}
+              {team.points !== null ? `${team.eliminations !== null ? ' · ' : ''}${toNumber(team.points)} pts` : ''}
+            </span>
+          </div>
+
+          {/* One row per player: name, what their placement paid out in total, and the per-share dividend. */}
+          <div className="space-y-1">
+            {team.members.map(m => {
+              const mPool = m.pool_amount !== null ? toNumber(m.pool_amount) : null;
+              const perShare = m.per_share_amount !== null ? toNumber(m.per_share_amount) : null;
+              const myPay = m.my_payout !== null ? toNumber(m.my_payout) : null;
+              return (
+                <div key={m.player_id} className="flex items-center gap-3">
+                  <button
+                    onClick={() => onOpenPlayer(m.player_id)}
+                    className="flex items-center gap-2 text-left min-w-0 flex-1 hover:opacity-80 transition-opacity"
+                  >
+                    <PlayerAvatar name={m.gamertag} color={colorForId(m.player_id)} size={28} />
+                    <span className="text-foreground font-semibold truncate" style={{ fontSize: 14 }}>
+                      {m.gamertag}
+                      <VerifiedBadge show={m.is_verified} />
+                    </span>
+                    {(m.my_shares_at_start ?? 0) > 0 && (
+                      <span className="shrink-0 rounded-full px-1.5 py-0.5 font-bold" style={{ fontSize: 9.5, background: 'rgba(251,191,36,0.18)', color: GOLD }}>
+                        YOU OWN {m.my_shares_at_start}
+                      </span>
+                    )}
+                  </button>
+                  <div className="text-right shrink-0" style={{ minWidth: 96 }}>
+                    <p className="font-mono font-bold" style={{ fontSize: 13, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}>
+                      {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
+                    </p>
+                    <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>{estimate ? 'est. total payout' : 'total payout'}</p>
+                  </div>
+                  <div className="text-right shrink-0" style={{ minWidth: 84 }}>
+                    <p className="font-mono font-semibold text-foreground" style={{ fontSize: 13 }}>
+                      {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '–'}
+                    </p>
+                    <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>per share</p>
+                  </div>
+                  <div className="text-right shrink-0" style={{ minWidth: 96 }}>
+                    {myPay !== null && myPay > 0 ? (
+                      <div className="rounded-lg px-2 py-1" style={{ background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.5)' }}>
+                        <p className="font-mono font-bold flex items-center justify-end gap-1" style={{ fontSize: 13, color: GOLD }}>
+                          <Coins className="w-3.5 h-3.5" /> +{money(myPay)}
+                        </p>
+                        <p style={{ fontSize: 9, color: GOLD }}>your payout</p>
+                      </div>
+                    ) : (m.my_shares_at_start ?? 0) > 0 && !estimate ? (
+                      <div className="rounded-lg px-2 py-1" style={{ background: 'rgba(251,191,36,0.10)', border: '1px dashed rgba(251,191,36,0.45)' }}>
+                        <p style={{ fontSize: 11, color: GOLD, fontWeight: 600 }}>payout pending</p>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="text-right shrink-0 space-y-1">
-          {pool !== null && pool > 0 ? (
-            <div>
-              <p className="font-mono font-bold" style={{ fontSize: 14, color: 'var(--gain)' }}>{money(pool)}</p>
-              <p className="text-muted-foreground" style={{ fontSize: 10 }}>team dividend pool</p>
-            </div>
-          ) : (
-            <p className="text-muted-foreground italic" style={{ fontSize: 11 }}>No payout</p>
-          )}
-          {mine !== null && mine > 0 ? (
-            <div className="rounded-lg px-2 py-1 text-right" style={{ background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.5)' }}>
-              <p className="font-mono font-bold flex items-center justify-end gap-1" style={{ fontSize: 13, color: '#fbbf24' }}>
-                <Coins className="w-3.5 h-3.5" /> +{money(mine)}
-              </p>
-              <p style={{ fontSize: 9.5, color: '#fbbf24' }}>your payout</p>
-            </div>
-          ) : (team.my_shares_at_start ?? 0) > 0 ? (
-            <div className="rounded-lg px-2 py-1 text-right" style={{ background: 'rgba(251,191,36,0.10)', border: '1px dashed rgba(251,191,36,0.45)' }}>
-              <p style={{ fontSize: 11, color: '#fbbf24', fontWeight: 600 }}>{team.my_shares_at_start} shares held at start</p>
-              <p style={{ fontSize: 9.5, color: '#fbbf24' }}>payout pending</p>
-            </div>
-          ) : null}
-        </div>
+        {team.members.length > 1 && (
+          <div className="text-right shrink-0 self-center pl-3" style={{ borderLeft: '1px solid rgba(255,255,255,0.07)', minWidth: 104 }}>
+            <p className="font-mono font-bold" style={{ fontSize: 15, color: 'var(--gain)' }}>{pool !== null ? money(pool) : '$0'}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 10 }}>team total</p>
+            {mine !== null && mine > 0 && (
+              <p className="font-mono font-bold mt-1" style={{ fontSize: 12, color: GOLD }}>you +{money(mine)}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <button
@@ -202,7 +231,7 @@ function TeamCard({
         className="w-full flex items-center justify-center gap-1 py-1.5 transition-colors hover:bg-white/[0.04]"
         style={{ borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: 11.5, color: 'var(--primary)', fontWeight: 600 }}
       >
-        {open ? 'Hide games' : 'Game-by-game breakdown'}
+        {open ? 'Hide this team’s games' : 'This team’s games'}
         {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
       </button>
       {open && (
@@ -214,15 +243,26 @@ function TeamCard({
   );
 }
 
-/** Finalized/finalizing tournament leaderboard grouped by TEAM, with team dividend pools, the viewer's own
- * payout highlighted, and an expandable game-by-game history per team. */
-export function TeamLeaderboard({
-  tournamentId,
-  onOpenPlayer,
-}: {
-  tournamentId: string;
-  onOpenPlayer: (id: string) => void;
-}) {
+function Pager({ page, totalPages, total, noun, onPage }: { page: number; totalPages: number; total: number; noun: string; onPage: (p: number) => void }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between pt-1">
+      <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+        {total.toLocaleString()} {noun} &middot; page {page} of {totalPages}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => onPage(page - 1)} disabled={page <= 1} className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30" style={{ background: 'var(--muted)' }}>
+          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+        </button>
+        <button onClick={() => onPage(page + 1)} disabled={page >= totalPages} className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30" style={{ background: 'var(--muted)' }}>
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StandingsTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpenPlayer: (id: string) => void }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PaginatedTeamResultResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -246,54 +286,164 @@ export function TeamLeaderboard({
   }
 
   const myTotal = data.my_total_payout !== null ? toNumber(data.my_total_payout) : 0;
+  const estimate = data.dividends_paid === false;
 
   return (
     <div className="space-y-2">
-      <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
-        Teams &amp; dividend payouts ({data.total.toLocaleString()})
-      </p>
       {myTotal > 0 && (
         <div className="rounded-xl p-3 flex items-center gap-2" style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.5)' }}>
-          <Coins className="w-4 h-4" style={{ color: '#fbbf24' }} />
-          <p style={{ fontSize: 12.5, color: '#fbbf24', fontWeight: 600 }}>
+          <Coins className="w-4 h-4" style={{ color: GOLD }} />
+          <p style={{ fontSize: 12.5, color: GOLD, fontWeight: 600 }}>
             You earned {money(myTotal)} from this tournament{data.total_pages > 1 ? ' (on this page)' : ''}.
           </p>
         </div>
       )}
-      <p className="text-muted-foreground" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-        Dividends are paid on the shares you held when the tournament started
-        {data.record_date ? ` (${new Date(data.record_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}
-        {' '}— shares bought afterwards don't count, and shares sold afterwards still do. Teams you own a piece of are outlined in gold.
-      </p>
+      {estimate ? (
+        <p className="text-muted-foreground rounded-xl p-3" style={{ fontSize: 11.5, lineHeight: 1.5, background: 'rgba(255,255,255,0.04)' }}>
+          No dividends were paid for this event (it was recorded after the fact), so the payouts below are what each
+          placement <em>would</em> pay at today&rsquo;s settings.
+        </p>
+      ) : (
+        <p className="text-muted-foreground" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          Dividends are paid on the shares you held when the tournament started
+          {data.record_date ? ` (${new Date(data.record_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}
+          {' '}— shares bought afterwards don&rsquo;t count, and shares sold afterwards still do. Teams you own a piece of are outlined in gold.
+        </p>
+      )}
 
       {data.items.map(team => (
-        <TeamCard key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`} team={team} tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
+        <TeamCard
+          key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}
+          team={team}
+          tournamentId={tournamentId}
+          estimate={estimate}
+          onOpenPlayer={onOpenPlayer}
+        />
       ))}
+      <Pager page={page} totalPages={data.total_pages} total={data.total} noun="teams" onPage={setPage} />
+    </div>
+  );
+}
 
-      {data.total_pages > 1 && (
-        <div className="flex items-center justify-between pt-1">
-          <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-            {data.total.toLocaleString()} teams &middot; page {page} of {data.total_pages}
-          </p>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setPage(p => p - 1)}
-              disabled={page <= 1}
-              className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
-              style={{ background: 'var(--muted)' }}
-            >
-              <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-            </button>
-            <button
-              onClick={() => setPage(p => p + 1)}
-              disabled={page >= data.total_pages}
-              className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
-              style={{ background: 'var(--muted)' }}
-            >
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
-            </button>
-          </div>
+// "Game by game" tab: pick a game, see every team ranked by how they placed in THAT game, with their kills.
+function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpenPlayer: (id: string) => void }) {
+  const [data, setData] = useState<TournamentGamesResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [selected, setSelected] = useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<TournamentGamesResponse>(`/tournaments/${tournamentId}/games`)
+      .then(r => { if (!cancelled) setData(r); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [tournamentId]);
+
+  if (failed) return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Couldn&rsquo;t load game results.</p>;
+  if (!data) return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading games…</p>;
+  if (data.games.length === 0) {
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Game-by-game results aren&rsquo;t available for this tournament.</p>;
+  }
+
+  const game = data.games.find(g => g.game === selected) ?? data.games[0];
+  const COLS = '48px minmax(0,1fr) 64px 72px 72px 72px 56px';
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-muted-foreground uppercase mr-1" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>Game</span>
+        {data.games.map(g => (
+          <button
+            key={g.game}
+            onClick={() => setSelected(g.game)}
+            className="rounded-lg font-mono font-bold transition-colors"
+            style={{
+              fontSize: 12.5,
+              minWidth: 34,
+              padding: '5px 9px',
+              background: g.game === game.game ? 'var(--primary)' : 'var(--muted)',
+              color: g.game === game.game ? '#06101a' : 'var(--foreground)',
+            }}
+          >
+            {g.game}
+          </button>
+        ))}
+      </div>
+      <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
+        Game {game.game} &middot; {game.teams.length} teams
+        {game.ended_at ? ` · ended ${new Date(game.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+      </p>
+
+      <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
+        <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
+          <span>Place</span><span>Team</span><span className="text-right">Elims</span><span className="text-right">Alive</span><span className="text-right">Dealt</span><span className="text-right">Taken</span><span className="text-right">Final</span>
         </div>
+        {game.teams.map((t, i) => (
+          <div
+            key={`${t.final_placement}-${t.members[0]?.player_id ?? i}`}
+            className="grid items-center gap-2 px-3 py-2"
+            style={{ gridTemplateColumns: COLS, borderTop: '1px solid rgba(255,255,255,0.05)' }}
+          >
+            <span
+              className="font-mono font-bold"
+              style={{ fontSize: 13, color: t.game_placement === 1 ? GOLD : 'var(--foreground)' }}
+            >
+              {t.game_placement !== null ? `#${t.game_placement}${t.game_placement === 1 ? ' 🏆' : ''}` : '–'}
+            </span>
+            <div className="min-w-0 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+              {t.members.map(m => (
+                <button key={m.player_id} onClick={() => onOpenPlayer(m.player_id)} className="text-foreground font-semibold truncate hover:opacity-80" style={{ fontSize: 13 }}>
+                  {m.gamertag}
+                  <VerifiedBadge show={m.is_verified} />
+                </button>
+              ))}
+            </div>
+            <span className="font-mono font-bold text-foreground text-right" style={{ fontSize: 13 }}>{t.eliminations ?? '–'}</span>
+            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.time_alive !== null ? mmss(t.time_alive) : '–'}</span>
+            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_dealt !== null ? t.damage_dealt.toLocaleString() : '–'}</span>
+            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_received !== null ? t.damage_received.toLocaleString() : '–'}</span>
+            <span className="font-mono text-muted-foreground text-right" style={{ fontSize: 12 }}>#{t.final_placement}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Finalized/finalizing tournament results: a "Standings" tab (teams, per-player dividend pool + per-share, your
+ * own payout highlighted) and a "Game by game" tab (pick a game, see every team ranked in it). */
+export function TeamLeaderboard({
+  tournamentId,
+  onOpenPlayer,
+}: {
+  tournamentId: string;
+  onOpenPlayer: (id: string) => void;
+}) {
+  const [tab, setTab] = useState<'standings' | 'games'>('standings');
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1.5 p-1 rounded-xl w-fit" style={{ background: 'var(--muted)' }}>
+        {([['standings', 'Standings & payouts'], ['games', 'Game by game']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className="rounded-lg font-semibold transition-colors"
+            style={{
+              fontSize: 12.5,
+              padding: '6px 14px',
+              background: tab === id ? 'var(--card)' : 'transparent',
+              color: tab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'standings' ? (
+        <StandingsTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
+      ) : (
+        <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
       )}
     </div>
   );

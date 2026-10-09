@@ -135,6 +135,9 @@ class TeamMemberResponse(BaseModel):
     # Dividend pool this player's placement generated (null until payouts exist).
     pool_amount: Decimal | None = None
     per_share_amount: Decimal | None = None
+    # True when no dividend was actually paid for this event (e.g. a backfilled historical result): the pool /
+    # per-share figures are what the event WOULD pay under the current economy settings.
+    is_estimate: bool = False
     # The logged-in user's own stake in this player: shares held when the tournament STARTED, and what that
     # actually paid (null = nothing paid yet / not logged in). Zero shares -> both null.
     my_shares_at_start: int | None = None
@@ -166,6 +169,32 @@ class PaginatedTeamResultResponse(BaseModel):
     # Snapshot time that decides who gets paid (tournament start) -- echoed so the UI can explain it.
     record_date: datetime | None = None
     my_total_payout: Decimal | None = None
+    # False for events finalized without paying dividends (historical backfills): figures shown are estimates.
+    dividends_paid: bool = True
+
+
+class GameTeamRowResponse(BaseModel):
+    """One team's result in ONE game of the tournament."""
+
+    game_placement: int | None = None
+    eliminations: int | None = None
+    time_alive: int | None = None
+    damage_dealt: int | None = None
+    damage_received: int | None = None
+    final_placement: int  # the team's overall tournament placement
+    members: list[TeamMemberResponse]
+
+
+class GameResultsResponse(BaseModel):
+    game: int
+    session_id: str | None = None
+    ended_at: str | None = None
+    teams: list[GameTeamRowResponse]  # ranked by in-game placement
+
+
+class TournamentGamesResponse(BaseModel):
+    tournament_id: uuid.UUID
+    games: list[GameResultsResponse]
 
 
 class GameStatResponse(BaseModel):

@@ -196,7 +196,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
     >
       <motion.div
         className="w-full overflow-y-auto rounded-2xl border border-border"
-        style={{ background: 'var(--card)', maxWidth: 640, maxHeight: '85vh', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
+        style={{ background: 'var(--card)', maxWidth: 1080, maxHeight: '92vh', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
         initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}

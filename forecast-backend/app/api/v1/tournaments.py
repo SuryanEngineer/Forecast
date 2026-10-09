@@ -18,7 +18,9 @@ from app.models.user import User
 from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
 from app.schemas.tournament import (
     CalendarTournamentResponse,
+    GameResultsResponse,
     GameStatResponse,
+    GameTeamRowResponse,
     PaginatedPlacementResultResponse,
     PaginatedTeamResultResponse,
     PlacementResultResponse,
@@ -26,10 +28,11 @@ from app.schemas.tournament import (
     TeamMemberResponse,
     TeamResultResponse,
     TournamentEntrantResponse,
+    TournamentGamesResponse,
     TournamentResponse,
     compute_tournament_phase,
 )
-from app.services import economic_params_service, position_service
+from app.services import dividend_service, economic_params_service, position_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
@@ -219,6 +222,11 @@ def get_tournament_teams(
     )
     teams = _group_teams(rows)
     total = len(teams)
+    max_placement = len(rows)  # same "field size" finalization used when it priced each placement
+    pool_ctx = dividend_service.PoolContext(db, tournament)
+    dividends_paid = (
+        db.query(DividendPayout.id).filter(DividendPayout.tournament_id == tournament_id).first() is not None
+    )
     page_teams = teams[(page - 1) * page_size: page * page_size]
     player_ids = [player.id for team in page_teams for _, player in team]
 
@@ -263,7 +271,16 @@ def get_tournament_teams(
         team_shares = 0
         for result, player in team:
             payout = payouts.get(player.id)
-            pool = payout.total_pool_amount if payout is not None else result.prize_won
+            if payout is not None:
+                pool = payout.total_pool_amount
+                per_share = payout.per_share_amount
+                estimate = False
+            else:
+                # No payout row (event finalized without dividends, or not finalized yet): price the
+                # placement with the same formula finalization uses, flagged as an estimate.
+                pool = pool_ctx.pool_for(result, max_placement)
+                per_share = pool_ctx.per_share_for(pool, player.total_shares_outstanding)
+                estimate = True
             if pool is not None:
                 team_pool += pool
                 have_pool = True
@@ -279,7 +296,8 @@ def get_tournament_teams(
                     gamertag=player.gamertag,
                     is_verified=player.is_verified,
                     pool_amount=pool,
-                    per_share_amount=payout.per_share_amount if payout is not None else None,
+                    per_share_amount=per_share,
+                    is_estimate=estimate,
                     my_shares_at_start=shares,
                     my_payout=paid,
                 )
@@ -307,6 +325,7 @@ def get_tournament_teams(
         total_pages=max(1, -(-total // page_size)),
         record_date=tournament.start_time,
         my_total_payout=my_total if user is not None else None,
+        dividends_paid=dividends_paid,
     )
 
 
@@ -334,6 +353,74 @@ def _first_present(d: dict, keys: tuple):
         if d.get(key) is not None:
             return d[key]
     return None
+
+
+@router.get("/{tournament_id}/games", response_model=TournamentGamesResponse)
+def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> TournamentGamesResponse:
+    """Every game (match) of the tournament, each with ALL teams ranked by their placement in that game plus
+    their eliminations / time alive / damage -- built from the per-game `sessionHistory` stored on each team's
+    PlacementResult.raw_stats. Games are identified by Osirion's sessionId and numbered by end time."""
+    if db.get(Tournament, tournament_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
+
+    rows = (
+        db.query(PlacementResult, Player)
+        .options(defer(PlacementResult.raw_stats))
+        .join(Player, Player.id == PlacementResult.player_id)
+        .filter(PlacementResult.tournament_id == tournament_id)
+        .order_by(PlacementResult.placement.asc(), PlacementResult.team_id.asc())
+        .all()
+    )
+    teams = _group_teams(rows)
+    # Every teammate carries the same team entry in raw_stats -- load the heavy JSON once per TEAM.
+    first_ids = [team[0][0].id for team in teams]
+    raw_by_id = {}
+    if first_ids:
+        raw_by_id = {rid: raw for rid, raw in db.query(PlacementResult.id, PlacementResult.raw_stats).filter(PlacementResult.id.in_(first_ids)).all()}
+
+    # session key -> {"ended": earliest endTime seen, "rows": [(team, session), ...]}
+    sessions: dict = {}
+    for team in teams:
+        raw = raw_by_id.get(team[0][0].id) or {}
+        for i, session in enumerate(raw.get("sessionHistory") or []):
+            key = str(session.get("sessionId") or f"idx{i}")
+            entry = sessions.setdefault(key, {"ended": None, "rows": []})
+            ended = session.get("endTime")
+            if ended and (entry["ended"] is None or str(ended) < entry["ended"]):
+                entry["ended"] = str(ended)
+            entry["rows"].append((team, session))
+
+    ordered = sorted(sessions.items(), key=lambda kv: (kv[1]["ended"] is None, kv[1]["ended"] or "", kv[0]))
+    games: list[GameResultsResponse] = []
+    for number, (key, entry) in enumerate(ordered, start=1):
+        team_rows: list[GameTeamRowResponse] = []
+        for team, session in entry["rows"]:
+            stats = session.get("trackedStats") or {}
+            team_rows.append(
+                GameTeamRowResponse(
+                    game_placement=_first_int(stats, _PLACEMENT_KEYS),
+                    eliminations=_first_int(stats, _ELIM_KEYS),
+                    time_alive=_first_int(stats, ("TIME_ALIVE_STAT",)),
+                    damage_dealt=_first_int(stats, ("DamageDealt",)),
+                    damage_received=_first_int(stats, ("DamageReceived",)),
+                    final_placement=team[0][0].placement,
+                    members=[
+                        TeamMemberResponse(player_id=p.id, gamertag=p.gamertag, is_verified=p.is_verified)
+                        for _, p in team
+                    ],
+                )
+            )
+        # In-game placement ascending (None last); more kills breaks a tie; then overall placement.
+        team_rows.sort(key=lambda r: (r.game_placement is None, r.game_placement or 0, -(r.eliminations or 0), r.final_placement))
+        games.append(
+            GameResultsResponse(
+                game=number,
+                session_id=None if key.startswith("idx") else key,
+                ended_at=entry["ended"],
+                teams=team_rows,
+            )
+        )
+    return TournamentGamesResponse(tournament_id=tournament_id, games=games)
 
 
 @router.get("/{tournament_id}/players/{player_id}/games", response_model=TeamGamesResponse)

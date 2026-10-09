@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,35 @@ from app.models.dividend import DividendLineItem, DividendPayout, DividendPayout
 from app.models.player import Player
 from app.models.tournament import PlacementResult, Tournament, TournamentStatus
 from app.services import economic_params_service, position_service, wallet_service
+
+
+class PoolContext:
+    """Everything needed to price a placement's dividend pool for one tournament, loaded once (so
+    previewing a 100-team leaderboard doesn't re-query the economy parameters per row)."""
+
+    def __init__(self, db: Session, tournament: Tournament) -> None:
+        self.placement_curve = economic_params_service.get_placement_curve(db)
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+        if fixed_pool is not None:
+            fixed_pool = fixed_pool * economic_params_service.get_region_multiplier(db, tournament.region)
+        self.effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
+        self.platform_fee_pct = economic_params_service.get_param(db, "dividend.platform_fee_pct")
+
+    def pool_for(self, placement_result: PlacementResult, max_placement: int) -> Decimal:
+        return compute_player_pool(
+            placement=placement_result.placement,
+            prize_won=placement_result.prize_won,
+            tournament_prize_pool=self.effective_prize_pool,
+            max_placement=max_placement,
+            placement_curve=self.placement_curve,
+        )
+
+    def per_share_for(self, pool: Decimal, shares_outstanding: int) -> Decimal | None:
+        """Per-share dividend a pool works out to (after the platform fee), same maths as process_payout."""
+        if shares_outstanding <= 0 or pool <= 0:
+            return None
+        fee = (pool * self.platform_fee_pct).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+        return (pool - fee) / Decimal(shares_outstanding)
 
 
 def create_payout_for_placement(

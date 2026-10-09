@@ -213,6 +213,7 @@ export interface TeamMemberResponse {
   is_verified: boolean;
   pool_amount: Money | null;
   per_share_amount: Money | null;
+  is_estimate?: boolean;
   my_shares_at_start: number | null;
   my_payout: Money | null;
 }
@@ -236,6 +237,29 @@ export interface PaginatedTeamResultResponse {
   total_pages: number;
   record_date: string | null;
   my_total_payout: Money | null;
+  dividends_paid?: boolean;
+}
+
+export interface GameTeamRowResponse {
+  game_placement: number | null;
+  eliminations: number | null;
+  time_alive: number | null;
+  damage_dealt: number | null;
+  damage_received: number | null;
+  final_placement: number;
+  members: TeamMemberResponse[];
+}
+
+export interface GameResultsResponse {
+  game: number;
+  session_id: string | null;
+  ended_at: string | null;
+  teams: GameTeamRowResponse[];
+}
+
+export interface TournamentGamesResponse {
+  tournament_id: string;
+  games: GameResultsResponse[];
 }
 
 export interface GameStatResponse {
