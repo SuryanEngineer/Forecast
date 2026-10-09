@@ -38,7 +38,7 @@ from app.models.player import Player  # noqa: E402
 from app.models.tournament import PlacementResult, Tournament, TournamentResultArchive, TournamentStatus, TournamentType  # noqa: E402
 from app.services import player_service  # noqa: E402
 from app.services.osirion_service import clean_gamertag  # noqa: E402
-from app.services.player_identity import norm_id, skeleton  # noqa: E402, lan_core_keys
+from app.services.player_identity import lan_core_keys, norm_id, skeleton  # noqa: E402
 
 LAN_TYPES = (TournamentType.GLOBAL_CHAMPIONSHIP, TournamentType.MAJOR)
 _TOMB = "[MERGED INTO"
