@@ -6,11 +6,13 @@ wallet_service.py's cash operations. Same convention: functions here
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.player import Position
+from app.models.player import Position, ShareTransfer
 from app.services.exceptions import InsufficientSharesError
 
 
@@ -79,4 +81,59 @@ def transfer_shares_for_trade(
     buyer_position.average_cost = (new_notional / new_quantity) if new_quantity > 0 else Decimal("0")
     buyer_position.quantity = new_quantity
 
+    # Timestamped ledger (see ShareTransfer) -- lets dividends be paid on what each user held at a
+    # tournament's START rather than whatever they hold when the payout job happens to run.
+    db.add(ShareTransfer(id=uuid.uuid4(), user_id=seller_user_id, player_id=player_id, delta=-quantity))
+    db.add(ShareTransfer(id=uuid.uuid4(), user_id=buyer_user_id, player_id=player_id, delta=quantity))
+
     db.flush()
+
+
+def user_holdings_at(db: Session, user_id: uuid.UUID, player_ids: list[uuid.UUID], at: datetime) -> dict[uuid.UUID, int]:
+    """One user's shares held at instant `at`, for many players at once ({player_id: qty}, only > 0).
+    Same maths as holdings_at, in two queries instead of two per player."""
+    if not player_ids:
+        return {}
+    current = {
+        pid: qty
+        for pid, qty in db.query(Position.player_id, Position.quantity)
+        .filter(Position.user_id == user_id, Position.player_id.in_(player_ids))
+        .all()
+    }
+    after = {
+        pid: int(total or 0)
+        for pid, total in db.query(ShareTransfer.player_id, func.sum(ShareTransfer.delta))
+        .filter(ShareTransfer.user_id == user_id, ShareTransfer.player_id.in_(player_ids), ShareTransfer.occurred_at > at)
+        .group_by(ShareTransfer.player_id)
+        .all()
+    }
+    out: dict[uuid.UUID, int] = {}
+    for pid in set(current) | set(after):
+        qty = current.get(pid, 0) - after.get(pid, 0)
+        if qty > 0:
+            out[pid] = qty
+    return out
+
+
+def holdings_at(db: Session, player_id: uuid.UUID, at: datetime) -> dict[uuid.UUID, int]:
+    """{user_id: shares held at instant `at`} for one player (only users who held > 0).
+
+    = each user's current Position.quantity minus every ledger delta recorded after `at`."""
+    current: dict[uuid.UUID, int] = {
+        uid: qty
+        for uid, qty in db.query(Position.user_id, Position.quantity).filter(Position.player_id == player_id).all()
+    }
+    after: dict[uuid.UUID, int] = {}
+    for uid, total in (
+        db.query(ShareTransfer.user_id, func.sum(ShareTransfer.delta))
+        .filter(ShareTransfer.player_id == player_id, ShareTransfer.occurred_at > at)
+        .group_by(ShareTransfer.user_id)
+        .all()
+    ):
+        after[uid] = int(total or 0)
+    result: dict[uuid.UUID, int] = {}
+    for uid in set(current) | set(after):
+        qty = current.get(uid, 0) - after.get(uid, 0)
+        if qty > 0:
+            result[uid] = qty
+    return result

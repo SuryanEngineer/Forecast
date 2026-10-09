@@ -3,16 +3,12 @@ import { Calendar, ChevronLeft, ChevronRight, Trophy, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../lib/api';
 import { useLiveLeaderboard, useMarketsByIds } from '../lib/hooks';
-import {
-  toNumber,
-  type PaginatedPlacementResultResponse,
-  type PlacementResultResponse,
-  type TournamentResponse,
-} from '../lib/types';
+import { toNumber, type TournamentResponse } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { placementBadgeStyle } from '../lib/placement';
 import { PlayerAvatar } from './Dashboard';
 import { VerifiedBadge } from './HelpModal';
+import { TeamLeaderboard } from './TeamLeaderboard';
 
 interface Props {
   tournament: TournamentResponse;
@@ -24,8 +20,6 @@ interface Props {
 // (see Tournaments.tsx's compact previews, which link here) -- so it can
 // afford a much bigger page size than an inline card would.
 const DETAIL_PAGE_SIZE = 100;
-
-type PlacementResult = PlacementResultResponse;
 
 function PageControls({
   page,
@@ -127,15 +121,6 @@ function LiveStandingsSection({
   );
 }
 
-interface DividendPayout {
-  id: string;
-  tournament_id: string;
-  player_id: string;
-  total_pool_amount: string | number;
-  per_share_amount: string | number | null;
-  shares_outstanding_snapshot: number;
-}
-
 interface TournamentEntrant {
   player_id: string;
   gamertag: string;
@@ -158,12 +143,6 @@ interface TournamentEntrant {
  * instead of grouped teams. Works for both finalized tournaments (shows
  * results) and ones still upcoming (shows a placeholder only). */
 export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Props) {
-  const [results, setResults] = useState<PlacementResult[] | null>(null);
-  const [resultsTotal, setResultsTotal] = useState(0);
-  const [resultsTotalPages, setResultsTotalPages] = useState(1);
-  const [resultsPage, setResultsPage] = useState(1);
-  const [payoutsByPlayer, setPayoutsByPlayer] = useState<Record<string, DividendPayout>>({});
-  const [loading, setLoading] = useState(false);
   const [entrants, setEntrants] = useState<TournamentEntrant[] | null>(null);
 
   // For a tournament still in progress, this modal IS the "click through to
@@ -200,74 +179,14 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
     return () => { cancelled = true; };
   }, [tournament.id, tournament.phase]);
 
-  useEffect(() => {
-    if (tournament.status !== 'finalized') return;
-    let cancelled = false;
-    setLoading(true);
-    api
-      .get<PaginatedPlacementResultResponse>(
-        `/tournaments/${tournament.id}/results?page=${resultsPage}&page_size=${DETAIL_PAGE_SIZE}`
-      )
-      .then(async page => {
-        if (cancelled) return;
-        setResults(page.items);
-        setResultsTotal(page.total);
-        setResultsTotalPages(page.total_pages);
-        // One request per placed player (on this page only) to find this
-        // tournament's payout for them -- there's no bulk "dividends for
-        // this tournament" endpoint, so this is capped by however many
-        // players placed on the current page, not the whole field.
-        const uniquePlayerIds = [...new Set(page.items.map(row => row.player_id))];
-        const settled = await Promise.allSettled(
-          uniquePlayerIds.map(pid => api.get<DividendPayout[]>(`/dividends/player/${pid}`))
-        );
-        if (cancelled) return;
-        const map: Record<string, DividendPayout> = {};
-        settled.forEach((res, i) => {
-          if (res.status !== 'fulfilled') return;
-          const match = res.value.find(p => p.tournament_id === tournament.id);
-          if (match) map[uniquePlayerIds[i]] = match;
-        });
-        setPayoutsByPlayer(map);
-      })
-      .catch(() => { if (!cancelled) setResults([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tournament.id, tournament.status, resultsPage]);
-
   // Looks up specific players by id (this tournament's entrants and/or
   // placed competitors), not a ranked page of the market -- see
   // useMarketsByIds' docstring in lib/hooks.ts for why the old "fetch
   // the whole roster and .find()" approach no longer works now that the
   // real roster is 89k+ players.
-  const lookupIds = useMemo(
-    () => [...(entrants ?? []).map(e => e.player_id), ...(results ?? []).map(r => r.player_id)],
-    [entrants, results]
-  );
+  const lookupIds = useMemo(() => (entrants ?? []).map(e => e.player_id), [entrants]);
   const { data: marketById } = useMarketsByIds(lookupIds);
   const prizePool = toNumber(tournament.prize_pool);
-  const sorted = results ? [...results].sort((a, b) => a.placement - b.placement) : [];
-
-  // Osirion's leaderboard is per-TEAM (duos/squads share one placement --
-  // see forecast-backend's osirion_service.py module docstring), and each
-  // PlacementResult now carries that same team_id (see PlacementResult's
-  // backend docstring for why it was added). Group same-team rows into
-  // one card here so a duo/squad placement reads as one entry instead of
-  // two unrelated-looking rows that just happen to share a rank. A null
-  // team_id (manually/CSV-entered results predate this field, or a solo
-  // format) falls back to its own row id, so it never merges with anyone.
-  const groups: { placement: number; rows: PlacementResult[] }[] = [];
-  const groupIndexByKey = new Map<string, number>();
-  for (const r of sorted) {
-    const key = r.team_id ? `${r.placement}:${r.team_id}` : r.id;
-    const existingIndex = groupIndexByKey.get(key);
-    if (existingIndex !== undefined) {
-      groups[existingIndex].rows.push(r);
-    } else {
-      groupIndexByKey.set(key, groups.length);
-      groups.push({ placement: r.placement, rows: [r] });
-    }
-  }
 
   return (
     <div
@@ -368,96 +287,8 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
               onPage={setLivePage}
               onOpenPlayer={onOpenPlayer}
             />
-          ) : loading ? (
-            <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading results…</p>
-          ) : sorted.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No results recorded for this tournament yet.</p>
           ) : (
-            <div className="space-y-2">
-              <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
-                Placements &amp; dividend payouts
-              </p>
-              {groups.map(group => {
-                const isTeam = group.rows.length > 1;
-                const rowContent = (r: PlacementResult) => {
-                  const market = marketById.get(r.player_id);
-                  const gamertag = r.gamertag || (market ? (market.real_name || market.gamertag) : 'Unknown player');
-                  const payout = payoutsByPlayer[r.player_id];
-                  const perShare = payout?.per_share_amount != null ? toNumber(payout.per_share_amount) : null;
-                  const poolAmount = payout ? toNumber(payout.total_pool_amount) : r.prize_won !== null ? toNumber(r.prize_won) : null;
-                  // A payout with zero shares outstanding means this player
-                  // was auto-added to fill a leaderboard gap (an Osirion
-                  // competitor nobody's IPO'd yet) -- there's no one to pay
-                  // a dividend to, so show that plainly instead of a
-                  // misleading dollar amount (see osirion_service.py's
-                  // _match_player for where these get created).
-                  const noSharesAvailable = payout != null && payout.shares_outstanding_snapshot === 0;
-                  return (
-                    <button
-                      key={r.id}
-                      onClick={() => onOpenPlayer(r.player_id)}
-                      className={`w-full flex items-center gap-3 text-left hover:bg-white/[0.03] transition-colors ${isTeam ? 'py-1.5' : 'p-3 rounded-2xl'}`}
-                      style={isTeam ? undefined : { background: 'var(--muted)' }}
-                    >
-                      {!isTeam && (
-                        <div
-                          className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-                          style={{ fontSize: 12, ...placementBadgeStyle(r.placement) }}
-                        >
-                          #{r.placement}
-                        </div>
-                      )}
-                      <PlayerAvatar name={gamertag} color={colorForId(r.player_id)} size={isTeam ? 30 : 36} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}<VerifiedBadge show={r.is_verified ?? market?.is_verified} /></p>
-                        <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-                          {r.eliminations !== null ? `${r.eliminations} elims` : ''}
-                          {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}
-                        </p>
-                      </div>
-                      {noSharesAvailable ? (
-                        <div className="text-right shrink-0">
-                          <p className="text-muted-foreground italic" style={{ fontSize: 11 }}>No available shares</p>
-                        </div>
-                      ) : poolAmount !== null && poolAmount > 0 && (
-                        <div className="text-right shrink-0">
-                          <p className="font-mono font-bold" style={{ fontSize: 13, color: 'var(--gain)' }}>${poolAmount.toLocaleString()}</p>
-                          <p className="text-muted-foreground" style={{ fontSize: 10 }}>
-                            {perShare !== null ? `$${perShare.toFixed(2)}/share` : 'paid to shareholders'}
-                          </p>
-                        </div>
-                      )}
-                    </button>
-                  );
-                };
-
-                if (!isTeam) return rowContent(group.rows[0]);
-
-                // A duo/squad that placed together -- one card, one
-                // placement badge, teammates stacked underneath (each
-                // still individually clickable/payable, since dividends
-                // are per-player-holding, not per-team).
-                return (
-                  <div key={`${group.placement}-${group.rows[0].team_id}`} className="rounded-2xl p-3" style={{ background: 'var(--muted)' }}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div
-                        className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-                        style={{ fontSize: 12, ...placementBadgeStyle(group.placement) }}
-                      >
-                        #{group.placement}
-                      </div>
-                      <p className="text-muted-foreground uppercase" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em' }}>
-                        {group.rows.length === 2 ? 'Duo' : 'Squad'}
-                      </p>
-                    </div>
-                    <div className="space-y-0.5" style={{ paddingLeft: 40 }}>
-                      {group.rows.map(rowContent)}
-                    </div>
-                  </div>
-                );
-              })}
-              <PageControls page={resultsPage} totalPages={resultsTotalPages} total={resultsTotal} onPage={setResultsPage} />
-            </div>
+            <TeamLeaderboard tournamentId={tournament.id} onOpenPlayer={onOpenPlayer} />
           )}
         </div>
       </motion.div>

@@ -5,7 +5,7 @@ tables when Alembic autogenerates migrations, and (b) app code can do
 """
 from app.models.user import User, UserRole  # noqa: F401
 from app.models.wallet import Wallet, LedgerEntry, LedgerEntryType  # noqa: F401
-from app.models.player import Player, Position, PriceSnapshot  # noqa: F401
+from app.models.player import Player, Position, PriceSnapshot, ShareTransfer  # noqa: F401
 from app.models.order import Order, Trade, OrderSide, OrderKind, OrderStatus  # noqa: F401
 from app.models.tournament import Tournament, PlacementResult, TournamentType, TournamentStatus, ResultSource, TournamentEntrant, TournamentResultArchive  # noqa: F401
 from app.models.dividend import DividendPayout, DividendLineItem, DividendPayoutStatus  # noqa: F401

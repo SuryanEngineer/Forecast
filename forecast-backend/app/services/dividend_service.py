@@ -15,9 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.engine.dividend_calculator import compute_dividend_distribution, compute_player_pool
 from app.models.dividend import DividendLineItem, DividendPayout, DividendPayoutStatus
-from app.models.player import Player, Position
+from app.models.player import Player
 from app.models.tournament import PlacementResult, Tournament, TournamentStatus
-from app.services import economic_params_service, wallet_service
+from app.services import economic_params_service, position_service, wallet_service
 
 
 def create_payout_for_placement(
@@ -74,16 +74,12 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
     retried after a crash right after committing), this returns
     immediately without paying anyone twice.
 
-    Record date / "ex-dividend" snapshot: shareholders are whoever holds
-    a Position with quantity > 0 *at the moment this function runs* --
-    i.e. whenever the background job actually executes, not when the
-    tournament result was ingested. For prompt job processing (seconds to
-    minutes after finalization) this is a reasonable approximation of
-    "who held shares during the tournament"; it is NOT immune to someone
-    buying shares in the gap between result ingestion and job processing.
-    Locking the snapshot to an explicit record-date field captured at
-    finalize_tournament() time (rather than at processing time) is a
-    worthwhile follow-up once this matters for real money.
+    Record date / "ex-dividend" snapshot: shareholders are whoever held
+    shares at the tournament's START TIME (Tournament.start_time), and each
+    is paid in proportion to what they held then -- reconstructed from the
+    timestamped ShareTransfer ledger, so it doesn't matter when this job
+    runs. Buying a player after the tournament has started earns nothing
+    from it; selling after it started still earns the dividend.
     """
     payout = db.get(DividendPayout, payout_id)
     if payout is None:
@@ -94,13 +90,16 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
     payout.status = DividendPayoutStatus.PROCESSING
     db.flush()
 
-    positions = (
-        db.query(Position)
-        .filter(Position.player_id == payout.player_id, Position.quantity > 0)
-        .all()
-    )
-    holders = [(str(p.user_id), Decimal(p.quantity)) for p in positions]
-    positions_by_user = {str(p.user_id): p for p in positions}
+    # Record date = the tournament's START. Whoever held shares at that instant is paid (in proportion to
+    # what they held then); shares bought afterwards earn nothing from this tournament and shares sold
+    # afterwards still do. Reconstructed from the timestamped ShareTransfer ledger (see
+    # position_service.holdings_at). No start time on file -> fall back to "now" (the old behavior).
+    tournament = db.get(Tournament, payout.tournament_id)
+    record_date = tournament.start_time if tournament is not None and tournament.start_time is not None else datetime.now(timezone.utc)
+    held_at_start = position_service.holdings_at(db, payout.player_id, record_date)
+    holders = [(str(uid), Decimal(qty)) for uid, qty in held_at_start.items()]
+    # Their ledger-backed quantity, for the DividendLineItem snapshot below.
+    qty_by_user = {str(uid): qty for uid, qty in held_at_start.items()}
 
     platform_fee_pct = economic_params_service.get_param(db, "dividend.platform_fee_pct")
     per_share_amount, payouts, fee_amount = compute_dividend_distribution(
@@ -117,14 +116,13 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
         if amount <= 0:
             continue
         user_id = uuid.UUID(user_id_str)
-        position = positions_by_user[user_id_str]
         ledger_entry = wallet_service.credit_dividend(db, user_id, amount, payout.id)
         db.add(
             DividendLineItem(
                 id=uuid.uuid4(),
                 payout_id=payout.id,
                 user_id=user_id,
-                quantity_held_snapshot=position.quantity,
+                quantity_held_snapshot=qty_by_user[user_id_str],
                 amount_paid=amount,
                 ledger_entry_id=ledger_entry.id,
             )

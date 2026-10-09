@@ -93,6 +93,26 @@ class Position(Base):
         return self.quantity - self.held_quantity
 
 
+class ShareTransfer(Base):
+    """Append-only, timestamped ledger of every change to a user's share count: one row per side of a
+    trade (buyer +quantity, seller -quantity), written by position_service.transfer_shares_for_trade --
+    the single place share counts ever move between users.
+
+    It exists so "what did this user hold at time T?" is answerable (dividends are paid on the shares
+    held when a tournament STARTS, not when it ends -- see dividend_service.holdings_at):
+        holdings_at(T) = current Position.quantity - sum(delta for rows with occurred_at > T)
+    Reconstructing backwards from the live position (rather than summing from zero) means shares that
+    changed outside a trade (IPO minting, admin scripts) can never make the answer drift."""
+
+    __tablename__ = "share_transfers"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    player_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class PriceSnapshot(Base):
     """Point-in-time last-trade price, written every time a trade executes
     (see app/services/order_service.py). Used for price history / charts

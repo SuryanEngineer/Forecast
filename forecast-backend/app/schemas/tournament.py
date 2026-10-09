@@ -128,6 +128,72 @@ class PaginatedPlacementResultResponse(BaseModel):
     total_pages: int
 
 
+class TeamMemberResponse(BaseModel):
+    player_id: uuid.UUID
+    gamertag: str
+    is_verified: bool = False
+    # Dividend pool this player's placement generated (null until payouts exist).
+    pool_amount: Decimal | None = None
+    per_share_amount: Decimal | None = None
+    # The logged-in user's own stake in this player: shares held when the tournament STARTED, and what that
+    # actually paid (null = nothing paid yet / not logged in). Zero shares -> both null.
+    my_shares_at_start: int | None = None
+    my_payout: Decimal | None = None
+
+
+class TeamResultResponse(BaseModel):
+    """One row of a tournament leaderboard: a whole TEAM (solo, duo or squad) -- points/eliminations are
+    the team's cumulative totals, shown once, not per player."""
+
+    placement: int
+    team_id: str | None = None
+    points: Decimal | None = None
+    eliminations: int | None = None
+    # Sum of the dividend pools of every member's placement (what the team's stocks collectively earned).
+    team_pool_amount: Decimal | None = None
+    # Logged-in user's total payout across this team's players (null when they have no stake / not logged in).
+    my_payout: Decimal | None = None
+    my_shares_at_start: int | None = None
+    members: list[TeamMemberResponse]
+
+
+class PaginatedTeamResultResponse(BaseModel):
+    items: list[TeamResultResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    # Snapshot time that decides who gets paid (tournament start) -- echoed so the UI can explain it.
+    record_date: datetime | None = None
+    my_total_payout: Decimal | None = None
+
+
+class GameStatResponse(BaseModel):
+    """One game (session) a team played in the tournament."""
+
+    game: int
+    session_id: str | None = None
+    ended_at: str | None = None
+    placement: int | None = None
+    eliminations: int | None = None
+    points: Decimal | None = None
+    # Every raw stat Osirion reported for that game (keys vary by mode/season), so nothing is hidden.
+    stats: dict = {}
+
+
+class TeamGamesResponse(BaseModel):
+    tournament_id: uuid.UUID
+    placement: int
+    members: list[TeamMemberResponse]
+    games: list[GameStatResponse]
+    games_played: int
+    wins: int
+    avg_placement: Decimal | None = None
+    total_eliminations: int | None = None
+    total_points: Decimal | None = None
+    best_placement: int | None = None
+
+
 class CalendarTournamentResponse(BaseModel):
     """One row of the upcoming-tournaments calendar (GET
     /tournaments/calendar) -- meant to be polled every

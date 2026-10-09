@@ -207,6 +207,60 @@ export interface PlacementResultResponse {
   is_verified?: boolean;
 }
 
+export interface TeamMemberResponse {
+  player_id: string;
+  gamertag: string;
+  is_verified: boolean;
+  pool_amount: Money | null;
+  per_share_amount: Money | null;
+  my_shares_at_start: number | null;
+  my_payout: Money | null;
+}
+
+export interface TeamResultResponse {
+  placement: number;
+  team_id: string | null;
+  points: Money | null;
+  eliminations: number | null;
+  team_pool_amount: Money | null;
+  my_payout: Money | null;
+  my_shares_at_start: number | null;
+  members: TeamMemberResponse[];
+}
+
+export interface PaginatedTeamResultResponse {
+  items: TeamResultResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  record_date: string | null;
+  my_total_payout: Money | null;
+}
+
+export interface GameStatResponse {
+  game: number;
+  session_id: string | null;
+  ended_at: string | null;
+  placement: number | null;
+  eliminations: number | null;
+  points: Money | null;
+  stats: Record<string, unknown>;
+}
+
+export interface TeamGamesResponse {
+  tournament_id: string;
+  placement: number;
+  members: TeamMemberResponse[];
+  games: GameStatResponse[];
+  games_played: number;
+  wins: number;
+  avg_placement: Money | null;
+  total_eliminations: number | null;
+  total_points: Money | null;
+  best_placement: number | null;
+}
+
 export interface PaginatedPlacementResultResponse {
   items: PlacementResultResponse[];
   total: number;
