@@ -10,6 +10,7 @@ separate players. This script finds them with strict rules -- a candidate is mer
   * it has placed ONLY in on-site (LAN) tournaments -- a prefixed account is a LAN account, never a pubs/qualifier one;
   * it never shared a tournament with the pro's own player (or with another account being merged in): two entries in
     one lobby are two different people;
+  * its Epic account id is not listed in the sheet under a different pro (the ID always wins over the name);
   * it isn't claimed by two different pros, isn't another pro's own player, and no real user holds/ordered/traded it.
 
 A pro with NO player yet in the database (the "not found" ones) gets the best candidate as their player, renamed to the
@@ -79,6 +80,9 @@ def main() -> None:
 
         maps = {norm_id(m.osirion_account_id): m for m in db.query(OsirionPlayerMapping).all()}
         aliases = {a.alias_key: a for a in db.query(PlayerAlias).all()}
+        ids_by_player: dict = defaultdict(list)
+        for m in maps.values():
+            ids_by_player[m.player_id].append(m.osirion_account_id)
         sk_live: dict = defaultdict(list)
         for p in players:
             sk_live[skeleton(p.gamertag)].append(p)
@@ -110,6 +114,7 @@ def main() -> None:
             keys |= lan_core_keys(g["pro"])
             g["keys"] = {k for k in keys if len(k) >= 3}
         all_mains = {pid for g in groups for pid in g["main"]}
+        sheet_id_owner = {norm_id(i): gi for gi, g in enumerate(groups) for i in g["epic_ids"]}
 
         # ---- candidates per pro
         claims: dict = defaultdict(set)
@@ -119,6 +124,9 @@ def main() -> None:
                 if p.id in all_mains or p.id in g["main"] or not lan_only(p):
                     continue
                 if lan_core_keys(p.gamertag) & g["keys"]:
+                    owners = {sheet_id_owner[norm_id(i)] for i in ids_by_player.get(p.id, []) if norm_id(i) in sheet_id_owner}
+                    if owners - {gi}:
+                        continue  # this account's Epic ID is listed under a DIFFERENT pro -- the ID wins over the name
                     g["cands"][p.id] = p
                     claims[p.id].add(gi)
         conflicted = {pid for pid, gis in claims.items() if len(gis) > 1}
@@ -163,7 +171,8 @@ def main() -> None:
             print(f"{label}   [{basis}]")
             print(f"    TARGET: {target.gamertag!r}  (placements={pcount.get(target.id, 0)})" + (f"  -> RENAME to {g['pro']!r}" if rename else ""))
             for p in accepted:
-                print(f"    MERGE IN: {p.gamertag!r}  (placements={pcount.get(p.id, 0)})")
+                ids = ", ".join(i[:8] for i in ids_by_player.get(p.id, [])) or "none"
+                print(f"    MERGE IN: {p.gamertag!r}  (placements={pcount.get(p.id, 0)}, Epic id(s): {ids})")
         print("\n" + "=" * 100)
         print(f"{len(plan)} pro(s) with prefixed accounts; {sum(len(a) for *_, a, _b in plan)} account(s) to merge in.")
         for line in conflict_lines:
