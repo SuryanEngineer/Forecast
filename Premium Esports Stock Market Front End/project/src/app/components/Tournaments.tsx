@@ -204,7 +204,8 @@ function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentRespon
                 >
                   #{r.placement}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
+                  <p className="text-foreground font-semibold truncate" style={{ fontSize: 13 }}>{r.gamertag || 'Unknown player'}</p>
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>{r.points !== null ? `${toNumber(r.points)} pts` : ''}</p>
                 </div>
                 {r.prize_won !== null && (

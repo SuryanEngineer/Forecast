@@ -149,11 +149,21 @@ def get_tournament_results(
     curated lobby), and shipping every row in one response was making the
     tournaments page unusably long. Default page size 100, matching the
     frontend's "more than 100 players -> paginate" rule."""
-    base_query = db.query(PlacementResult).filter(PlacementResult.tournament_id == tournament_id)
+    base_query = (
+        db.query(PlacementResult, Player)
+        .join(Player, Player.id == PlacementResult.player_id)
+        .filter(PlacementResult.tournament_id == tournament_id)
+    )
     total = base_query.count()
     rows = base_query.order_by(PlacementResult.placement.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = []
+    for result, player in rows:
+        item = PlacementResultResponse.model_validate(result)
+        item.gamertag = player.gamertag
+        item.is_verified = player.is_verified
+        items.append(item)
     return PaginatedPlacementResultResponse(
-        items=rows,
+        items=items,
         total=total,
         page=page,
         page_size=page_size,

@@ -381,7 +381,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                 const isTeam = group.rows.length > 1;
                 const rowContent = (r: PlacementResult) => {
                   const market = marketById.get(r.player_id);
-                  const gamertag = market ? (market.real_name || market.gamertag) : 'Unknown player';
+                  const gamertag = r.gamertag || (market ? (market.real_name || market.gamertag) : 'Unknown player');
                   const payout = payoutsByPlayer[r.player_id];
                   const perShare = payout?.per_share_amount != null ? toNumber(payout.per_share_amount) : null;
                   const poolAmount = payout ? toNumber(payout.total_pool_amount) : r.prize_won !== null ? toNumber(r.prize_won) : null;
@@ -409,7 +409,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                       )}
                       <PlayerAvatar name={gamertag} color={colorForId(r.player_id)} size={isTeam ? 30 : 36} />
                       <div className="flex-1 min-w-0">
-                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}<VerifiedBadge show={market?.is_verified} /></p>
+                        <p className="text-foreground font-semibold truncate" style={{ fontSize: isTeam ? 12.5 : 13.5 }}>{gamertag}<VerifiedBadge show={r.is_verified ?? market?.is_verified} /></p>
                         <p className="text-muted-foreground" style={{ fontSize: 11 }}>
                           {r.eliminations !== null ? `${r.eliminations} elims` : ''}
                           {r.points !== null ? `${r.eliminations !== null ? ' · ' : ''}${toNumber(r.points)} pts` : ''}

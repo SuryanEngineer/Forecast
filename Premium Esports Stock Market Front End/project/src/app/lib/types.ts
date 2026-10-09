@@ -203,6 +203,8 @@ export interface PlacementResultResponse {
   eliminations: number | null;
   team_id: string | null;
   percentile: Money | null;
+  gamertag?: string | null;
+  is_verified?: boolean;
 }
 
 export interface PaginatedPlacementResultResponse {

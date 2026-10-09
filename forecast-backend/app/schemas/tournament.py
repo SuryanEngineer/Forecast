@@ -106,6 +106,10 @@ class PlacementResultResponse(BaseModel):
     # docstring) -- null for a manually/CSV-entered result.
     team_id: str | None = None
     percentile: Decimal | None = None
+    # Filled by GET /tournaments/{id}/results (joined from Player) so the UI never has to look
+    # each player up separately; null on endpoints that don't join.
+    gamertag: str | None = None
+    is_verified: bool = False
 
     model_config = {"from_attributes": True}
 
