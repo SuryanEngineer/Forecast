@@ -39,7 +39,7 @@ from app.models.osirion import OsirionPlayerMapping, PlayerAlias  # noqa: E402
 from app.models.player import Player  # noqa: E402
 from app.models.tournament import PlacementResult, Tournament  # noqa: E402
 from app.services.osirion_service import clean_gamertag  # noqa: E402
-from app.services.player_identity import lan_core_keys, norm_id, skeleton  # noqa: E402
+from app.services.player_identity import lan_core_keys, leet_fold, norm_id, skeleton  # noqa: E402
 from scripts.merge_fuzzy_duplicates import (  # noqa: E402
     _TOMBSTONE_PREFIX,
     _merge_player,
@@ -118,12 +118,20 @@ def main() -> None:
 
         # ---- candidates per pro
         claims: dict = defaultdict(set)
+        # Players that match SOME pro exactly never use the digit/letter fallback (Cringe vs Cr1nge stay apart).
+        exact_any = {p.id for p in players if any(lan_core_keys(p.gamertag) & g["keys"] for g in groups)}
+        for g in groups:
+            g["leet_keys"] = {leet_fold(k) for k in g["keys"]}
         for gi, g in enumerate(groups):
             g["cands"] = {}
             for p in players:
                 if p.id in all_mains or p.id in g["main"] or not lan_only(p):
                     continue
-                if lan_core_keys(p.gamertag) & g["keys"]:
+                pk = lan_core_keys(p.gamertag)
+                hit = bool(pk & g["keys"])
+                if not hit and p.id not in exact_any:
+                    hit = bool({leet_fold(k) for k in pk} & g["leet_keys"])
+                if hit:
                     owners = {sheet_id_owner[norm_id(i)] for i in ids_by_player.get(p.id, []) if norm_id(i) in sheet_id_owner}
                     if owners - {gi}:
                         continue  # this account's Epic ID is listed under a DIFFERENT pro -- the ID wins over the name

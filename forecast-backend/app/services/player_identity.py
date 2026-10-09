@@ -54,6 +54,11 @@ def lan_core_keys(name: str) -> set[str]:
         toks = list(toks)
         while toks and not any(ch.isalpha() for ch in toks[-1]):
             toks.pop()
+        # A trailing decorative symbol word ("亗", "水") with no ASCII letters/digits -- dropped only if a real
+        # name (>= 4 ASCII letters/digits) remains, so an all-Japanese handle is left alone.
+        while len(toks) > 1 and not any(ch.isascii() and ch.isalnum() for ch in toks[-1]) and \
+                sum(1 for t in toks[:-1] for ch in t if ch.isascii() and ch.isalnum()) >= 4:
+            toks.pop()
         if not toks:
             continue
         keys.add(skeleton(" ".join(toks)))
@@ -61,6 +66,15 @@ def lan_core_keys(name: str) -> set[str]:
         if last and last != toks[-1]:
             keys.add(skeleton(" ".join(toks[:-1] + [last])))
     return {k for k in keys if len(k) >= 3 and not k.startswith("raw:")}
+
+
+_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t"})
+
+
+def leet_fold(key: str) -> str:
+    """Digit-for-letter fold ("vic0" -> "vico"). Only ever used as a FALLBACK after exact matching found nothing,
+    because pros like Cringe / Cr1nge are genuinely different people."""
+    return key.translate(_LEET)
 
 
 def norm_id(value: str) -> str:

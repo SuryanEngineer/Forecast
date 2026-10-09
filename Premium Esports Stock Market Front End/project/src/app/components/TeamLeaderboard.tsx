@@ -231,7 +231,7 @@ function TeamCard({
         className="w-full flex items-center justify-center gap-1 py-1.5 transition-colors hover:bg-white/[0.04]"
         style={{ borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: 11.5, color: 'var(--primary)', fontWeight: 600 }}
       >
-        {open ? 'Hide this team’s games' : 'This team’s games'}
+        {open ? 'Hide Team Results' : 'Team Results'}
         {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
       </button>
       {open && (
@@ -412,7 +412,7 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
 }
 
 /** Finalized/finalizing tournament results: a "Standings" tab (teams, per-player dividend pool + per-share, your
- * own payout highlighted) and a "Game by game" tab (pick a game, see every team ranked in it). */
+ * own payout highlighted) and a "Game Results" tab (pick a game, see every team ranked in it). */
 export function TeamLeaderboard({
   tournamentId,
   onOpenPlayer,
@@ -424,7 +424,7 @@ export function TeamLeaderboard({
   return (
     <div className="space-y-3">
       <div className="flex gap-1.5 p-1 rounded-xl w-fit" style={{ background: 'var(--muted)' }}>
-        {([['standings', 'Standings & payouts'], ['games', 'Game by game']] as const).map(([id, label]) => (
+        {([['standings', 'Standings & payouts'], ['games', 'Game Results']] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
