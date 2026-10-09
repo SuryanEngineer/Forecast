@@ -101,15 +101,24 @@ def main() -> None:
             target, losers = members[0], members[1:]
             print("=" * 90)
             print(f"TARGET  {target.gamertag!r}  placements={pcount.get(target.id, 0)}")
+            tt = {r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == target.id)}
             for p in losers:
-                print(f"  MERGE IN  {p.gamertag!r}  placements={pcount.get(p.id, 0)}")
+                ov = len({r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == p.id)} & tt)
+                print(f"  MERGE IN  {p.gamertag!r}  placements={pcount.get(p.id, 0)}" + (f"   <-- shares {ov} tournament(s): will be SKIPPED" if ov else ""))
             if not k.startswith("raw:"):
                 hints = [p for p in live if p.id not in {m.id for m in members} and skeleton(p.gamertag).startswith(k) and len(k) >= 4]
                 for h in hints[:5]:
                     print(f"  hint (not merged): {h.gamertag!r} starts with the same name  placements={pcount.get(h.id, 0)}")
             if not args.confirm:
                 continue
+            t_t = {r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == target.id)}
             for p in losers:
+                p_t = {r[0] for r in db.query(PlacementResult.tournament_id).filter(PlacementResult.player_id == p.id)}
+                if p_t & t_t:
+                    print(f"  SKIPPED {p.gamertag!r}: shares {len(p_t & t_t)} tournament(s) with the target -- one person can't place "
+                          f"twice in a tournament, so these are two different people with look-alike names.")
+                    skipped += 1
+                    continue
                 reason = _why_unsafe_to_merge_away(db, p.id, real)
                 if reason is not None:
                     print(f"  SKIPPED {p.gamertag!r}: {reason}")
