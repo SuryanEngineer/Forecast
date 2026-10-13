@@ -49,7 +49,7 @@ export interface MarketSnapshot {
 // across every tracked tournament, not a small curated list), so this
 // always comes back one page at a time -- see the backend's
 // app/api/v1/markets.py docstring.
-export type MarketSortKey = 'market_cap' | 'price' | 'volume' | 'hot' | 'gainers' | 'losers';
+export type MarketSortKey = 'market_cap' | 'price' | 'price_asc' | 'price_desc' | 'volume' | 'hot' | 'gainers' | 'losers';
 
 export interface PaginatedMarketSnapshotResponse {
   items: MarketSnapshot[];
@@ -238,6 +238,28 @@ export interface PaginatedTeamResultResponse {
   record_date: string | null;
   my_total_payout: Money | null;
   dividends_paid?: boolean;
+}
+
+// GET /tournaments/players/{id}/tournaments -- a player's tournament history for their profile.
+export interface PlayerTournamentEntryResponse {
+  tournament: TournamentResponse;
+  placement: number;
+  total_teams: number;
+  points: Money | null;
+  eliminations: number | null;
+  pool_amount: Money | null;
+  per_share_amount: Money | null;
+  is_estimate: boolean;
+}
+
+export interface PlayerTournamentHistoryResponse {
+  player_id: string;
+  year: number;
+  entries: PlayerTournamentEntryResponse[];
+  year_total_pool: Money;
+  year_per_share: Money;
+  year_events: number;
+  year_includes_estimates: boolean;
 }
 
 export interface GameTeamRowResponse {

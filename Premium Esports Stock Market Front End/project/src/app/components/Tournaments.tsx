@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../lib/api';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { useTournamentCalendar, useTournamentsList } from '../lib/hooks';
 import {
   toNumber,
@@ -70,7 +71,7 @@ function FeaturedEvent({ tournament, onOpen }: { tournament: TournamentResponse;
               {tournament.tournament_type.replace('_', ' ')}
             </span>
           </div>
-          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournament.name}</h2>
+          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
           {tournament.region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{tournament.region}</p>}
         </div>
         {prizePool > 0 && (
@@ -122,7 +123,7 @@ function UpcomingSmall({ tournament, onOpen }: { tournament: TournamentResponse;
     <button onClick={onOpen} className="w-full rounded-2xl border border-border p-4 text-left transition-colors hover:bg-white/[0.03]" style={{ background: 'var(--card)' }}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1">
-          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournament.name}</p>
+          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
           <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
             {tournament.tournament_type.replace('_', ' ')}
             {tournament.start_time ? ` · ${new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
@@ -172,7 +173,7 @@ function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentRespon
     <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
       <button onClick={toggle} className="w-full flex items-center gap-4 p-4 text-left hover:bg-white/[0.03] transition-colors">
         <div className="flex-1">
-          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournament.name}</p>
+          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
           <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
             {tournament.tournament_type.replace('_', ' ')}
             {tournament.start_time ? ` · ${new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}
@@ -270,7 +271,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournament.name}</p>
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
           {isLive && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
               ● Live

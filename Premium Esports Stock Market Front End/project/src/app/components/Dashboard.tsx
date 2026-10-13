@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth';
 import { useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { VerifiedBadge } from './HelpModal';
 
@@ -249,7 +250,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="text-foreground font-semibold" style={{ fontSize: 13, lineHeight: 1.4 }}>{t.name}</p>
+                      <p className="text-foreground font-semibold" style={{ fontSize: 13, lineHeight: 1.4 }}>{tournamentDisplayName(t.name, t.region)}</p>
                       <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11 }}>
                         {t.tournament_type.replace('_', ' ')}{prizePool > 0 ? ` · $${prizePool.toLocaleString()} prize` : ''}
                       </p>

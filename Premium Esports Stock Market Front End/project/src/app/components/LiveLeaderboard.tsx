@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { Trophy } from 'lucide-react';
 import { useLiveLeaderboard } from '../lib/hooks';
 import { toNumber } from '../lib/types';
-import { colorForId } from '../lib/colors';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { placementBadgeStyle, placementRowTint } from '../lib/placement';
-import { PlayerAvatar } from './Dashboard';
 import { VerifiedBadge } from './HelpModal';
 
 // Shows a tournament's current standings, polling
@@ -71,7 +70,7 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
             {isFinal ? 'FINAL' : isLivePhase ? 'LIVE' : 'WRAPPING UP'}
           </span>
           <p className="font-semibold truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>
-            {data.tournament_name}
+            {tournamentDisplayName(data.tournament_name)}
           </p>
         </div>
         <LastUpdated lastSyncedAt={data.last_synced_at} isOsirionTracked={data.is_osirion_tracked} isLive={isLivePhase} />
@@ -101,7 +100,6 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
                 >
                   {entry.placement === 1 ? <Trophy style={{ width: 12, height: 12 }} /> : entry.placement}
                 </div>
-                <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={compact ? 22 : 26} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
                   {subline && !compact && (
@@ -181,7 +179,7 @@ function LastUpdated({
       <span
         className="flex items-center gap-1"
         style={{ fontSize: 10, color: '#ffa502' }}
-        title="This tournament hasn't synced from Osirion in a while -- it may have ended without being marked final, or the sync is stuck."
+        title="This tournament has not synced recently. It may have concluded and be awaiting finalization."
       >
         Sync stalled ({formatAge(ageMs)})
       </span>

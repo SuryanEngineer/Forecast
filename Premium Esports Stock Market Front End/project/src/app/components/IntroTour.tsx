@@ -125,25 +125,25 @@ const SLIDES: Slide[] = [
   {
     emoji: '🎮',
     title: 'Welcome to Forecast',
-    body: 'A fantasy stock market for competitive Fortnite. Buy shares in real pro players, and build up your wealth as their value -- and your portfolio -- grows.',
+    body: 'A fantasy stock market for competitive Fortnite. Buy shares in real pro players and grow your portfolio as their value rises.',
     visual: <TickerSnip />,
   },
   {
     emoji: '📈',
     title: 'Browse the market',
-    body: "Every active player has a live price that moves with real trading activity -- yours, other traders', and background market activity keeping things liquid.",
+    body: "Every active player has a live price that moves with real trading activity from you and other investors, so you can always buy or sell.",
     visual: <TickerSnip />,
   },
   {
     emoji: '🎯',
     title: 'Two ways to trade',
-    body: 'Place a Buy/Sell order at your own price and it rests on the order book until it fills -- usually cheaper. Or use Quick Buy/Sell to trade instantly, for a small premium.',
+    body: 'Place a limit order at your own price and it rests on the order book until it fills, or use Quick Buy/Sell to trade instantly at a small premium.',
     visual: <OrdersSnip />,
   },
   {
     emoji: '🏆',
     title: 'Tournaments pay dividends',
-    body: 'When a player you own places well in a tournament, everyone holding their stock gets paid a dividend -- straight to your cash balance.',
+    body: 'When a player you own places well in a tournament, every shareholder of record at the start of the event is paid a dividend, deposited directly into your cash balance.',
     visual: <DividendSnip />,
   },
   {

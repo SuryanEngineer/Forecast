@@ -4,14 +4,124 @@ import { motion } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { toNumber, type MarketSnapshot, type PositionResponse, type PriceHistoryPoint, type TradeResponse } from '../lib/types';
+import {
+  toNumber,
+  type MarketSnapshot,
+  type PlayerTournamentHistoryResponse,
+  type PositionResponse,
+  type PriceHistoryPoint,
+  type TournamentResponse,
+  type TradeResponse,
+} from '../lib/types';
 import { colorForId } from '../lib/colors';
+import { placementBadgeStyle } from '../lib/placement';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
 
 interface Props {
   playerId: string;
   onClose: () => void;
+  /** Opens a tournament from this player's history, scrolled to this player's team in the standings. */
+  onOpenTournament?: (tournament: TournamentResponse, focusPlayerId: string) => void;
+}
+
+function usd(n: number): string {
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+/** The player's tournament record: 2026 dividend totals, then every event with the placement and its payout. */
+function TournamentHistory({
+  playerId,
+  history,
+  onOpenTournament,
+}: {
+  playerId: string;
+  history: PlayerTournamentHistoryResponse | null;
+  onOpenTournament?: Props['onOpenTournament'];
+}) {
+  if (!history) return null;
+  const totalPool = toNumber(history.year_total_pool);
+  const perShare = toNumber(history.year_per_share);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-border p-3" style={{ background: 'var(--muted)' }}>
+        <p className="text-muted-foreground font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.04em' }}>
+          {history.year} dividends earned
+        </p>
+        <div className="flex items-end gap-6 mt-1.5 flex-wrap">
+          <div>
+            <p className="font-mono font-bold" style={{ fontSize: 20, color: 'var(--gain)' }}>{usd(totalPool)}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>total paid to shareholders</p>
+          </div>
+          <div>
+            <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>
+              ${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+            </p>
+            <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>per share</p>
+          </div>
+          <div>
+            <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>{history.year_events}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>tournament{history.year_events !== 1 ? 's' : ''}</p>
+          </div>
+        </div>
+        {history.year_includes_estimates && (
+          <p className="text-muted-foreground mt-2" style={{ fontSize: 10.5, lineHeight: 1.5 }}>
+            Includes events held before dividends went live, valued at current payout settings.
+          </p>
+        )}
+      </div>
+
+      <div>
+        <p className="text-muted-foreground font-semibold uppercase mb-1.5" style={{ fontSize: 11, letterSpacing: '0.04em' }}>
+          Tournament history
+        </p>
+        {history.entries.length === 0 ? (
+          <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>No tournament results recorded yet.</p>
+        ) : (
+          <div className="space-y-1.5 overflow-y-auto pr-1" style={{ maxHeight: 300, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
+            {history.entries.map(e => {
+              const t = e.tournament;
+              const pool = e.pool_amount !== null ? toNumber(e.pool_amount) : null;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => onOpenTournament?.(t, playerId)}
+                  disabled={!onOpenTournament}
+                  title="View this tournament’s standings"
+                  className="w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-colors hover:bg-white/[0.04]"
+                  style={{ background: 'var(--muted)' }}
+                >
+                  <div
+                    className="rounded-lg flex items-center justify-center font-mono font-bold shrink-0"
+                    style={{ minWidth: 44, height: 32, padding: '0 6px', fontSize: 12, ...placementBadgeStyle(e.placement) }}
+                  >
+                    #{e.placement}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-foreground font-semibold truncate" style={{ fontSize: 12.5 }}>
+                      {tournamentDisplayName(t.name, t.region)}
+                    </p>
+                    <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                      {t.start_time ? new Date(t.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      {` · ${e.placement.toLocaleString()} of ${e.total_teams.toLocaleString()} teams`}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-mono font-bold" style={{ fontSize: 12.5, color: pool && pool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}>
+                      {pool !== null && pool > 0 ? usd(pool) : '$0'}
+                    </p>
+                    <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>{e.is_estimate ? 'est. dividend pool' : 'dividend pool'}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const ChartTooltip = ({ active, payload }: any) => {
@@ -50,7 +160,7 @@ function RecentTrades({ trades }: { trades: TradeResponse[] }) {
   if (trades.length === 0) {
     return (
       <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
-        <p className="text-muted-foreground" style={{ fontSize: 12 }}>No trades yet -- be the first to trade this player!</p>
+        <p className="text-muted-foreground" style={{ fontSize: 12 }}>No trades yet. Be the first to trade this player.</p>
       </div>
     );
   }
@@ -72,8 +182,9 @@ function RecentTrades({ trades }: { trades: TradeResponse[] }) {
   );
 }
 
-export function PlayerModal({ playerId, onClose }: Props) {
+export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const { refreshWallet } = useAuth();
+  const [tournamentHistory, setTournamentHistory] = useState<PlayerTournamentHistoryResponse | null>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [position, setPosition] = useState<PositionResponse | null>(null);
   const [history, setHistory] = useState<PriceHistoryPoint[]>([]);
@@ -115,6 +226,17 @@ export function PlayerModal({ playerId, onClose }: Props) {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerId]);
+
+  // Tournament record + 2026 dividend totals -- loaded once per player (it doesn't change with each trade).
+  useEffect(() => {
+    let cancelled = false;
+    setTournamentHistory(null);
+    api
+      .get<PlayerTournamentHistoryResponse>(`/tournaments/players/${playerId}/tournaments?year=2026`)
+      .then(r => { if (!cancelled) setTournamentHistory(r); })
+      .catch(() => { if (!cancelled) setTournamentHistory(null); });
+    return () => { cancelled = true; };
   }, [playerId]);
 
   // Keep the recent-trades tape fresh while the modal is open -- other
@@ -264,7 +386,7 @@ export function PlayerModal({ playerId, onClose }: Props) {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <p className="text-muted-foreground" style={{ fontSize: 13 }}>No trade history yet -- be the first to trade this player!</p>
+                <p className="text-muted-foreground" style={{ fontSize: 13 }}>No trade history yet. Be the first to trade this player.</p>
               )}
             </div>
 
@@ -282,6 +404,8 @@ export function PlayerModal({ playerId, onClose }: Props) {
                 </div>
               ))}
             </div>
+
+            <TournamentHistory playerId={playerId} history={tournamentHistory} onOpenTournament={onOpenTournament} />
 
             {message && (
               <div

@@ -24,6 +24,8 @@ from app.schemas.tournament import (
     PaginatedPlacementResultResponse,
     PaginatedTeamResultResponse,
     PlacementResultResponse,
+    PlayerTournamentEntryResponse,
+    PlayerTournamentHistoryResponse,
     TeamGamesResponse,
     TeamMemberResponse,
     TeamResultResponse,
@@ -202,12 +204,14 @@ def get_tournament_teams(
     tournament_id: uuid.UUID,
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=200),
+    focus_player_id: uuid.UUID | None = Query(None, description="Return the page containing this player's team (overrides `page`)."),
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ) -> PaginatedTeamResultResponse:
     """The tournament leaderboard grouped by TEAM: stats once per team, each member's dividend pool, and --
     when the caller is logged in -- their own payout and the shares they held when the tournament STARTED
-    (that snapshot, not what they hold now, is what dividends are paid on)."""
+    (that snapshot, not what they hold now, is what dividends are paid on). With `focus_player_id` the response
+    is the page that contains that player's team, so a profile link can open the leaderboard right at their finish."""
     tournament = db.get(Tournament, tournament_id)
     if tournament is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
@@ -222,6 +226,11 @@ def get_tournament_teams(
     )
     teams = _group_teams(rows)
     total = len(teams)
+    if focus_player_id is not None:
+        for idx, team in enumerate(teams):
+            if any(p.id == focus_player_id for _, p in team):
+                page = idx // page_size + 1
+                break
     max_placement = len(rows)  # same "field size" finalization used when it priced each placement
     pool_ctx = dividend_service.PoolContext(db, tournament)
     dividends_paid = (
@@ -568,6 +577,101 @@ def get_live_leaderboard(
             )
             for result, player in rows
         ],
+    )
+
+
+@router.get("/players/{player_id}/tournaments", response_model=PlayerTournamentHistoryResponse)
+def get_player_tournaments(
+    player_id: uuid.UUID,
+    year: int = Query(2026, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+) -> PlayerTournamentHistoryResponse:
+    """Every tournament this player has a placement in (newest first) for the player profile, plus the dividend
+    pool their `year` results generated. A paid event uses its real DividendPayout; an event without payout rows
+    (backfilled history) is priced with the current economy settings and flagged as an estimate. Only FINALIZED
+    events count toward the yearly totals."""
+    player = db.get(Player, player_id)
+    if player is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
+
+    rows = (
+        db.query(PlacementResult, Tournament)
+        .options(defer(PlacementResult.raw_stats))
+        .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+        .filter(PlacementResult.player_id == player_id)
+        .all()
+    )
+
+    def _when(t: Tournament) -> datetime:
+        ts = t.start_time or t.created_at
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+
+    rows.sort(key=lambda r: _when(r[1]), reverse=True)
+
+    tournament_ids = [t.id for _, t in rows]
+    field_players: dict = {}
+    field_teams: dict = {}
+    payouts: dict = {}
+    if tournament_ids:
+        for tid, n_rows, n_places in (
+            db.query(
+                PlacementResult.tournament_id,
+                func.count(PlacementResult.id),
+                func.count(func.distinct(PlacementResult.placement)),
+            )
+            .filter(PlacementResult.tournament_id.in_(tournament_ids))
+            .group_by(PlacementResult.tournament_id)
+            .all()
+        ):
+            field_players[tid] = n_rows
+            field_teams[tid] = n_places
+        payouts = {
+            p.tournament_id: p
+            for p in db.query(DividendPayout).filter(
+                DividendPayout.player_id == player_id, DividendPayout.tournament_id.in_(tournament_ids)
+            ).all()
+        }
+
+    entries: list[PlayerTournamentEntryResponse] = []
+    year_pool = Decimal("0")
+    year_per_share = Decimal("0")
+    year_events = 0
+    year_estimates = False
+    for result, tournament in rows:
+        payout = payouts.get(tournament.id)
+        if payout is not None:
+            pool, per_share, estimate = payout.total_pool_amount, payout.per_share_amount, False
+        else:
+            ctx = dividend_service.PoolContext(db, tournament)
+            pool = ctx.pool_for(result, field_players.get(tournament.id, 1))
+            per_share = ctx.per_share_for(pool, player.total_shares_outstanding)
+            estimate = True
+        entries.append(
+            PlayerTournamentEntryResponse(
+                tournament=TournamentResponse.model_validate(tournament),
+                placement=result.placement,
+                total_teams=field_teams.get(tournament.id, 1),
+                points=result.points,
+                eliminations=result.eliminations,
+                pool_amount=pool,
+                per_share_amount=per_share,
+                is_estimate=estimate,
+            )
+        )
+        if tournament.status == TournamentStatus.FINALIZED and _when(tournament).year == year:
+            year_events += 1
+            year_pool += pool or Decimal("0")
+            year_per_share += per_share or Decimal("0")
+            year_estimates = year_estimates or estimate
+
+    return PlayerTournamentHistoryResponse(
+        player_id=player_id,
+        year=year,
+        entries=entries,
+        year_total_pool=year_pool,
+        year_per_share=year_per_share,
+        year_events=year_events,
+        year_includes_estimates=year_estimates,
     )
 
 

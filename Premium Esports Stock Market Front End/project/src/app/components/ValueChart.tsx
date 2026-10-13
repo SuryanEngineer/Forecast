@@ -39,7 +39,7 @@ function makeTooltip(color: string) {
  * moment such an endpoint exists (see lib/types.ts's ValueHistoryPoint
  * comment). Deliberately not wired to a fabricated client-side estimate
  * in the meantime. */
-export function ValueChart({ id, data, color = '#00c8ff', height = 160, emptyLabel = 'Not enough history yet -- check back in a moment.' }: Props) {
+export function ValueChart({ id, data, color = '#00c8ff', height = 160, emptyLabel = 'Not enough price history yet. Check back shortly.' }: Props) {
   const points = data.map(d => ({
     t: new Date(d.recorded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     value: toNumber(d.value),

@@ -210,6 +210,8 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
 _SORT_KEYS = {
     "market_cap": lambda s: s["market_cap"],
     "price": lambda s: s["last_price"],
+    "price_desc": lambda s: s["last_price"],
+    "price_asc": lambda s: s["last_price"],  # sorted ascending: see list_market_snapshots_page
     "volume": lambda s: s["volume_24h"],
     "hot": lambda s: abs(s["change_pct"]),
     "gainers": lambda s: s["change_pct"],
@@ -238,7 +240,9 @@ def list_market_snapshots_page(
     total = len(snapshots)
 
     key_fn = _SORT_KEYS.get(sort, _SORT_KEYS["market_cap"])
-    snapshots.sort(key=key_fn, reverse=True)
+    # Ties (equal prices) fall back to gamertag so paging is stable.
+    snapshots.sort(key=lambda s: str(s.get("gamertag") or "").lower())
+    snapshots.sort(key=key_fn, reverse=(sort != "price_asc"))
 
     start = (page - 1) * page_size
     page_items = snapshots[start : start + page_size]

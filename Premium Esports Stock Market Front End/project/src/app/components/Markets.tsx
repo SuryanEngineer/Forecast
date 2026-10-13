@@ -90,9 +90,8 @@ function useLiveTradeFeed(markets: MarketSnapshot[]) {
 }
 
 const SORTS = [
-  { key: 'hot', label: '🔥 Hottest' },
-  { key: 'price', label: '💰 Price' },
-  { key: 'volume', label: '📊 Most Traded' },
+  { key: 'price_desc', label: 'Price ↓', hint: 'Highest price first' },
+  { key: 'price_asc', label: 'Price ↑', hint: 'Lowest price first' },
 ] as const;
 type SortKey = typeof SORTS[number]['key'];
 
@@ -176,7 +175,7 @@ function PlayerCard({ market, navigate }: { market: MarketSnapshot; navigate: Pr
  * price, size, and player -- rather than fabricating a side. */
 function LiveTradeFeed({ trades, navigate }: { trades: FeedTrade[]; navigate: Props['navigate'] }) {
   if (trades.length === 0) {
-    return <p className="text-muted-foreground text-center py-6" style={{ fontSize: 13 }}>No trades yet -- activity will show up here as it happens.</p>;
+    return <p className="text-muted-foreground text-center py-6" style={{ fontSize: 13 }}>No trades yet. Activity will appear here as it happens.</p>;
   }
   return (
     <div className="space-y-1 overflow-y-auto pr-1 flex-1">
@@ -250,7 +249,7 @@ const PAGE_SIZE = 60;
 export function Markets({ navigate, initialSearch = '', onSearchChange }: Props) {
   const [search, setSearch] = useState(initialSearch);
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
-  const [sort, setSort] = useState<SortKey>('hot');
+  const [sort, setSort] = useState<SortKey>('price_desc');
   const [page, setPage] = useState(1);
   // Collapsed by default -- Market Overview's stat grid is useful detail,
   // not something that should eat up the top of the page before anyone's
@@ -376,28 +375,28 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <div className="flex items-center justify-center gap-1">
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>Total Market Cap</p>
-                  <InfoDot text="The combined value of every pro player's shares outstanding, at their current price. Goes up when player prices rise or a new player IPOs -- doesn't include anyone's cash." />
+                  <InfoDot text="The combined value of all player shares in circulation, at current prices. It rises as prices climb or new players are listed, and excludes investor cash." />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{formatCompactCurrency(totalMarketCap)}</p>
               </div>
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <div className="flex items-center justify-center gap-1">
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>Money in Circulation</p>
-                  <InfoDot text="Total cash held by every ranked investor right now (from the Rankings leaderboard) -- not the exchange's own reserve. Grows when new users register or dividends get paid out." align="right" />
+                  <InfoDot text="The total cash balance held by all ranked investors. It grows as new investors join and as dividends are paid out." align="right" />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{formatCompactCurrency(moneyInCirculation)}</p>
               </div>
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <div className="flex items-center justify-center gap-1">
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>24h Volume (shares)</p>
-                  <InfoDot text="How many total shares have changed hands across every player in the last 24 hours. Higher means the market's more active right now." />
+                  <InfoDot text="The total number of shares traded across all players in the past 24 hours. A higher figure indicates a more active market." />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{totalVolume.toLocaleString()}</p>
               </div>
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <div className="flex items-center justify-center gap-1">
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>Players Trading</p>
-                  <InfoDot text="How many listed players have actually had a share change hands recently -- not just the total roster size." align="right" />
+                  <InfoDot text="The number of listed players whose shares have traded recently, as opposed to the full roster." align="right" />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{playersTradingCount}</p>
                 <p className="text-muted-foreground mt-0.5" style={{ fontSize: 9.5 }}>of {summary.total_players.toLocaleString()} listed</p>
@@ -418,7 +417,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <p className="text-foreground font-semibold" style={{ fontSize: 13 }}>🎮 Top Player Stocks</p>
-                <InfoDot text="These rankings are about pro player stock prices moving, not user portfolios or account balances." />
+                <InfoDot text="These lists track changes in player share prices. They do not reflect investor portfolios or account balances." />
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="rounded-xl border border-border p-3" style={{ background: 'var(--muted)' }}>
@@ -481,6 +480,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
           {SORTS.map(s => (
             <button
               key={s.key}
+              title={s.hint}
               onClick={() => setSort(s.key)}
               className="px-4 py-1.5 rounded-xl font-medium transition-all"
               style={{
@@ -502,7 +502,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
         <div className="py-20 text-center">
           <p style={{ fontSize: 40 }}>🔍</p>
           <p className="text-muted-foreground mt-3" style={{ fontSize: 16 }}>
-            {debouncedSearch ? `No players match "${debouncedSearch}"` : 'No players have been IPO\'d yet -- ask an admin to create one.'}
+            {debouncedSearch ? `No players match "${debouncedSearch}"` : 'No players are listed yet. Check back soon.'}
           </p>
         </div>
       ) : (

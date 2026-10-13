@@ -4,9 +4,8 @@ import { motion } from 'motion/react';
 import { api } from '../lib/api';
 import { useLiveLeaderboard, useMarketsByIds } from '../lib/hooks';
 import { toNumber, type TournamentResponse } from '../lib/types';
-import { colorForId } from '../lib/colors';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { placementBadgeStyle } from '../lib/placement';
-import { PlayerAvatar } from './Dashboard';
 import { VerifiedBadge } from './HelpModal';
 import { TeamLeaderboard } from './TeamLeaderboard';
 
@@ -14,6 +13,8 @@ interface Props {
   tournament: TournamentResponse;
   onClose: () => void;
   onOpenPlayer: (id: string) => void;
+  /** When set (opened from a player's profile), the standings open on that player's team, highlighted. */
+  focusPlayerId?: string;
 }
 
 // This modal IS the "dedicated page" for one tournament's full leaderboard
@@ -82,7 +83,7 @@ function LiveStandingsSection({
     return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading live standings…</p>;
   }
   if (!data || data.entries.length === 0) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings posted yet -- check back once the tournament is underway.</p>;
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings are available yet. Check back once the tournament is underway.</p>;
   }
   return (
     <div className="space-y-2">
@@ -105,7 +106,6 @@ function LiveStandingsSection({
             >
               #{entry.placement}
             </div>
-            <PlayerAvatar name={entry.gamertag} color={colorForId(entry.player_id)} size={36} />
             <div className="flex-1 min-w-0">
               <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
               <p className="text-muted-foreground" style={{ fontSize: 11 }}>
@@ -142,7 +142,7 @@ interface TournamentEntrant {
  * earned in the real event -- so this shows a flat list by placement
  * instead of grouped teams. Works for both finalized tournaments (shows
  * results) and ones still upcoming (shows a placeholder only). */
-export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Props) {
+export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focusPlayerId }: Props) {
   const [entrants, setEntrants] = useState<TournamentEntrant[] | null>(null);
 
   // For a tournament still in progress, this modal IS the "click through to
@@ -228,7 +228,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
               <X className="w-5 h-5 text-muted-foreground" />
             </button>
           </div>
-          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournament.name}</h2>
+          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
           <div className="flex items-center gap-4 mt-2 flex-wrap text-muted-foreground" style={{ fontSize: 12.5 }}>
             {tournament.region && <span>{tournament.region}</span>}
             {tournament.start_time && (
@@ -265,7 +265,6 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
                       className="flex items-center gap-2.5 p-2.5 rounded-xl text-left hover:bg-white/[0.03] transition-colors"
                       style={{ background: 'var(--muted)' }}
                     >
-                      <PlayerAvatar name={gamertag} color={colorForId(e.player_id)} size={28} />
                       <p className="text-foreground font-semibold truncate" style={{ fontSize: 12.5 }}>{gamertag}<VerifiedBadge show={(market?.is_verified ?? e.is_verified)} /></p>
                     </button>
                   );
@@ -288,7 +287,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer }: Pro
               onOpenPlayer={onOpenPlayer}
             />
           ) : (
-            <TeamLeaderboard tournamentId={tournament.id} onOpenPlayer={onOpenPlayer} />
+            <TeamLeaderboard tournamentId={tournament.id} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} />
           )}
         </div>
       </motion.div>

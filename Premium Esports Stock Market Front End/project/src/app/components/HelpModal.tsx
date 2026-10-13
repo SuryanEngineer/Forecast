@@ -58,38 +58,36 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   orders: {
     emoji: '🎯',
     title: 'How Trading Works',
-    intro: 'Every player has an order book -- a live list of resting buy and sell orders. There are two ways to trade against it.',
+    intro: 'Every player has a live order book of resting buy and sell orders. You can trade against it in two ways: place a limit order at a price of your choosing, or use a quick trade to fill immediately.',
     sections: [
       {
-        heading: 'Limit orders (the order book)',
+        heading: 'Limit orders',
         body: (
           <>
-            <p>A limit order names your own price and rests on the book until another trader's order crosses it. Buy orders are
-            sorted highest price first, sell orders lowest price first; within the same price, whoever placed their order first
-            gets filled first.</p>
+            <p>A limit order sets the exact price you are willing to pay or accept, and rests on the book until another
+            trader’s order meets it. Buy orders are ranked from the highest price down and sell orders from the lowest price
+            up. At the same price, the order placed first is filled first.</p>
             <List
               items={[
-                'You can cancel an open (or partially filled) limit order any time before it fully fills.',
-                'A limit order can sit unfilled indefinitely if the market never reaches your price -- there’s no guarantee of a fill.',
-                'The person whose resting order gets crossed (the "maker") pays no fee at all.',
+                'You can cancel an open or partially filled limit order at any time before it completes.',
+                'A limit order is not guaranteed to fill. If the market never reaches your price, it will remain open.',
+                'The trader whose resting order is matched (the “maker”) pays no transaction fee.',
               ]}
             />
           </>
         ),
       },
       {
-        heading: 'Quick trade (instant, priced by liquidity)',
+        heading: 'Quick trades',
         body: (
           <>
-            <p>Quick Buy/Sell fills immediately by first eating through whatever the order book can actually offer at the best
-            available prices. For any quantity the book can't cover, the rest fills synthetically against the exchange's own
-            liquidity -- priced worse the larger your order is relative to how much liquidity that player currently has, the
-            same way a real illiquid stock's price moves against a large market order.</p>
+            <p>A quick trade executes immediately. It first takes the best prices available on the order book, and any
+            remaining quantity is filled against the exchange’s own liquidity. The larger your order relative to a player’s
+            available liquidity, the further the average fill price moves against you.</p>
             <List
               items={[
-                'Small quick trades on a liquid player barely move the price; large trades on a thin market move it more.',
-                'This is a documented placeholder pricing model pending further tuning -- see quick_trade_pricing.py in the backend.',
-                'Use it when you need a fill right now and don’t want to wait on the book.',
+                'Small quick trades in an active market barely move the price; large trades in a thin market move it more.',
+                'Choose a quick trade when speed matters more than securing a specific price.',
               ]}
             />
           </>
@@ -99,11 +97,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Fees',
         body: (
           <div className="space-y-1.5">
-            <p>Only the "taker" -- whoever’s order actually crosses and executes, whether that’s a limit order that
-            crosses the book or a quick trade -- pays a transaction fee, charged once on the total value of everything that
-            order fills.</p>
+            <p>Only the “taker” pays a fee: the trader whose order executes against the book, whether through a limit order
+            that crosses it or a quick trade. The fee is charged once, on the total value of that order’s fills.</p>
             <Fact label="Transaction fee (taker only)" value="0.25%" />
-            <Fact label="Price floor" value="$0.01 / share" />
+            <Fact label="Minimum share price" value="$0.01" />
           </div>
         ),
       },
@@ -112,14 +109,14 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   dividends: {
     emoji: '💰',
     title: 'How Dividends Work',
-    intro: 'When a player you own shares in places well in a tournament, real cash flows to every current shareholder -- split proportionally by how many shares they hold.',
+    intro: 'When a player you own performs well in a tournament, a cash dividend is distributed to everyone who held that player’s shares when the event began, in proportion to the number of shares they own.',
     sections: [
       {
         heading: 'Where the money comes from',
         body: (
           <div className="space-y-1.5">
-            <p>Cash Cup, FNCS, and Global Championship tournaments each draw from their own fixed dividend pool. Other
-            tournament types use whichever prize pool an admin entered for that specific event:</p>
+            <p>Cash Cup, FNCS, and Global Championship events each pay from a fixed dividend pool, scaled by region. Other
+            event types use the prize pool recorded for that specific tournament.</p>
             <Fact label="Cash Cup pool" value="$300,000" />
             <Fact label="FNCS Qualifier / Finals pool" value="$1,500,000" />
             <Fact label="Global Championship pool" value="$3,000,000" />
@@ -127,27 +124,24 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         ),
       },
       {
-        heading: 'How placement decides the payout',
+        heading: 'How placement sets the payout',
         body: (
           <>
-            <p>Each placement is worth a fixed slice of that tournament’s pool -- 1st place earns 20% of it, 2nd earns
-            13%, 3rd earns 10%, tapering down through 12th place at 2.5%. Placements past 12th still earn a real (if
-            small) share -- the payout keeps gently tapering off rather than dropping to zero, so even a lower finish in a
-            big tournament is worth something.</p>
-            <p className="mt-1.5">That placement’s dollar amount is then divided evenly across every share of that player
-            outstanding, giving a per-share dividend rate. You get paid <strong>(shares you hold) × (per-share rate)</strong>.
-            Own more shares of a player who does well, earn proportionally more.</p>
+            <p>Each finishing position earns a fixed share of the tournament’s pool: 1st place receives 20%, 2nd receives
+            13%, 3rd receives 10%, and the share tapers gradually through 12th place at 2.5%. Positions beyond 12th continue
+            to earn a smaller, steadily declining share, so a deep run in a large field is still rewarded.</p>
+            <p className="mt-1.5">A team event’s result applies to every player on the team. Each player’s payout is
+            divided across all outstanding shares of that player to produce a per-share rate, and you receive{' '}
+            <strong>(shares you hold) × (per-share rate)</strong>.</p>
           </>
         ),
       },
       {
-        heading: 'The record date -- this part matters',
+        heading: 'The record date',
         body: (
-          <p>You’re paid based on the shares you hold at the moment the tournament’s results are finalized, not
-          whatever you held during the event itself. That means buying shares before results are entered still qualifies
-          you for the full dividend -- but it also means selling right before results land forfeits it, even if you held
-          through the whole tournament. Buy ahead of big events you’re confident about; don’t sell right before
-          results come in if you want the payout.</p>
+          <p>Dividends are paid to the shareholders of record at the moment a tournament <strong>starts</strong>. Shares
+          bought after the start do not qualify for that event, and shares sold after the start still do. To earn a
+          dividend, buy before the tournament begins.</p>
         ),
       },
     ],
@@ -155,31 +149,38 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   tournaments: {
     emoji: '🏆',
     title: 'How Tournaments Work',
-    intro: 'Tournament results are entered by an admin once they\'re known -- either manually, or automatically synced from live Osirion data for tracked events.',
+    intro: 'Forecast follows the official competitive Fortnite calendar. Results are synced from live tournament data, so standings update automatically while an event is in progress.',
     sections: [
       {
         heading: 'Where results come from',
         body: (
-          <p>Some tournaments are linked to a real, live Fortnite competitive event via Osirion -- for those, standings sync in
-          automatically while the event is running (see the "● LIVE" badge and "updated Xs ago" label wherever you see one).
-          Everything else is entered by an admin once results are known. Either way, once a tournament is finalized, its
-          placements and dividend payouts are locked in and won't change.</p>
+          <p>Tracked events are linked to live competitive data. Standings refresh automatically during play (look for the
+          “LIVE” badge and the “updated” timestamp). Once a tournament is finalized, its placements and dividend payouts are
+          permanent.</p>
         ),
       },
       {
-        heading: 'What "placement" means here',
+        heading: 'Regions and event names',
         body: (
-          <p>Whatever placement a player actually earned in the real tournament -- this exchange doesn't simulate lobbies or
-          run its own bracket. A tournament's format (solos, duos, trios, or anything else) is just whatever the real event
-          actually was; this app only tracks the outcome (who placed where), not the format itself.</p>
+          <p>NAC and EU events frequently run on the same dates with the same format, so their names begin with the
+          region: “NAC” or “EU”. LAN and global events, such as the Global Championship, draw players from every region and
+          carry no regional prefix.</p>
         ),
       },
       {
-        heading: 'Types and how often they happen',
+        heading: 'Placements and game-by-game results',
         body: (
-          <p>Cash Cups run most often, FNCS Qualifiers and Finals less frequently, and a Global Championship is rare --
-          matching the real competitive calendar’s cadence. Bigger, rarer tournament types carry proportionally larger
-          prize pools (see the Dividends help for the exact numbers), so they matter more to your portfolio when they land.</p>
+          <p>A placement is the official finishing position in the real event. Open any tournament to see team standings,
+          each team’s payout, and the results of every individual game, including eliminations, time alive, and damage
+          dealt and taken.</p>
+        ),
+      },
+      {
+        heading: 'Event types',
+        body: (
+          <p>Cash Cups are the most frequent events, FNCS Qualifiers and Finals occur less often, and the Global
+          Championship is the rarest. Larger events carry larger dividend pools, so they have the greatest impact on your
+          portfolio. See the Dividends guide for exact figures.</p>
         ),
       },
     ],
@@ -187,41 +188,41 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   rankings: {
     emoji: '📊',
     title: 'How Rankings Work',
-    intro: 'The leaderboard ranks every investor by total portfolio value -- there’s no separate "skill score," just how much your account is worth right now.',
+    intro: 'Investors are ranked by total portfolio value. There is no separate skill score; your rank reflects how much your account is worth right now.',
     sections: [
       {
         heading: 'What counts toward your rank',
         body: (
-          <p><strong>Portfolio value = cash balance + the current market value of every share you hold</strong>, valued at
-          each player’s most recent trade price. It updates continuously as prices move and as you (or anyone) trades --
-          there’s no lag or daily snapshot, your rank reflects this exact moment.</p>
+          <p><strong>Portfolio value = cash balance + the current market value of every share you hold</strong>, with each
+          share valued at its player’s most recent trade price. Rankings update continuously as prices move and trades
+          execute.</p>
         ),
       },
       {
-        heading: 'Tap anyone to see their team',
-        body: <p>Every row on the leaderboard is clickable -- tap any investor to see a summary of their standing: rank, cash
-        balance, holdings value, and total portfolio value.</p>,
+        heading: 'View any investor’s team',
+        body: <p>Select any row on the leaderboard to see that investor’s rank, cash balance, holdings value, and total
+        portfolio value.</p>,
       },
     ],
   },
   portfolio: {
     emoji: '💼',
     title: 'Understanding Your Portfolio',
-    intro: 'Your portfolio combines cash you haven’t invested with the current value of every player you hold shares in.',
+    intro: 'Your portfolio combines your uninvested cash with the current value of every player you hold shares in.',
     sections: [
       {
         heading: 'Portfolio value',
         body: (
-          <p><strong>Cash balance + holdings value</strong> (each holding valued at that player’s current price × shares
-          you own). This is the same number used for your Rankings position -- moving cash into shares doesn’t change
-          your portfolio value by itself, only price movement, dividends, and trading costs do.</p>
+          <p><strong>Cash balance + holdings value</strong>, where each holding is its player’s current price multiplied by
+          the number of shares you own. This is the figure used for your ranking. Moving cash into shares does not change
+          your portfolio value on its own; only price movement, dividends, and trading fees do.</p>
         ),
       },
       {
-        heading: 'Gain / loss on a holding',
+        heading: 'Gain and loss',
         body: (
-          <p>Shown per player as the difference between what those shares are worth now versus what you originally paid for
-          them (your cost basis) -- it’s unrealized until you actually sell, so it moves with the live price.</p>
+          <p>For each holding, gain or loss is the difference between what your shares are worth now and what you paid for
+          them (your cost basis). It is unrealized until you sell, so it moves with the live price.</p>
         ),
       },
     ],
@@ -229,14 +230,13 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   market: {
     emoji: '📈',
     title: 'Reading the Market',
-    intro: 'Every price on this exchange is a real trade price -- there’s no hidden "true value" a player is supposed to be worth.',
+    intro: 'Every price on the exchange is a real trade price set by buyers and sellers. There is no hidden “true value” behind a player.',
     sections: [
       {
         heading: 'Where prices come from',
         body: (
-          <p>A player’s price is simply the price of their most recent executed trade -- whether that trade came from
-          you, another trader, or a resting order finally getting crossed. There’s no separate valuation model
-          running underneath; the market price <em>is</em> the last trade, exactly like a real stock ticker.</p>
+          <p>A player’s price is the price of their most recent executed trade, exactly like a stock ticker. It is not
+          set by a model or by the platform.</p>
         ),
       },
       {
@@ -244,38 +244,40 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <List
             items={[
-              'Buying pressure (more/larger buy orders crossing the book) pushes price up; selling pressure pushes it down.',
-              'A strong tournament placement drives real demand for that player’s shares -- and a bad one often triggers selling.',
+              'Buying pressure pushes a price up, and selling pressure pushes it down.',
+              'Strong tournament finishes raise expected dividends and tend to attract buyers; weak finishes tend to attract sellers.',
+              'Prices often build ahead of a tournament, since only shareholders at the start receive its dividend.',
             ]}
           />
         ),
       },
       {
-        heading: 'The live feed',
-        body: <p>Open "Live Activity" to see recent trades as they happen across the market -- a running pulse of activity instead of one abstract aggregate chart.</p>,
+        heading: 'Sorting the market',
+        body: <p>Use the price arrows to order players from highest to lowest price (↓) or lowest to highest (↑). Open
+        Live Activity to follow recent trades across the market as they happen.</p>,
       },
     ],
   },
   verified: {
     emoji: '✅',
     title: 'Verified Pros',
-    intro: 'A verified badge means this listing is the real, confirmed pro -- not a look-alike account.',
+    intro: 'A verified badge confirms that a listing is the genuine pro player, not a look-alike account.',
     sections: [
       {
         heading: 'What it means',
         body: (
-          <p>We keep a hand-checked list of pro players and the Epic accounts each one plays on -- including the
-          separate accounts they use at LAN events like EWC and the Global Championship. A <strong>verified</strong>{' '}
-          player is one we matched to that list, and we show the pro name <em>we</em> list, not whatever name a
-          particular account happened to play under that day.</p>
+          <p>We maintain a hand-checked list of professional players and the Epic accounts each one uses, including the
+          separate accounts they play on at LAN events such as EWC and the Global Championship. A <strong>verified</strong>{' '}
+          player has been matched to that list, and is shown under the name <em>we</em> list for them rather than whichever
+          name an account used on a given day.</p>
         ),
       },
       {
         heading: 'Why it matters',
         body: (
-          <p>Anyone can pick a name that looks almost identical to a pro’s (swapping in a look-alike letter, adding a
-          symbol) and enter an open qualifier. Without a check, that copy could show up on the market next to the real
-          player. Only the real pro carries the badge, so if two similar names appear, <strong>buy the verified one</strong>.</p>
+          <p>Anyone can register a name that closely resembles a pro’s and enter an open qualifier. Without verification,
+          that account could appear on the market beside the real player. If two similar names appear,{' '}
+          <strong>choose the verified one</strong>.</p>
         ),
       },
       {
@@ -283,8 +285,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <List
             items={[
-              'It does not automatically mean a player is fake -- plenty of real players simply aren’t on our verified list yet.',
-              'If a name looks like a verified pro’s but has no badge, treat it as a different person and double-check before buying.',
+              'A missing badge does not mean a player is not real. Many legitimate players are not on our verified list yet.',
+              'If a name resembles a verified pro’s but carries no badge, treat it as a different player and confirm before you buy.',
             ]}
           />
         ),
@@ -388,7 +390,7 @@ export function VerifiedBadge({ show, size = 14 }: { show?: boolean; size?: numb
         tabIndex={0}
         onClick={openIt}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openIt(e); }}
-        title="Verified pro -- click to learn what this means"
+        title="Verified pro. Select to learn what this means."
         className="inline-flex align-middle ml-1 cursor-pointer shrink-0"
         style={{ color: 'var(--primary)' }}
       >

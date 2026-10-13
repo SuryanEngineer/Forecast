@@ -22,6 +22,8 @@ function AuthenticatedApp() {
   const [playerModalId, setPlayerModalId] = useState<string | null>(null);
   const [teamModalUserId, setTeamModalUserId] = useState<string | null>(null);
   const [selectedTournament, setSelectedTournament] = useState<TournamentResponse | null>(null);
+  // Set when a tournament is opened from a player's profile: the standings open on that player's team.
+  const [tournamentFocusPlayerId, setTournamentFocusPlayerId] = useState<string | null>(null);
   const [marketSearch, setMarketSearch] = useState('');
 
   // Keyed per-account (introSeenKey(user.id)), not one global flag -- see
@@ -66,16 +68,27 @@ function AuthenticatedApp() {
           <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />
         )}
         {currentPage === 'leaderboards' && <Leaderboards openPlayer={setPlayerModalId} openTeam={setTeamModalUserId} />}
-        {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={setSelectedTournament} />}
+        {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); }} />}
       </main>
 
-      {playerModalId && <PlayerModal playerId={playerModalId} onClose={() => setPlayerModalId(null)} />}
+      {playerModalId && (
+        <PlayerModal
+          playerId={playerModalId}
+          onClose={() => setPlayerModalId(null)}
+          onOpenTournament={(tournament, focusPlayerId) => {
+            setPlayerModalId(null);
+            setTournamentFocusPlayerId(focusPlayerId);
+            setSelectedTournament(tournament);
+          }}
+        />
+      )}
       {teamModalUserId && <TeamModal userId={teamModalUserId} onClose={() => setTeamModalUserId(null)} />}
       {selectedTournament && (
         <TournamentDetailModal
           tournament={selectedTournament}
-          onClose={() => setSelectedTournament(null)}
-          onOpenPlayer={id => { setSelectedTournament(null); setPlayerModalId(id); }}
+          focusPlayerId={tournamentFocusPlayerId ?? undefined}
+          onClose={() => { setSelectedTournament(null); setTournamentFocusPlayerId(null); }}
+          onOpenPlayer={id => { setSelectedTournament(null); setTournamentFocusPlayerId(null); setPlayerModalId(id); }}
         />
       )}
       {showIntro && (

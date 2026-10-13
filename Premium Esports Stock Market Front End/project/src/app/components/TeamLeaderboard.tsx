@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Coins } from 'lucide-react';
 import { api } from '../lib/api';
 import {
@@ -8,9 +8,7 @@ import {
   type TournamentGamesResponse,
   type TeamResultResponse,
 } from '../lib/types';
-import { colorForId } from '../lib/colors';
 import { placementBadgeStyle } from '../lib/placement';
-import { PlayerAvatar } from './Dashboard';
 import { VerifiedBadge } from './HelpModal';
 
 const PAGE_SIZE = 50;
@@ -80,7 +78,7 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
         <div className="grid items-center px-3 py-1.5 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Dealt</span><span>Taken</span>
+          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Damage Dealt</span><span>Damage Taken</span>
         </div>
         {data.games.map(g => {
           const alive = statNum(g.stats, 'TIME_ALIVE_STAT');
@@ -118,13 +116,20 @@ function TeamCard({
   tournamentId,
   estimate,
   onOpenPlayer,
+  focused = false,
 }: {
   team: TeamResultResponse;
   tournamentId: string;
   estimate: boolean;
   onOpenPlayer: (id: string) => void;
+  /** The team a profile link pointed at: scrolled into view, outlined, and its game-by-game results opened. */
+  focused?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(focused);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) cardRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [focused]);
   const pool = team.team_pool_amount !== null ? toNumber(team.team_pool_amount) : null;
   const mine = team.my_payout !== null ? toNumber(team.my_payout) : null;
   const hasStake = mine !== null || (team.my_shares_at_start ?? 0) > 0;
@@ -132,12 +137,16 @@ function TeamCard({
 
   return (
     <div
+      ref={cardRef}
       className="rounded-2xl overflow-hidden"
       style={{
         background: 'var(--muted)',
-        // Teams the viewer owns a piece of stand out with an accent border + glow.
-        border: hasStake ? '1.5px solid rgba(251,191,36,0.65)' : '1px solid transparent',
-        boxShadow: hasStake ? '0 0 0 1px rgba(251,191,36,0.15), 0 0 18px rgba(251,191,36,0.10)' : undefined,
+        // Teams the viewer owns a piece of stand out with a gold border + glow; a team a profile link
+        // pointed at gets a cyan outline.
+        border: focused ? '1.5px solid var(--primary)' : hasStake ? '1.5px solid rgba(251,191,36,0.65)' : '1px solid transparent',
+        boxShadow: focused
+          ? '0 0 0 1px rgba(0,200,255,0.25), 0 0 20px rgba(0,200,255,0.14)'
+          : hasStake ? '0 0 0 1px rgba(251,191,36,0.15), 0 0 18px rgba(251,191,36,0.10)' : undefined,
       }}
     >
       <div className="flex items-stretch gap-4 p-3.5">
@@ -172,7 +181,6 @@ function TeamCard({
                     onClick={() => onOpenPlayer(m.player_id)}
                     className="flex items-center gap-2 text-left min-w-0 flex-1 hover:opacity-80 transition-opacity"
                   >
-                    <PlayerAvatar name={m.gamertag} color={colorForId(m.player_id)} size={28} />
                     <span className="text-foreground font-semibold truncate" style={{ fontSize: 14 }}>
                       {m.gamertag}
                       <VerifiedBadge show={m.is_verified} />
@@ -262,17 +270,28 @@ function Pager({ page, totalPages, total, noun, onPage }: { page: number; totalP
   );
 }
 
-function StandingsTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpenPlayer: (id: string) => void }) {
+function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamentId: string; onOpenPlayer: (id: string) => void; focusPlayerId?: string }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PaginatedTeamResultResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  // Asks the server for the page that contains the focused player's team -- used for the first load only; after
+  // that the page state (set from the response) drives normal paging, and the team stays highlighted.
+  const pendingFocus = useRef<string | undefined>(focusPlayerId);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    const focusParam = pendingFocus.current ? `&focus_player_id=${pendingFocus.current}` : '';
     api
-      .get<PaginatedTeamResultResponse>(`/tournaments/${tournamentId}/teams?page=${page}&page_size=${PAGE_SIZE}`)
-      .then(r => { if (!cancelled) setData(r); })
+      .get<PaginatedTeamResultResponse>(`/tournaments/${tournamentId}/teams?page=${page}&page_size=${PAGE_SIZE}${focusParam}`)
+      .then(r => {
+        if (cancelled) return;
+        setData(r);
+        if (pendingFocus.current) {
+          pendingFocus.current = undefined;
+          if (r.page !== page) setPage(r.page);
+        }
+      })
       .catch(() => { if (!cancelled) setData(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -318,6 +337,7 @@ function StandingsTab({ tournamentId, onOpenPlayer }: { tournamentId: string; on
           tournamentId={tournamentId}
           estimate={estimate}
           onOpenPlayer={onOpenPlayer}
+          focused={!!focusPlayerId && team.members.some(m => m.player_id === focusPlayerId)}
         />
       ))}
       <Pager page={page} totalPages={data.total_pages} total={data.total} noun="teams" onPage={setPage} />
@@ -347,7 +367,7 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
   }
 
   const game = data.games.find(g => g.game === selected) ?? data.games[0];
-  const COLS = '48px minmax(0,1fr) 64px 72px 72px 72px 56px';
+  const COLS = '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
   return (
     <div className="space-y-3">
@@ -377,7 +397,7 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
         <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Place</span><span>Team</span><span className="text-right">Elims</span><span className="text-right">Alive</span><span className="text-right">Dealt</span><span className="text-right">Taken</span><span className="text-right">Final</span>
+          <span>Place</span><span>Team</span><span className="text-right">Elims</span><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span><span className="text-right">Final</span>
         </div>
         {game.teams.map((t, i) => (
           <div
@@ -416,9 +436,12 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
 export function TeamLeaderboard({
   tournamentId,
   onOpenPlayer,
+  focusPlayerId,
 }: {
   tournamentId: string;
   onOpenPlayer: (id: string) => void;
+  /** Opens on the page holding this player's team and highlights it (used by the player profile's history list). */
+  focusPlayerId?: string;
 }) {
   const [tab, setTab] = useState<'standings' | 'games'>('standings');
   return (
@@ -441,7 +464,7 @@ export function TeamLeaderboard({
         ))}
       </div>
       {tab === 'standings' ? (
-        <StandingsTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
+        <StandingsTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} />
       ) : (
         <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
       )}
