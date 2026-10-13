@@ -104,6 +104,7 @@ POSITION_CAP = {"whale": 0.30, "index_investor": 0.05, "scalper": 0.08, "dividen
 BUY_FLOOR = -0.05     # a bot buys its best-scoring watchlist pick if that score clears this
 SELL_FLOOR = 0.30     # ...and sells a holding only if its sell score clears this (bots prefer holding)
 MIN_CASH_FRACTION = 0.03
+IDLE_TRADE_PROB = 0.5  # chance an otherwise-idle bot still makes a small rebalancing trade this tick
 
 # Market makers
 MM_COVERAGE = 2            # every active player is quoted by at least this many makers
@@ -613,11 +614,23 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
                 s += 0.7
         sells.append((s, pid))
     sells.sort(key=lambda t: t[0], reverse=True)
-    if sells and sells[0][0] >= SELL_FLOOR:
+    # A bot short on cash is far more willing to sell something to raise it.
+    sell_floor = SELL_FLOOR * (0.2 if cash_frac < 0.10 else 1.0)
+    if sells and sells[0][0] >= sell_floor:
         sell_pick = sells[0]
 
     if buy_pick is None and sell_pick is None:
-        return trimmed
+        # Nothing clears the bar, but real traders still churn: rebalance a little, take a small profit,
+        # redeploy a bit of cash. Without this the market goes silent between tournaments.
+        if rng.random() < IDLE_TRADE_PROB:
+            if sells and (cash_frac < 0.5 or rng.random() < 0.5):
+                sell_pick = (0.4, rng.choice(sells)[1])
+            elif cash_frac > MIN_CASH_FRACTION and snapshot.player_ids:
+                pid = rng.choice(snapshot.player_ids)
+                if snapshot.price.get(pid, Decimal("0")) > 0 and concentration(pid) < 1.0:
+                    buy_pick = (0.0, pid)
+        if buy_pick is None and sell_pick is None:
+            return trimmed
 
     if buy_pick is not None and sell_pick is not None:
         p_buy = _clamp(0.25 + 0.7 * cash_frac, 0.15, 0.9)  # idle cash pushes toward buying
