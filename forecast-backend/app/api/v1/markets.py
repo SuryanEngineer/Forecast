@@ -75,5 +75,13 @@ def get_market(player_id: uuid.UUID, db: Session = Depends(get_db)) -> MarketSna
 
 
 @router.get("/{player_id}/price-history", response_model=list[PriceHistoryPointResponse])
-def get_price_history(player_id: uuid.UUID, limit: int = 200, db: Session = Depends(get_db)) -> list[PriceHistoryPointResponse]:
+def get_price_history(
+    player_id: uuid.UUID,
+    limit: int = 200,
+    range: str | None = Query(None, description="1d | 1w | 1m | all -- time-ranged, chart-ready history (one point per trade, with the opening price carried in)."),
+    db: Session = Depends(get_db),
+) -> list[PriceHistoryPointResponse]:
+    if range is not None:
+        key = range.lower() if range.lower() in {"1d", "1w", "1m", "all"} else "all"
+        return market_data_service.get_price_history_range(db, player_id, key)
     return market_data_service.get_price_history(db, player_id, limit=min(limit, 1000))

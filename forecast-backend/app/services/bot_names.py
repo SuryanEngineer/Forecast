@@ -40,55 +40,93 @@ _WORDS = [
     "onyx", "cipher", "monarch", "zenith", "harbor", "summit", "ridge", "anchor", "beacon", "atlas", "orbit",
 ]
 
-_TAGS = ["fn", "tv", "gg", "hq", "main", "plays", "clips", "fan", "watch"]
+_NICK = [
+    "mikey", "danny", "benji", "jonny", "timmy", "alfie", "joey", "charlie", "freddy", "teddy", "robbie", "andy",
+    "sammy", "nicky", "tommy", "billy", "jakey", "zack", "dre", "liv", "izzy", "abby", "lexi", "kayla", "bree",
+]
+
+_TAGS = ["fn", "ttv", "yt", "gg", "clips", "plays", "tv", "xo"]
+
+_PREFIX = ["its", "real", "the", "not", "iam", "mr", "x", "itz", "just", "ur"]
 
 
 def _cap(s: str) -> str:
     return s[:1].upper() + s[1:]
 
 
+def _digits(rng: random.Random) -> str:
+    return rng.choice([
+        f"{rng.randint(0, 99):02d}", f"{rng.randint(0, 99):02d}",
+        rng.choice(["97", "98", "99", "00", "01", "02", "03", "04", "05", "06", "07"]),
+        str(rng.randint(100, 999)),
+        str(rng.choice([69, 7, 13, 21, 23, 24, 77, 99, 420][:-2] + [7, 13, 21, 23, 24, 77, 99])),
+    ])
+
+
+def _stretch(name: str, rng: random.Random) -> str:
+    """mikey -> mikeyy / mikeyyy (a very common real-handle habit)."""
+    if rng.random() < 0.5 and name and name[-1].isalpha():
+        return name + name[-1] * rng.randint(1, 2)
+    return name
+
+
+def _leet(name: str, rng: random.Random) -> str:
+    table = {"a": "4", "e": "3", "i": "1", "o": "0", "s": "5"}
+    out, done = [], 0
+    for ch in name:
+        if ch in table and done < 2 and rng.random() < 0.5:
+            out.append(table[ch])
+            done += 1
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _candidate(rng: random.Random) -> str:
-    pattern = rng.choices(
-        ["first_initial_num", "first_last", "first.last", "camel_pair", "word_word_num", "first_word", "word_num",
-         "first_tag", "word_tag", "first_num"],
-        weights=[14, 12, 6, 14, 10, 10, 8, 8, 8, 10],
+    kind = rng.choices(
+        ["name_digits", "name_initial", "nick", "prefix_name", "name_word", "word_word", "word_digits", "name_tag",
+         "name_last", "x_name", "leet"],
+        weights=[22, 11, 10, 9, 9, 10, 8, 7, 9, 5, 0],
         k=1,
     )[0]
     first, last = rng.choice(_FIRST), rng.choice(_LAST)
     w1, w2 = rng.choice(_WORDS), rng.choice(_WORDS)
-    num2 = f"{rng.randint(0, 99):02d}"
-    year = rng.choice(["97", "98", "99", "00", "01", "02", "03", "04", "05", "06"])
+    sep = rng.choice(["", "", "_", "."])
 
-    if pattern == "first_initial_num":
-        return f"{first}{last[0]}{rng.choice([num2, year])}"
-    if pattern == "first_last":
-        return f"{first}_{last}" if rng.random() < 0.6 else f"{_cap(first)}{_cap(last)}"
-    if pattern == "first.last":
-        return f"{first}.{last}"
-    if pattern == "camel_pair":
-        return f"{_cap(w1)}{_cap(w2)}" if w1 != w2 else f"{_cap(w1)}{_cap(first)}"
-    if pattern == "word_word_num":
-        return f"{w1}_{w2}_{num2}" if w1 != w2 else f"{w1}_{num2}"
-    if pattern == "first_word":
-        return f"{first}_{w1}" if rng.random() < 0.5 else f"{first}{_cap(w1)}"
-    if pattern == "word_num":
-        return f"{w1}{rng.choice([num2, year, str(rng.randint(100, 999))])}"
-    if pattern == "first_tag":
-        return f"{first}_{rng.choice(_TAGS)}"
-    if pattern == "word_tag":
-        return f"{w1}{rng.choice(_TAGS)}" if rng.random() < 0.5 else f"{_cap(w1)}{rng.choice(_TAGS).upper()}"
-    return f"{first}{rng.choice([num2, year, str(rng.randint(100, 999))])}"  # first_num
+    if kind == "name_digits":
+        return f"{first}{rng.choice(['', '_'])}{_digits(rng)}"
+    if kind == "name_initial":
+        return f"{first}{last[0]}{rng.choice(['', '', _digits(rng)])}"
+    if kind == "nick":
+        return f"{_stretch(rng.choice(_NICK), rng)}{rng.choice(['', '', _digits(rng)])}"
+    if kind == "prefix_name":
+        return f"{rng.choice(_PREFIX)}{sep}{first}"
+    if kind == "name_word":
+        return f"{first}{sep}{w1}"
+    if kind == "word_word":
+        if w1 == w2:
+            w2 = first
+        return f"{_cap(w1)}{_cap(w2)}" if rng.random() < 0.6 else f"{w1}{sep}{w2}"
+    if kind == "word_digits":
+        return f"{w1}{rng.choice(['', '_'])}{_digits(rng)}"
+    if kind == "name_tag":
+        return f"{first}{rng.choice(['', '_'])}{rng.choice(_TAGS)}"
+    if kind == "name_last":
+        return f"{first}{sep}{last}" if sep else f"{_cap(first)}{_cap(last)}"
+    if kind == "x_name":
+        return f"x{first}x" if rng.random() < 0.4 else f"{first}x{_digits(rng)}"
+    return _leet(f"{first}{rng.choice(['', '_'])}{w1}", rng)  # leet
 
 
 def generate_username(rng: random.Random, taken: set[str]) -> str:
     """Returns a handle not present in `taken` (compared case-insensitively) and adds it to `taken`."""
     for _ in range(40):
-        name = _candidate(rng)[:60]
-        if name.lower() not in taken:
+        name = _candidate(rng)[:40]
+        if 3 <= len(name) and name.lower() not in taken:
             taken.add(name.lower())
             return name
     while True:  # extremely unlikely; guarantees termination
-        name = f"{_candidate(rng)[:50]}{rng.randint(1000, 9999)}"
+        name = f"{_candidate(rng)[:30]}{rng.randint(1000, 9999)}"
         if name.lower() not in taken:
             taken.add(name.lower())
             return name

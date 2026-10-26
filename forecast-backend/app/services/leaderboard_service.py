@@ -1,6 +1,7 @@
 """
-Leaderboard: ranks real users (never the House account, never a bot
-trader -- see app/services/bot_trading_service.py) by total portfolio
+Leaderboard: ranks users (never the House account; bot traders -- see
+app/services/bot_trading_service.py -- are included while INCLUDE_BOTS is on, so the
+market looks populated at launch) by total portfolio
 value = wallet cash + held shares valued at each player's current
 last-traded price (see app/services/market_data_service.py for what
 "last price" means). Recomputed on every request rather than
@@ -20,6 +21,9 @@ from app.models.bot import BotProfile
 from app.models.player import Player, PriceSnapshot, Position
 from app.models.user import User
 from app.services.house_account import HOUSE_ACCOUNT_EMAIL
+
+# Flip to False to rank only real users once the real player base is big enough.
+INCLUDE_BOTS = True
 
 
 def _last_price_by_player(db: Session) -> dict[uuid.UUID, Decimal]:
@@ -45,12 +49,10 @@ def _last_price_by_player(db: Session) -> dict[uuid.UUID, Decimal]:
 def compute_leaderboard(db: Session, limit: int = 100) -> list[dict]:
     prices = _last_price_by_player(db)
 
-    bot_user_ids = db.query(BotProfile.user_id).subquery()
-    users = (
-        db.query(User)
-        .filter(User.email != HOUSE_ACCOUNT_EMAIL, User.is_active.is_(True), User.id.notin_(bot_user_ids))
-        .all()
-    )
+    query = db.query(User).filter(User.email != HOUSE_ACCOUNT_EMAIL, User.is_active.is_(True))
+    if not INCLUDE_BOTS:
+        query = query.filter(User.id.notin_(db.query(BotProfile.user_id).subquery()))
+    users = query.all()
     rows: list[dict] = []
     for user in users:
         wallet = user.wallet

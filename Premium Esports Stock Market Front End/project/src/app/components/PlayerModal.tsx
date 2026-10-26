@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { motion } from 'motion/react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
@@ -9,7 +8,6 @@ import {
   type MarketSnapshot,
   type PlayerTournamentHistoryResponse,
   type PositionResponse,
-  type PriceHistoryPoint,
   type TournamentResponse,
   type TradeResponse,
 } from '../lib/types';
@@ -18,6 +16,7 @@ import { placementBadgeStyle } from '../lib/placement';
 import { tournamentDisplayName } from '../lib/tournamentName';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
+import { PriceChart } from './PriceChart';
 
 interface Props {
   playerId: string;
@@ -124,15 +123,6 @@ function TournamentHistory({
   );
 }
 
-const ChartTooltip = ({ active, payload }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-xl px-3 py-2 border border-border" style={{ background: 'var(--popover)' }}>
-      <p className="font-mono font-bold text-foreground" style={{ fontSize: 14 }}>${payload[0].value.toFixed(2)}</p>
-    </div>
-  );
-};
-
 function playerName(m: MarketSnapshot): string {
   return m.real_name || m.gamertag;
 }
@@ -187,7 +177,6 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const [tournamentHistory, setTournamentHistory] = useState<PlayerTournamentHistoryResponse | null>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [position, setPosition] = useState<PositionResponse | null>(null);
-  const [history, setHistory] = useState<PriceHistoryPoint[]>([]);
   const [recentTrades, setRecentTrades] = useState<TradeResponse[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -202,13 +191,11 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   async function load() {
     setLoading(true);
     try {
-      const [m, h, trades] = await Promise.all([
+      const [m, trades] = await Promise.all([
         api.get<MarketSnapshot>(`/markets/${playerId}`),
-        api.get<PriceHistoryPoint[]>(`/markets/${playerId}/price-history?limit=60`),
         api.get<TradeResponse[]>(`/orders/trades/${playerId}?limit=8`).catch(() => []),
       ]);
       setMarket(m);
-      setHistory(h);
       setRecentTrades(trades);
       try {
         const p = await api.get<PositionResponse>(`/players/${playerId}/position`);
@@ -275,13 +262,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const price = toNumber(market.last_price);
   const changePct = toNumber(market.change_pct);
   const isUp = changePct >= 0;
-  const chartColor = isUp ? '#10d9a0' : '#ff3d5c';
   const color = colorForId(market.id);
-
-  const chartData = history.map(h => ({
-    date: new Date(h.recorded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    price: toNumber(h.price),
-  }));
 
   async function handleQuick(side: 'buy' | 'sell') {
     setSubmitting(true);
@@ -368,27 +349,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
 
         <div className="grid grid-cols-1 gap-0 md:grid-cols-[1fr_280px]">
           <div className="px-6 pb-6 border-r border-border space-y-5">
-            <div>
-              <p className="text-muted-foreground mb-2" style={{ fontSize: 12 }}>Recent price</p>
-              {chartData.length > 1 ? (
-                <ResponsiveContainer width="100%" height={130}>
-                  <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                    <defs>
-                      <linearGradient id={`mg-${market.id}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="date" tick={{ fill: '#5a6a82', fontSize: 10 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis tick={{ fill: '#5a6a82', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${v.toFixed(0)}`} width={44} domain={['auto', 'auto']} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Area type="monotone" dataKey="price" stroke={chartColor} fill={`url(#mg-${market.id})`} strokeWidth={2} dot={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-muted-foreground" style={{ fontSize: 13 }}>No trade history yet. Be the first to trade this player.</p>
-              )}
-            </div>
+            <PriceChart playerId={playerId} color={color} latestTradeId={recentTrades[0]?.id} />
 
             <div className="grid grid-cols-4 gap-2">
               {[

@@ -312,3 +312,51 @@ def get_price_history(db: Session, player_id: uuid.UUID, limit: int = 200) -> li
         .all()
     )
     return list(reversed(rows))  # oldest first, chart-ready
+
+
+_HISTORY_RANGE_DAYS = {"1d": 1, "1w": 7, "1m": 30}
+
+
+def get_price_history_range(db: Session, player_id: uuid.UUID, range_key: str = "all", max_points: int = 600) -> list[dict]:
+    """Price history for a chart: oldest first, one point per trade (price changes ONLY when a trade executes, so the
+    frontend draws it as a step function). For a bounded range the price in force at the range start is carried in as
+    the first point, so the line doesn't start mid-air. A player with no trades yet gets a single point at the IPO
+    price. Long histories are reduced to `max_points` by keeping the LAST price in each equal-width time bucket, which
+    preserves every level the price settled at."""
+    from datetime import datetime, timedelta, timezone
+
+    query = db.query(PriceSnapshot).filter(PriceSnapshot.player_id == player_id)
+    out: list[dict] = []
+    days = _HISTORY_RANGE_DAYS.get(range_key)
+    if days is not None:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        carry = query.filter(PriceSnapshot.recorded_at < since).order_by(PriceSnapshot.recorded_at.desc()).first()
+        rows = query.filter(PriceSnapshot.recorded_at >= since).order_by(PriceSnapshot.recorded_at.asc()).limit(20000).all()
+        if carry is not None:
+            out.append({"price": carry.price, "volume": 0, "recorded_at": since})
+    else:
+        rows = query.order_by(PriceSnapshot.recorded_at.asc()).limit(20000).all()
+
+    out.extend({"price": r.price, "volume": r.volume, "recorded_at": r.recorded_at} for r in rows)
+
+    if not out:
+        player = db.get(Player, player_id)
+        if player is not None:
+            out.append({"price": player.ipo_price, "volume": 0, "recorded_at": player.created_at})
+        return out
+
+    if len(out) > max_points:
+        def ts(p: dict) -> float:
+            t = p["recorded_at"]
+            return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).timestamp()
+
+        t0, t1 = ts(out[0]), ts(out[-1])
+        width = max((t1 - t0) / (max_points - 1), 1e-6)
+        kept: dict[int, dict] = {}
+        for point in out:
+            kept[int((ts(point) - t0) // width)] = point  # later points overwrite: last price per bucket wins
+        kept[0] = out[0] if 0 not in kept else kept[0]
+        out = [kept[k] for k in sorted(kept)]
+
+
+    return out
