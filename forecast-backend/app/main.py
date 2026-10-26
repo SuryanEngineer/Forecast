@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.services import bot_trading_service, maintenance_service, osirion_service
+from app.services import bot_trading_service, maintenance_service, osirion_service, qualifier_service
 
 logger = logging.getLogger("forecast.bots")
 osirion_logger = logging.getLogger("forecast.osirion")
@@ -78,6 +78,16 @@ def _run_one_osirion_sync() -> None:
                 )
 
         results = osirion_service.sync_all_tracked(db)
+        # Earlier rounds (qualifiers) of tracked Finals: small page budget per pass; the bots read these.
+        try:
+            q = qualifier_service.sync_qualifiers(db)
+            if q.pages_fetched or q.errors:
+                osirion_logger.info(
+                    "Qualifier sync: rounds=%d pages=%d stored=%d completed=%d errors=%s",
+                    q.windows_known, q.pages_fetched, q.results_stored, q.windows_completed, q.errors[:3],
+                )
+        except Exception:  # noqa: BLE001
+            osirion_logger.exception("Qualifier sync raised")
         for result in results:
             if result.error:
                 osirion_logger.warning("Osirion sync error for tournament %s: %s", result.tournament_id, result.error)

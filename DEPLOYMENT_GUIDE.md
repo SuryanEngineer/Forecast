@@ -458,3 +458,19 @@ Two specific limits to know about, so nothing surprises you:
 Everything else (custom domain, more compute, backups) is a plan
 upgrade in the Render dashboard whenever you actually need it — nothing
 in the code needs to change to support that later.
+
+## Qualifier rounds (bots read earlier rounds of Cash Cups / Finals)
+
+After deploying, run the migration, then (optionally) backfill once:
+
+```powershell
+cd forecast-backend
+alembic upgrade head
+python3 scripts/sync_qualifiers.py --passes 5       # fetch rounds (rate-limited, resumable)
+python3 scripts/sync_qualifiers.py --status         # see what is stored
+python3 scripts/sync_qualifiers.py --fit            # see what the bots learned (qualifier -> Finals)
+```
+
+The running server also does this in its Osirion sync loop. Settings (all optional): `QUALIFIER_SYNC_ENABLED`,
+`QUALIFIER_PAGES_PER_PASS`, `QUALIFIER_MAX_PAGES_PER_WINDOW`, `QUALIFIER_TOURNAMENT_TYPES`, `QUALIFIER_HISTORY_EVENTS`.
+Only roster players' results are stored (no players are created, no dividends paid).

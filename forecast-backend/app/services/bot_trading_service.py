@@ -52,7 +52,7 @@ from app.models.order import Order, OrderSide, OrderStatus
 from app.models.player import Player, Position, PriceSnapshot
 from app.models.tournament import PlacementResult, Tournament, TournamentEntrant, TournamentStatus
 from app.models.user import User, UserRole
-from app.services import economic_params_service, order_service, wallet_service
+from app.services import economic_params_service, order_service, qualifier_model_service, wallet_service
 from app.services.bot_names import generate_username
 from app.services.exceptions import ServiceError
 
@@ -153,8 +153,13 @@ def _tournament_pool_amounts(db: Session, tournament_ids: list[uuid.UUID]) -> di
     return pools
 
 
-def _career_stats(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.UUID, Decimal], dict[uuid.UUID, float]]:
-    """Returns (expected_value, form) per player.
+def _career_stats(
+    db: Session, player_ids: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, Decimal], dict[uuid.UUID, float], dict[uuid.UUID, float], dict[uuid.UUID, float]]:
+    """Returns (expected_value, form, career_fraction, career_strength) per player.
+
+    career_fraction: recency-weighted average payout-curve fraction (what an event typically pays them).
+    career_strength: recency-weighted average finish strength 0..1 (1 = won) -- used as the team prior for qualifiers.
 
     expected_value: recency-weighted average of what each past placement was worth as a dividend pool (placement run
     through the real payout curve against that tournament's own field size and pool). Missing = no history.
@@ -162,7 +167,7 @@ def _career_stats(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.U
     Results are ordered by TOURNAMENT START TIME (not row-creation time), so a bulk historical backfill still reads
     in true chronological order."""
     if not player_ids:
-        return {}, {}
+        return {}, {}, {}, {}
 
     rows = (
         db.query(PlacementResult.player_id, PlacementResult.tournament_id, PlacementResult.placement)
@@ -173,7 +178,7 @@ def _career_stats(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.U
         .all()
     )
     if not rows:
-        return {}, {}
+        return {}, {}, {}, {}
 
     by_player: dict[uuid.UUID, list[tuple[uuid.UUID, int]]] = defaultdict(list)
     tournament_ids: set[uuid.UUID] = set()
@@ -194,11 +199,14 @@ def _career_stats(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.U
 
     expected_value: dict[uuid.UUID, Decimal] = {}
     form: dict[uuid.UUID, float] = {}
+    career_fraction: dict[uuid.UUID, float] = {}
+    career_strength: dict[uuid.UUID, float] = {}
     for player_id, results in by_player.items():
         recent = results[:HISTORY_MAX_RESULTS_PER_PLAYER]  # most-recent-first
         weighted_sum = Decimal("0")
         weight_total = Decimal("0")
         fractions: list[float] = []
+        strengths: list[tuple[float, float]] = []
         for rank, (tournament_id, placement) in enumerate(recent):
             max_placement = max(1, field_size.get(tournament_id, 1))
             fraction = placement_payout_fraction(placement, max_placement, curve)
@@ -206,13 +214,18 @@ def _career_stats(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.U
             weighted_sum += pools.get(tournament_id, Decimal("0")) * fraction * weight
             weight_total += weight
             fractions.append(float(fraction))
+            strengths.append((float(decay**rank), 1.0 - (placement - 1) / max(1, max_placement - 1)))
         if weight_total > 0:
             expected_value[player_id] = weighted_sum / weight_total
         if len(fractions) >= 2:
             recent_avg = sum(fractions[:3]) / len(fractions[:3])
             career_avg = sum(fractions) / len(fractions)
             form[player_id] = _clamp((recent_avg - career_avg) / max(career_avg, 1e-9), -1.0, 1.0)
-    return expected_value, form
+        if fractions:
+            career_fraction[player_id] = sum(fractions) / len(fractions)
+        if strengths:
+            career_strength[player_id] = _clamp(sum(w * v for w, v in strengths) / sum(w for w, _ in strengths), 0.0, 1.0)
+    return expected_value, form, career_fraction, career_strength
 
 
 def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, Decimal]:
@@ -299,7 +312,27 @@ class MarketSnapshot:
     popularity: dict[uuid.UUID, float] = field(default_factory=dict)   # attention weight (>0)
     shares_outstanding: dict[uuid.UUID, int] = field(default_factory=dict)
     signals: dict[uuid.UUID, dict[str, float]] = field(default_factory=dict)
+    qual_view: dict[uuid.UUID, object] = field(default_factory=dict)  # QualifierView per player with earlier-round data
+    # The qualifier part of the outlook (log scale) already inside model_value, kept separate so each bot can weigh it differently.
+    qual_out: dict[uuid.UUID, float] = field(default_factory=dict)
+    qual_uncertainty: dict[uuid.UUID, float] = field(default_factory=dict)
+    movers: list = field(default_factory=list)  # players the whole market is looking at right now (big moves / news)
     best_recent_placement: dict[uuid.UUID, int] = field(default_factory=dict)
+
+
+def _find_movers(pct_change, signals, qviews) -> list:
+    """Players every watcher notices at once: the biggest recent price moves, plus anyone whose qualifier standing
+    just made them a clear winner or loser. Ordered by how loud the news is."""
+    scored: list[tuple[float, uuid.UUID]] = []
+    for pid, sig in signals.items():
+        loud = abs(float(pct_change.get(pid, 0)))
+        qv = qviews.get(pid)
+        if qv is not None and qv.status in ("qualified", "eliminated"):
+            loud += 0.03 + 0.04 * abs(qv.perf_ratio - 1.0)
+        if loud >= 0.03:
+            scored.append((loud, pid))
+    scored.sort(reverse=True)
+    return [pid for _, pid in scored[:25]]
 
 
 def _build_snapshot(db: Session) -> MarketSnapshot:
@@ -332,7 +365,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         else:
             pct_change[pid] = Decimal("0")
 
-    expected_value, form = _career_stats(db, player_ids)
+    expected_value, form, career_fraction, career_strength = _career_stats(db, player_ids)
     ev_values = sorted(expected_value.values())
     roster_median_ev = ev_values[len(ev_values) // 2] if ev_values else None
     fair_value = {p.id: _compute_fair_value(p.ipo_price, expected_value.get(p.id), roster_median_ev) for p in players}
@@ -356,7 +389,16 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     median_yield = positives[len(positives) // 2] if positives else None
 
     events = _event_signals(db, player_ids)
+    qviews = qualifier_model_service.build_views(db, player_ids, career_fraction, career_strength)
+    # A qualifier-derived event time overrides the calendar signal when the player has no entrant row yet
+    for pid, qv in qviews.items():
+        if pid in events or qv.event_start is None or qv.status == "eliminated":
+            continue
+        days = (qv.event_start - datetime.now(timezone.utc)).total_seconds() / 86400.0
+        if days > 0:
+            events[pid] = (1.0 if days <= 1 else 0.8 if days <= 3 else 0.5 if days <= 7 else 0.25) * max(0.3, qv.p_qualify)
 
+    qual_out: dict[uuid.UUID, float] = {}
     signals: dict[uuid.UUID, dict[str, float]] = {}
     model_value: dict[uuid.UUID, Decimal] = {}
     for p in players:
@@ -378,10 +420,18 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             "mom": _clamp(float(pct_change.get(p.id, 0)) * 5.0, -1.0, 1.0),
             "form": fm,
             "event": ev_sig,
+            "qual": (qviews[p.id].perf_ratio - 1.0) if p.id in qviews else 0.0,
         }
         # Outlook: form, plus the dividend calendar -- the expected per-share dividend is a price bump before a start
         # and drops out right after it (ex-dividend).
         out = 0.08 * fm
+        qv = qviews.get(p.id)
+        if qv is not None:
+            # Earlier rounds: expected payout from the coming Finals vs what this player usually earns.
+            # Strong qualifier -> bump; missed the cut / weak -> markdown. Scaled by how sure the estimate is.
+            q_out = _clamp(0.12 * (qv.perf_ratio - 1.0) * (1.0 - 0.5 * qv.uncertainty), -0.18, 0.12)
+            qual_out[p.id] = q_out
+            out += q_out
         yy = max(0.0, yield_raw.get(p.id, 0.0))
         if ev_sig > 0:
             out += min(0.15, yy * ev_sig)
@@ -412,6 +462,10 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         popularity=popularity,
         shares_outstanding={p.id: p.total_shares_outstanding for p in players},
         signals=signals,
+        qual_view=qviews,
+        qual_out=qual_out,
+        qual_uncertainty={pid: qv.uncertainty for pid, qv in qviews.items()},
+        movers=_find_movers(pct_change, signals, qviews),
     )
 
 
@@ -532,6 +586,10 @@ def _personality(user_id: uuid.UUID, strategy: str) -> dict:
         "tilt_mom": s["tilt_mom"],
         "tilt_event": s["tilt_event"],
         "target_cash": _clamp(s["cash"] + r.uniform(-0.08, 0.08), 0.02, 0.6),
+        # How much weight this bot gives the qualifier evidence (some ignore it, some over-read it), and how much it
+        # misreads uncertain situations -- this is what makes bots disagree about the same player.
+        "info_qual": _clamp(r.gauss(1.0, 0.45), 0.1, 2.0),
+        "info_noise": r.uniform(0.4, 1.6),
         "attention": r.randint(8, 16),
         "max_open": r.randint(5, 12),
         "max_takes": r.randint(1, 2),
@@ -557,7 +615,15 @@ def _bot_value(snapshot: MarketSnapshot, pid: uuid.UUID, pers: dict, user_id: uu
     epoch = int(pos)
     frac = pos - epoch
     z = (1.0 - frac) * _belief_z(user_id, pid, epoch) + frac * _belief_z(user_id, pid, epoch + 1)
-    belief = math.exp(pers["sigma"] * z)
+    # Uncertain players (few rounds played, event far off) get more disagreement between bots.
+    unc = snapshot.qual_uncertainty.get(pid, 0.0)
+    belief = math.exp(pers["sigma"] * (1.0 + 0.8 * unc) * z)
+    # Qualifier evidence: each bot weighs it differently and reads it with its own (slowly changing) noise.
+    q_out = snapshot.qual_out.get(pid)
+    if q_out:
+        zq = (1.0 - frac) * _belief_z(user_id, pid, epoch + 7919) + frac * _belief_z(user_id, pid, epoch + 7920)
+        weight = pers["info_qual"] * (1.0 + 0.35 * pers["info_noise"] * unc * zq)
+        base *= math.exp(q_out * (weight - 1.0))
     sig = snapshot.signals.get(pid, {})
     tilt = 1.0 + pers["tilt_mom"] * sig.get("mom", 0.0) + pers["tilt_event"] * max(0.0, sig.get("event", 0.0))
     return max(0.01, base * belief * tilt)
@@ -650,9 +716,13 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
         return acted
     watch = _weighted_sample(rng, pool, [snapshot.popularity.get(p, 1.0) for p in pool], pers["attention"])
     held_ids = list(holdings.keys())
-    for pid in rng.sample(held_ids, min(3, len(held_ids))):
+    # Constant watching: every tick the bot reviews ALL of its holdings and whatever the market is reacting to.
+    for pid in held_ids:
         if pid not in watch:
             watch.append(pid)
+    alerts = [pid for pid in snapshot.movers if pid not in watch]
+    for pid in rng.sample(alerts, min(len(alerts), 2 + pers["attention"] // 6)):
+        watch.append(pid)
 
     opps = []
     for pid in watch:

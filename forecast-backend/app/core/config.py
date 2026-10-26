@@ -171,6 +171,15 @@ class Settings(BaseSettings):
     # scripts/link_lan_accounts.py (or prepare the event beforehand with scripts/merge_from_linker.py).
     LAN_HOLD_UNLINKED_ACCOUNTS: bool = True
 
+    # --- Qualifier / earlier-round results (app/services/qualifier_service.py) ---
+    # The bots weigh how players did in the rounds BEFORE a cash-paying Finals. Only players already on the roster are
+    # stored (never creates Players). Walking is rate-budgeted so it can't starve the Finals sync.
+    QUALIFIER_SYNC_ENABLED: bool = True
+    QUALIFIER_PAGES_PER_PASS: int = 8          # leaderboard pages fetched per 45s sync pass (shares Osirion's rate limit)
+    QUALIFIER_MAX_PAGES_PER_WINDOW: int = 250  # stop reading a round's leaderboard after this many pages
+    QUALIFIER_TOURNAMENT_TYPES: str = "cash_cup,fncs_finals"  # comma list of tournament types whose rounds are read
+    QUALIFIER_HISTORY_EVENTS: int = 15         # also read rounds for this many most-recent finalized events (model training)
+
     # --- Bot trading loop (app/services/bot_trading_service.py) ---
     # This is operational config (is the loop running at all, how often),
     # not economic policy -- the actual trading behavior (sizing,
