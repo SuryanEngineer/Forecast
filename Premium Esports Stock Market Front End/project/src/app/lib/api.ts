@@ -44,6 +44,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await res.json().catch(() => null) : null;
 
+  if (res.status === 401 && token && !path.startsWith('/auth/login')) {
+    // Token expired or revoked (e.g. password changed on another device): drop it and tell the app to sign out.
+    setToken(null);
+    window.dispatchEvent(new Event('forecast:unauthorized'));
+  }
+
   if (!res.ok) {
     const message = (body && (body.detail || body.message)) || res.statusText || 'Request failed';
     throw new ApiError(res.status, typeof message === 'string' ? message : JSON.stringify(message));

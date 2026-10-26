@@ -230,38 +230,17 @@ anything Osirion doesn't have — every approach coexists fine.
 
 ## What's NOT fully wired yet, on purpose
 
-**Password reset emails aren't actually sent yet.** Right now,
-`EMAIL_PROVIDER=console` means the reset link only gets written to your
-server logs, not emailed to the user. Until you turn on real email
-(next section), the only way for someone to actually recover their
-password is you reading the link out of the logs and sending it to them
-yourself. This was a deliberate "don't worry about it for now" choice —
-here's how to close that gap whenever you're ready:
-
-### Turning on real password-reset emails (Resend, ~10 minutes)
-
-1. Go to resend.com, sign up (free tier: 3,000 emails/month).
-2. Create an API key (**API Keys** in their dashboard).
-3. In Render, open **forecast-backend → Environment**, and add:
-   - `EMAIL_PROVIDER` = `resend`
-   - `RESEND_API_KEY` = the key you just created
-4. Save — this redeploys the backend automatically. That's the entire
-   change; the code already knows how to use it
-   (`app/services/email_service.py`).
-5. Optional: by default, emails come from `onboarding@resend.dev`, which
-   works immediately but looks generic. If you own a domain, Resend can
-   walk you through verifying it so emails come from
-   `noreply@yourdomain.com` instead — not required to make this work,
-   just more polished.
-
-(Note: this uses Resend's HTTPS API, not raw SMTP, deliberately —
-Render's free web services block the standard SMTP ports, so an
-SMTP-based email provider would silently fail there.)
+**Account emails (verification + forgot-password codes) aren't actually sent until you configure a provider.**
+With `EMAIL_PROVIDER=console` the 6-digit code is only written to the server logs. Follow **EMAIL_SETUP.md**
+(repo root) to send real emails from a no-reply address on your own domain through Resend, with SPF/DKIM/DMARC and a
+real support inbox. Test with `python3 scripts/send_test_email.py you@gmail.com`.
 
 ---
 
 ## Everything that runs automatically once deployed
 
+- **Maintenance loop (every minute)** — pays any dividend payout still pending (no Redis/worker needed), accrues
+  treasury interest, snapshots everyone's net worth (for best/worst-day stats), and rolls ranked seasons over
 - **Bot trading** — background liquidity, ticking every 20 seconds
 - **Osirion tournament auto-tracking** — classifies and starts tracking
   new Cash Cup / FNCS / Global tournaments every 45 seconds, per

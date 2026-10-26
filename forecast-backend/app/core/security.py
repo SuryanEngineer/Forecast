@@ -25,11 +25,18 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 
 def create_access_token(user_id: uuid.UUID) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "exp": expire}
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": str(user_id), "exp": expire, "iat": int(now.timestamp())}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> uuid.UUID:
     payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     return uuid.UUID(payload["sub"])
+
+
+def decode_access_token_full(token: str) -> tuple[uuid.UUID, int]:
+    """(user_id, issued-at epoch seconds) -- iat is 0 for tokens minted before iat was added."""
+    payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    return uuid.UUID(payload["sub"]), int(payload.get("iat", 0))

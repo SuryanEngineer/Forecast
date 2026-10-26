@@ -161,7 +161,12 @@ def compute_dividend_distribution(
         raw_amounts.append((user_id, floor_amount, remainder))
         running_total += floor_amount
 
-    leftover_cents = int(((distributable - running_total) / CENT).to_integral_value())
+    # Only the pennies belonging to the shares actually held get handed out. If holders at record date
+    # hold fewer shares than `shares_outstanding` (e.g. supply changed after the snapshot), the rest of the
+    # pool stays undistributed instead of being over-paid to the holders we do have.
+    total_qty = sum((qty for _, qty in holders), Decimal("0"))
+    allocatable = min(distributable, (distributable * total_qty / shares_outstanding).quantize(CENT, rounding=ROUND_DOWN))
+    leftover_cents = int(((allocatable - running_total) / CENT).to_integral_value())
 
     raw_amounts.sort(key=lambda row: (-row[2], row[0]))
     payouts: dict[str, Decimal] = {uid: amt for uid, amt, _ in raw_amounts}

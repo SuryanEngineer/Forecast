@@ -188,20 +188,30 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   rankings: {
     emoji: '📊',
     title: 'How Rankings Work',
-    intro: 'Investors are ranked by total portfolio value. There is no separate skill score; your rank reflects how much your account is worth right now.',
+    intro: 'There are two leaderboards: a Seasonal ladder that resets every Fortnite season, and an All-Time board that never resets.',
     sections: [
       {
-        heading: 'What counts toward your rank',
+        heading: 'Seasonal Points & ranks',
         body: (
-          <p><strong>Portfolio value = cash balance + the current market value of every share you hold</strong>, with each
-          share valued at its player’s most recent trade price. Rankings update continuously as prices move and trades
-          execute.</p>
+          <>
+            <p>Every season you start at <strong>0 Seasonal Points (SP)</strong>. Your SP tracks how much your portfolio has grown
+            relative to what it was worth when the season began: <strong>+1% return = +50 SP</strong>. If your portfolio loses money
+            your SP — and your rank — drops back down (SP never goes below 0).</p>
+            <p>Ranks: Bronze I–III, Gold I–III, Diamond I–III, then Unreal. When the season ends your final rank is saved to your
+            profile and everyone starts the next season fresh.</p>
+          </>
+        ),
+      },
+      {
+        heading: 'All-Time board',
+        body: (
+          <p><strong>Net worth = cash + the current market value of every share you hold</strong> (each valued at its player’s
+          latest trade price) plus any treasury holdings. It never resets.</p>
         ),
       },
       {
         heading: 'View any investor’s team',
-        body: <p>Select any row on the leaderboard to see that investor’s rank, cash balance, holdings value, and total
-        portfolio value.</p>,
+        body: <p>Select any row on the leaderboard to see that investor’s holdings and portfolio value.</p>,
       },
     ],
   },

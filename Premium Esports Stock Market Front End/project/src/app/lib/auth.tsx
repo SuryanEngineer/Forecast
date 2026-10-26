@@ -17,11 +17,13 @@ interface AuthContextValue {
   // and logout() so it never lingers past the registration it belongs to.
   justRegistered: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
+  register: (email: string, password: string, displayName: string, acceptTerms: boolean) => Promise<void>;
   logout: () => void;
   refreshWallet: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<string>;
-  confirmPasswordReset: (token: string, newPassword: string) => Promise<string>;
+  confirmPasswordReset: (email: string, code: string, newPassword: string) => Promise<string>;
+  // Re-fetch /auth/me (after a profile/email change). Optionally adopt a fresh token (after a password change).
+  refreshUser: (newToken?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -62,6 +64,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setUser(null);
+      setWallet(null);
+    };
+    window.addEventListener('forecast:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('forecast:unauthorized', onUnauthorized);
+  }, []);
+
   async function login(email: string, password: string) {
     setError(null);
     try {
@@ -75,13 +86,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function register(email: string, password: string, displayName: string) {
+  async function register(email: string, password: string, displayName: string, acceptTerms: boolean) {
     setError(null);
     try {
       const res = await api.post<{ access_token: string; user_id: string }>('/auth/register', {
         email,
         password,
         display_name: displayName,
+        accept_terms: acceptTerms,
       });
       persistToken(res.access_token);
       setJustRegistered(true);
@@ -117,20 +129,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function confirmPasswordReset(token: string, newPassword: string): Promise<string> {
+  async function confirmPasswordReset(email: string, code: string, newPassword: string): Promise<string> {
     setError(null);
     try {
       const res = await api.post<{ message: string }>('/auth/password-reset/confirm', {
-        token,
+        email,
+        code,
         new_password: newPassword,
       });
       return res.message;
     } catch (e) {
-      const message = e instanceof ApiError ? e.message : 'That reset link is invalid or has expired.';
+      const message = e instanceof ApiError ? e.message : 'That code is invalid or has expired.';
       setError(message);
       throw e;
     }
   }
+
+  async function refreshUser(newToken?: string) {
+    if (newToken) persistToken(newToken);
+    try {
+      setUser(await api.get<AuthUser>('/auth/me'));
+    } catch {
+      // ignore -- a 401 here is handled by the next real request
+    }
+  }
+
+  // Activity heartbeat (powers session / time-on-site analytics). Ticks once a minute, only while the tab is
+  // visible; also fires immediately when the user returns to the tab. Any 401 simply means the token is gone.
+  useEffect(() => {
+    if (!user) return;
+    let last = 0;
+    const beat = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - last < 45_000) return;
+      last = now;
+      api.post('/auth/heartbeat').catch(() => {});
+    };
+    beat();
+    const id = setInterval(beat, 60_000);
+    document.addEventListener('visibilitychange', beat);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', beat);
+    };
+  }, [user?.id]);
 
   return (
     <AuthContext.Provider
@@ -147,6 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshWallet,
         requestPasswordReset,
         confirmPasswordReset,
+        refreshUser,
       }}
     >
       {children}

@@ -389,3 +389,20 @@ class TestAuctionCalculator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDividendRoundingGuards(unittest.TestCase):
+    def test_payouts_plus_fee_equal_pool(self):
+        per, pays, fee = compute_dividend_distribution(
+            Decimal("1000.01"), Decimal("1000"), [("a", Decimal("333")), ("b", Decimal("667"))], Decimal("0.05")
+        )
+        self.assertEqual(sum(a for _, a in pays) + fee, Decimal("1000.01"))
+
+    def test_holders_with_fewer_shares_than_outstanding_are_not_overpaid(self):
+        # Only 10 of 1000 shares are held at record date: they must receive exactly 10 x per-share.
+        per, pays, fee = compute_dividend_distribution(Decimal("1000.00"), Decimal("1000"), [("a", Decimal("10"))], Decimal("0"))
+        self.assertEqual(pays[0][1], Decimal("10.00"))
+
+    def test_no_holders_pays_nothing(self):
+        per, pays, fee = compute_dividend_distribution(Decimal("1000.00"), Decimal("1000"), [], Decimal("0"))
+        self.assertEqual(pays, [])

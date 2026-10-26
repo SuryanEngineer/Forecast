@@ -1,92 +1,61 @@
 """
-Forgot-password flow: request a reset link, then confirm it with a new
-password. Two deliberate security choices, both standard practice:
+Forgot-password flow with emailed 6-digit codes (see auth_code_service for the code security properties).
 
-1. `request_reset` always appears to succeed, whether or not the email
-   belongs to a real account -- otherwise the endpoint becomes a free
-   "does this email have an account" oracle for an attacker.
-2. Only a SHA-256 hash of the token is ever stored (see
-   app/models/password_reset.py) -- the raw token exists only in the
-   emailed link and the confirm request, never at rest.
+`request_reset` always appears to succeed whether or not the email has an account (no account-discovery oracle).
+`confirm_reset` checks the code, sets the new password, clears any login lockout, marks the email verified (the
+owner just proved they control it) and invalidates every previously issued login token.
 
-Tokens are single-use (`used_at`) and short-lived
-(settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES, default 30 min). Requesting
-a new reset doesn't invalidate older outstanding tokens for the same user
-explicitly, but since each is single-use and short-lived that's a minor
-gap, not a real exposure.
+(The older link/token flow -- PasswordResetToken -- is retired; its table is kept so old rows don't need a migration.)
 """
 from __future__ import annotations
 
-import hashlib
-import secrets
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.security import hash_password
-from app.models.password_reset import PasswordResetToken
 from app.models.user import User
-from app.services import email_service
+from app.services import account_service, auth_code_service, email_service
 
-
-def _hash_token(raw_token: str) -> str:
-    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+PURPOSE = "password_reset"
 
 
 def request_reset(db: Session, email: str) -> None:
-    user = db.query(User).filter(User.email == email).one_or_none()
+    user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
     if user is None or not user.is_active:
-        # Deliberately silent -- see module docstring. No token is
-        # created, no email attempted, but the caller (see
-        # app/api/v1/auth.py) responds identically either way.
         return
-
-    raw_token = secrets.token_urlsafe(32)
-    reset_row = PasswordResetToken(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        token_hash=_hash_token(raw_token),
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
-    )
-    db.add(reset_row)
+    try:
+        code = auth_code_service.issue_code(db, user.id, PURPOSE)
+    except auth_code_service.CodeRateLimited:
+        return  # silently: same response either way
     db.commit()
-
-    reset_link = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/?reset_token={raw_token}"
-    email_service.send_password_reset_email(user.email, reset_link)
+    email_service.send_password_reset_code(user.email, code)
 
 
-def confirm_reset(db: Session, raw_token: str, new_password: str) -> bool:
-    """Returns True if the password was actually changed. False means the
-    token was invalid, expired, or already used -- the caller (see
-    app/api/v1/auth.py) turns that into a 400 with a generic message
-    (never confirms *why* it failed, to avoid leaking which case it was)."""
-    token_hash = _hash_token(raw_token)
-    reset_row = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).one_or_none()
-
-    if reset_row is None:
-        return False
-    if reset_row.used_at is not None:
-        return False
-    expires_at = reset_row.expires_at
-    if expires_at.tzinfo is None:
-        # SQLite (demo mode -- see app/db/types.py's module docstring for
-        # the equivalent GUID/JSONType story) silently drops tzinfo on a
-        # DateTime(timezone=True) column: values always go in as UTC-aware
-        # (see request_reset above), so a naive value read back here is
-        # always UTC, never local time. Without this, comparing it to an
-        # aware `datetime.now(timezone.utc)` below raises TypeError. No-op
-        # on Postgres, where expires_at is already tz-aware.
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
-        return False
-
-    user = db.get(User, reset_row.user_id)
+def confirm_reset(db: Session, email: str, code: str, new_password: str) -> bool:
+    """True if the password was changed; False for a wrong/expired/used code (caller shows a generic message).
+    Raises AccountError only for a weak new password (checked after the code so it can't be probed)."""
+    user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
     if user is None or not user.is_active:
         return False
-
+    row = auth_code_service.verify_code(db, user.id, PURPOSE, code)
+    if row is None:
+        db.commit()  # persist the failed-attempt counter
+        return False
+    try:
+        account_service.validate_password(new_password, user.email)
+    except account_service.AccountError:
+        db.rollback()  # un-consume the code so the user can retry with a better password
+        raise
+    now = datetime.now(timezone.utc)
     user.password_hash = hash_password(new_password)
-    reset_row.used_at = datetime.now(timezone.utc)
+    user.password_changed_at = now
+    user.failed_login_count = 0
+    user.locked_until = None
+    if user.email_verified_at is None:
+        user.email_verified_at = now
     db.commit()
+    email_service.send_security_notice(user.email, "Your password was changed",
+                                       "The password on your Forecast account was just changed. All other devices were signed out.")
     return True

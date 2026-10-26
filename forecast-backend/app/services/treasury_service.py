@@ -4,7 +4,7 @@ Treasury instrument: purchase, redeem, and daily accrual.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -125,5 +125,29 @@ def accrue_all_active_holdings(db: Session, days_elapsed: Decimal = Decimal("1")
         holding.last_accrued_at = datetime.now(timezone.utc)
         db.add(TreasuryAccrualLog(id=uuid.uuid4(), holding_id=holding.id, amount=interest))
         count += 1
+    db.flush()
+    return count
+
+
+def accrue_due_holdings(db: Session) -> int:
+    """Catch-up accrual that needs no cron: every ACTIVE holding that hasn't accrued for >= 1 full day gets the
+    elapsed whole days of interest (once per day in practice; safe to call as often as you like). Returns count."""
+    now = datetime.now(timezone.utc)
+    count = 0
+    for holding in db.query(TreasuryHolding).filter(TreasuryHolding.status == TreasuryHoldingStatus.ACTIVE).all():
+        last = holding.last_accrued_at or holding.purchased_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        days = int((now - last).total_seconds() // 86400)
+        if days < 1:
+            continue
+        instrument = db.get(TreasuryInstrument, holding.treasury_instrument_id)
+        interest = accrue_interest(holding.principal_amount, instrument.annual_rate, Decimal(days))
+        # advance by whole days only so the fractional remainder carries into the next pass
+        holding.last_accrued_at = last + timedelta(days=days)
+        if interest > 0:
+            holding.accrued_interest += interest
+            db.add(TreasuryAccrualLog(id=uuid.uuid4(), holding_id=holding.id, amount=interest))
+            count += 1
     db.flush()
     return count

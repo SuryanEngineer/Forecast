@@ -79,7 +79,17 @@ services:
       # "resend" and add RESEND_API_KEY -- see the deployment guide's
       # "Turning on real password-reset emails" section. ---
       - key: EMAIL_PROVIDER
-        value: "console"
+        value: "console"   # change to "resend" once RESEND_API_KEY + your domain are set -- see EMAIL_SETUP.md
+      - key: RESEND_API_KEY
+        sync: false
+      # Sender shown in inboxes, e.g.  Forecast <no-reply@yourdomain.com>
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      # A real inbox people can write to (shown in email footers, set as Reply-To), e.g. support@yourdomain.com
+      - key: EMAIL_REPLY_TO
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
       # --- Set this to your frontend's real URL once you know it (see
       # the deployment guide) -- used to build the link inside reset
       # emails, e.g. https://forecast-frontend.onrender.com ---

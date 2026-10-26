@@ -15,10 +15,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import admin, auctions, auth, dividends, leaderboard, markets, orders, players, tournaments, treasury, wallet, ws
+from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.services import bot_trading_service, osirion_service
+from app.services import bot_trading_service, maintenance_service, osirion_service
 
 logger = logging.getLogger("forecast.bots")
 osirion_logger = logging.getLogger("forecast.osirion")
@@ -103,6 +103,31 @@ async def _osirion_sync_loop() -> None:
         await asyncio.sleep(settings.OSIRION_SYNC_INTERVAL_SECONDS)
 
 
+maintenance_logger = logging.getLogger("forecast.maintenance")
+
+
+def _run_one_maintenance_pass() -> None:
+    db = SessionLocal()
+    try:
+        result = maintenance_service.run_maintenance_pass(db)
+        if result.get("payouts_processed") or result.get("season_actions") or result.get("treasury_accrued"):
+            maintenance_logger.info("Maintenance: %s", result)
+    finally:
+        db.close()
+
+
+async def _maintenance_loop() -> None:
+    """Pays pending dividends, accrues treasury interest, snapshots portfolios, rolls seasons (see
+    app/services/maintenance_service.py). Works with no Redis / worker process."""
+    await asyncio.sleep(8)
+    while True:
+        try:
+            await asyncio.to_thread(_run_one_maintenance_pass)
+        except Exception:
+            maintenance_logger.exception("Maintenance pass failed -- will retry next interval.")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
@@ -133,6 +158,8 @@ async def lifespan(app: FastAPI):
 
     if settings.BOT_TRADING_ENABLED:
         tasks.append(asyncio.create_task(_bot_tick_loop()))
+
+    tasks.append(asyncio.create_task(_maintenance_loop()))
 
     if settings.OSIRION_SYNC_ENABLED:
         tasks.append(asyncio.create_task(_osirion_sync_loop()))
@@ -170,6 +197,8 @@ app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(auctions.router, prefix=API_PREFIX)
 app.include_router(markets.router, prefix=API_PREFIX)
 app.include_router(leaderboard.router, prefix=API_PREFIX)
+app.include_router(account.router, prefix=API_PREFIX)
+app.include_router(stats.router, prefix=API_PREFIX)
 app.include_router(ws.router, prefix=API_PREFIX)
 
 

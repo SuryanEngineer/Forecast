@@ -8,6 +8,8 @@ class LeaderboardEntryResponse(BaseModel):
     rank: int
     user_id: uuid.UUID
     display_name: str
+    tag: str | None = None
+    tag_color: str | None = None
     cash_balance: Decimal
     holdings_value: Decimal
     portfolio_value: Decimal

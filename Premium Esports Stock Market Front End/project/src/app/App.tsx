@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuthScreen } from './components/AuthScreen';
-import { ResetPasswordScreen } from './components/ResetPasswordScreen';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { Markets } from './components/Markets';
@@ -12,9 +11,13 @@ import { PlayerModal } from './components/PlayerModal';
 import { TeamModal } from './components/TeamModal';
 import { TournamentDetailModal } from './components/TournamentDetailModal';
 import { IntroTour, introSeenKey } from './components/IntroTour';
+import { StatsPage } from './components/StatsPage';
+import { SettingsPage } from './components/SettingsPage';
+import { LegalModal, type LegalDoc } from './components/LegalModal';
+import { VerifyEmailBanner } from './components/VerifyEmailBanner';
 import type { TournamentResponse } from './lib/types';
 
-type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments';
+type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
 
 function AuthenticatedApp() {
   const { user, justRegistered } = useAuth();
@@ -25,6 +28,7 @@ function AuthenticatedApp() {
   // Set when a tournament is opened from a player's profile: the standings open on that player's team.
   const [tournamentFocusPlayerId, setTournamentFocusPlayerId] = useState<string | null>(null);
   const [marketSearch, setMarketSearch] = useState('');
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
 
   // Keyed per-account (introSeenKey(user.id)), not one global flag -- see
   // IntroTour.tsx. `justRegistered` (see lib/auth.tsx) is what actually
@@ -55,9 +59,12 @@ function AuthenticatedApp() {
       className="dark h-screen overflow-hidden flex font-sans"
       style={{ background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
     >
-      <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => openIntroAt(0)} />
+      <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => openIntroAt(0)} onShowLegal={setLegalDoc} />
 
       <main className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
+        {user && user.email_verified === false && currentPage !== 'settings' && (
+          <VerifyEmailBanner onOpenSettings={() => setCurrentPage('settings')} />
+        )}
         {currentPage === 'dashboard' && (
           <Dashboard navigate={navigate} openPlayer={setPlayerModalId} goToMarketWithSearch={term => { setMarketSearch(term); setCurrentPage('markets'); }} />
         )}
@@ -68,6 +75,8 @@ function AuthenticatedApp() {
           <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />
         )}
         {currentPage === 'leaderboards' && <Leaderboards openPlayer={setPlayerModalId} openTeam={setTeamModalUserId} />}
+        {currentPage === 'stats' && <StatsPage />}
+        {currentPage === 'settings' && <SettingsPage />}
         {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); }} />}
       </main>
 
@@ -91,6 +100,7 @@ function AuthenticatedApp() {
           onOpenPlayer={id => { setSelectedTournament(null); setTournamentFocusPlayerId(null); setPlayerModalId(id); }}
         />
       )}
+      {legalDoc && <LegalModal doc={legalDoc} onClose={() => setLegalDoc(null)} />}
       {showIntro && (
         <IntroTour
           initialStep={introStep}
@@ -104,18 +114,6 @@ function AuthenticatedApp() {
 
 function Root() {
   const { isAuthenticated, isLoading } = useAuth();
-
-  // A password-reset email link lands here as "<site>/?reset_token=...".
-  // This app has no client-side router (see the rest of this file --
-  // pages are just state, not real URLs), so this one query param is
-  // checked directly instead. Takes priority over auth state: someone
-  // clicking a reset link from a second device/browser shouldn't need to
-  // already be logged in, and even if they are, resetting the password
-  // should still work the same way.
-  const resetToken = new URLSearchParams(window.location.search).get('reset_token');
-  if (resetToken) {
-    return <ResetPasswordScreen token={resetToken} />;
-  }
 
   if (isLoading) {
     return (

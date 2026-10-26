@@ -9,6 +9,9 @@ import type {
   MarketSummaryResponse,
   PaginatedMarketSnapshotResponse,
   PositionResponse,
+  SeasonInfo,
+  SeasonalLeaderboard,
+  UserStats,
   TournamentResponse,
 } from './types';
 
@@ -164,6 +167,24 @@ export function useTournamentCalendar(includeCompleted = false) {
 
 export function useLeaderboard() {
   return usePolledFetch<LeaderboardEntry[]>('/leaderboard', [], 30_000);
+}
+
+const EMPTY_SEASONAL: SeasonalLeaderboard = { season: null, entries: [], me: null };
+
+// Seasonal Points leaderboard for the active season (resets every season) -- GET /leaderboard/seasonal.
+export function useSeasonalLeaderboard() {
+  return usePolledFetch<SeasonalLeaderboard>('/leaderboard/seasonal?limit=100', EMPTY_SEASONAL, 30_000);
+}
+
+const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_percent: 50 };
+
+export function useSeasonInfo() {
+  return usePolledFetch<SeasonInfo>('/seasons/current', EMPTY_SEASON_INFO, 60_000);
+}
+
+// Lifetime stats for the logged-in user -- GET /stats/me.
+export function useMyStats() {
+  return usePolledFetch<UserStats | null>('/stats/me', null, 60_000);
 }
 
 // Polls the live standings for one tournament every 8s -- see

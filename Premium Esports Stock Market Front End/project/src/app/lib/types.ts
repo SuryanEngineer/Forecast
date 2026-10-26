@@ -17,6 +17,75 @@ export interface AuthUser {
   email: string;
   display_name: string;
   role: string;
+  tag?: string | null;
+  tag_color?: string | null;
+  email_verified?: boolean;
+  created_at?: string | null;
+}
+
+export interface Profile {
+  id: string;
+  email: string;
+  display_name: string;
+  tag: string | null;
+  tag_color: string | null;
+  tag_colors: string[];
+  email_verified: boolean;
+  created_at: string | null;
+  name_change_available_at: string | null;
+  name_change_cooldown_days: number;
+  last_login_at: string | null;
+}
+
+export interface SessionRow {
+  started_at: string;
+  last_seen_at: string;
+  active_minutes: number;
+  source: string;
+  user_agent: string | null;
+  ip_address: string | null;
+}
+
+export interface SeasonEntryRow {
+  position: number;
+  user_id: string;
+  display_name: string;
+  tag: string | null;
+  tag_color: string | null;
+  start_value: Money;
+  current_value: Money;
+  return_pct: number;
+  season_points: number;
+  rank_tier: string;
+}
+
+export interface SeasonalLeaderboard {
+  season: { id: string; name: string; starts_at: string; ends_at: string; finalized?: boolean } | null;
+  entries: SeasonEntryRow[];
+  me: SeasonEntryRow | null;
+  total?: number;
+}
+
+export interface SeasonInfo {
+  season: { id: string; name: string; starts_at: string; ends_at: string } | null;
+  ranks: { name: string; min_points: number }[];
+  points_per_percent: number;
+}
+
+export interface UserStats {
+  net_worth: number; cash: number; holdings_value: number; treasury_value: number;
+  contributed_capital: number; total_change: number; total_change_pct: number;
+  dividend_earnings: number; dividend_payouts: number; interest_earnings: number; fees_paid: number; trading_earnings: number;
+  total_trades: number; buy_trades: number; sell_trades: number; trade_volume: number;
+  biggest_trade: { player_id: string; gamertag: string; side: string; quantity: number; price: number; value: number; executed_at: string } | null;
+  best_day: { day: string; change: number; change_pct: number } | null;
+  worst_day: { day: string; change: number; change_pct: number } | null;
+  best_holding: { player_id: string; gamertag: string; unrealized: number; pct: number } | null;
+  worst_holding: { player_id: string; gamertag: string; unrealized: number; pct: number } | null;
+  member_since: string | null; sessions: number; minutes_on_site: number;
+  season: (SeasonEntryRow & { rank: string; next_rank: string | null; points_to_next: number; progress: number; season_name: string; ends_at: string }) | null;
+  season_history: { season_id: string; name: string; final_points: number | null; final_rank: string | null; final_position: number | null; start_value: Money; final_value: Money | null }[];
+  history: { day: string; net_worth: number }[];
 }
 
 export interface WalletResponse {
@@ -319,6 +388,8 @@ export interface LeaderboardEntry {
   rank: number;
   user_id: string;
   display_name: string;
+  tag?: string | null;
+  tag_color?: string | null;
   cash_balance: Money;
   holdings_value: Money;
   portfolio_value: Money;

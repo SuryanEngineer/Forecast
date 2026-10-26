@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # real REDIS_URL) only once you're running multiple instances of this
     # app and actually need Redis to fan work out across them, at which
     # point you'd also run a separate `rq worker` process/service.
-    REDIS_ENABLED: bool = True
+    REDIS_ENABLED: bool = False  # default off: no worker process is needed (see note above)
 
     # --- Demo mode ---
     # When true: DATABASE_URL is expected to be a local SQLite file,
@@ -76,14 +76,31 @@ class Settings(BaseSettings):
     # you pick a provider. Switch EMAIL_PROVIDER to "resend" (recommended
     # -- resend.com, free tier, sign up and get an API key) once you're
     # ready; everything else in this app is already wired for it.
-    EMAIL_PROVIDER: str = "console"  # "console" | "resend"
+    EMAIL_PROVIDER: str = "console"  # "console" | "smtp" | "resend"
     RESEND_API_KEY: str | None = None
+    # Sender shown in the inbox. Use a no-reply address on YOUR domain (e.g. "Forecast <no-reply@yourdomain.com>")
+    # and authenticate the domain (SPF + DKIM + DMARC) with your provider -- see EMAIL_SETUP.md.
     EMAIL_FROM_ADDRESS: str = "Forecast <onboarding@resend.dev>"
-    # The public URL of the deployed FRONTEND (not the API) -- used to
-    # build the link inside the password-reset email, e.g.
-    # "https://forecast-app.onrender.com". Left as localhost for local dev.
+    # Where replies go (a real, monitored inbox). Shown in every email footer too.
+    EMAIL_REPLY_TO: str | None = None
+    SUPPORT_EMAIL: str | None = None
+    # SMTP (EMAIL_PROVIDER=smtp): works with Zoho, Google Workspace, Brevo, Mailgun, SES, etc.
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_USE_SSL: bool = False  # true = implicit TLS (port 465); false = STARTTLS (port 587)
+    # The public URL of the deployed FRONTEND (not the API), e.g. "https://forecast-app.onrender.com".
     FRONTEND_BASE_URL: str = "http://localhost:5173"
-    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30  # legacy link flow (kept for old tokens)
+    # One-time emailed codes (password reset, email verification, email change)
+    EMAIL_CODE_EXPIRE_MINUTES: int = 15
+    EMAIL_CODE_MAX_ATTEMPTS: int = 5
+    EMAIL_CODE_MIN_RESEND_SECONDS: int = 45
+    EMAIL_CODE_MAX_PER_HOUR: int = 6
+    # Login protection
+    LOGIN_MAX_FAILED_ATTEMPTS: int = 8
+    LOGIN_LOCKOUT_MINUTES: int = 15
 
     # --- Platform economics: one-time seed values only ---
     # DEFAULT_TREASURY_ANNUAL_RATE seeds the very first TreasuryInstrument

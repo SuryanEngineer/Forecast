@@ -1,9 +1,10 @@
 import type { ComponentType } from 'react';
-import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle } from 'lucide-react';
+import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { toNumber } from '../lib/types';
+import { UserTag } from './UserTag';
 
-type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'player';
+type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'player';
 
 interface NavItem {
   id: Page;
@@ -16,6 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'markets', label: 'Market', icon: TrendingUp },
   { id: 'portfolio', label: 'My Team', icon: Briefcase },
   { id: 'leaderboards', label: 'Rankings', icon: Trophy },
+  { id: 'stats', label: 'My Stats', icon: BarChart3 },
   { id: 'tournaments', label: 'Events', icon: Zap },
 ];
 
@@ -23,6 +25,7 @@ interface SidebarProps {
   currentPage: Page;
   navigate: (page: Page) => void;
   onShowIntro: () => void;
+  onShowLegal: (doc: 'terms' | 'privacy') => void;
 }
 
 function initials(name: string): string {
@@ -31,7 +34,7 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function Sidebar({ currentPage, navigate, onShowIntro }: SidebarProps) {
+export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: SidebarProps) {
   const { user, wallet, logout } = useAuth();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
@@ -105,25 +108,36 @@ export function Sidebar({ currentPage, navigate, onShowIntro }: SidebarProps) {
 
       {/* User */}
       <div className="border-t border-border p-3">
-        <button
-          onClick={logout}
-          title="Log out"
-          className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors"
-        >
-          <div
-            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 font-mono font-bold"
-            style={{ fontSize: 12, background: 'linear-gradient(135deg, var(--accent), var(--primary))', color: '#fff' }}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => navigate('settings')}
+            title="Profile & settings"
+            className="flex-1 min-w-0 flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors text-left"
+            style={{ background: activePage === 'settings' ? 'rgba(0,200,255,0.1)' : undefined }}
           >
-            {user ? initials(user.display_name) : '?'}
-          </div>
-          <div className="text-left min-w-0 flex-1">
-            <p className="font-medium truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>
-              {user?.display_name ?? 'Loading…'}
-            </p>
-            <p style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Log out</p>
-          </div>
-          <LogOut className="w-4 h-4 text-muted-foreground shrink-0" />
-        </button>
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 font-mono font-bold"
+              style={{ fontSize: 12, background: 'linear-gradient(135deg, var(--accent), var(--primary))', color: '#fff' }}
+            >
+              {user ? initials(user.display_name) : '?'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium truncate" style={{ fontSize: 13, color: 'var(--foreground)' }}>
+                {user ? <><UserTag tag={user.tag} color={user.tag_color} />{user.display_name}</> : 'Loading…'}
+              </p>
+              <p className="flex items-center gap-1" style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                <Settings className="w-3 h-3" /> Settings
+              </p>
+            </div>
+          </button>
+          <button onClick={logout} title="Log out" className="p-2.5 rounded-xl hover:bg-white/5 transition-colors text-muted-foreground">
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex justify-center gap-3 mt-1.5 text-muted-foreground" style={{ fontSize: 10 }}>
+          <button onClick={() => onShowLegal('terms')} className="hover:underline">Terms</button>
+          <button onClick={() => onShowLegal('privacy')} className="hover:underline">Privacy</button>
+        </div>
       </div>
     </aside>
   );

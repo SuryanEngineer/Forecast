@@ -119,7 +119,17 @@ def _candidate(rng: random.Random) -> str:
 
 
 def generate_username(rng: random.Random, taken: set[str]) -> str:
-    """Returns a handle not present in `taken` (compared case-insensitively) and adds it to `taken`."""
+    """Returns a handle not present in `taken` (compared case-insensitively) and adds it to `taken`.
+
+    Draws from the hand-written pool in bot_name_pool.py first (in random order); once that is used up it falls back
+    to the procedural generator below."""
+    from app.services.bot_name_pool import CURATED
+
+    available = [n for n in CURATED if n.lower() not in taken]
+    if available:
+        name = rng.choice(available)
+        taken.add(name.lower())
+        return name
     for _ in range(40):
         name = _candidate(rng)[:40]
         if 3 <= len(name) and name.lower() not in taken:

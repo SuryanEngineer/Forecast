@@ -12,65 +12,37 @@ recomputing this on every page load too slow.
 """
 from __future__ import annotations
 
-import uuid
-from decimal import Decimal
-
 from sqlalchemy.orm import Session
 
-from app.models.bot import BotProfile
-from app.models.player import Player, PriceSnapshot, Position
 from app.models.user import User
-from app.services.house_account import HOUSE_ACCOUNT_EMAIL
+from app.services import portfolio_service
 
 # Flip to False to rank only real users once the real player base is big enough.
 INCLUDE_BOTS = True
 
 
-def _last_price_by_player(db: Session) -> dict[uuid.UUID, Decimal]:
-    """One query for every player's most recent PriceSnapshot, instead of
-    one query per player -- this is what keeps the leaderboard from being
-    O(players) database round-trips on top of O(users)."""
-    prices: dict[uuid.UUID, Decimal] = {}
-    # SQLAlchemy-portable "latest row per group": pull everything ordered
-    # oldest-first per player and let the dict overwrite keep only the
-    # last one seen. Fine at prototype scale; a window function
-    # (ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY recorded_at DESC))
-    # would be the Postgres-native way to do this in one indexed pass once
-    # price_snapshots grows large.
-    snapshots = db.query(PriceSnapshot).order_by(PriceSnapshot.recorded_at.asc()).all()
-    for snap in snapshots:
-        prices[snap.player_id] = snap.price
-    ipo_fallback = {p.id: p.ipo_price for p in db.query(Player).all()}
-    for player_id, ipo_price in ipo_fallback.items():
-        prices.setdefault(player_id, ipo_price)
-    return prices
-
-
 def compute_leaderboard(db: Session, limit: int = 100) -> list[dict]:
-    prices = _last_price_by_player(db)
-
-    query = db.query(User).filter(User.email != HOUSE_ACCOUNT_EMAIL, User.is_active.is_(True))
-    if not INCLUDE_BOTS:
-        query = query.filter(User.id.notin_(db.query(BotProfile.user_id).subquery()))
-    users = query.all()
+    """All-time (never resets) leaderboard by total net worth = cash + shares at last price + treasury."""
+    worths = portfolio_service.compute_net_worths_cached(db, include_bots=INCLUDE_BOTS)
+    users = {
+        u.id: u for u in db.query(User).filter(User.id.in_(list(worths.keys()))).all()
+    } if worths else {}
     rows: list[dict] = []
-    for user in users:
-        wallet = user.wallet
-        cash = wallet.cash_balance if wallet is not None else Decimal("0")
-        holdings_value = Decimal("0")
-        positions = db.query(Position).filter(Position.user_id == user.id, Position.quantity > 0).all()
-        for position in positions:
-            price = prices.get(position.player_id, Decimal("0"))
-            holdings_value += price * position.quantity
+    for uid, w in worths.items():
+        user = users.get(uid)
+        if user is None:
+            continue
         rows.append({
-            "user_id": user.id,
+            "user_id": uid,
             "display_name": user.display_name,
-            "cash_balance": cash,
-            "holdings_value": holdings_value,
-            "portfolio_value": cash + holdings_value,
+            "tag": user.tag,
+            "tag_color": user.tag_color,
+            "cash_balance": w["cash"],
+            "holdings_value": w["holdings"] + w["treasury"],
+            "portfolio_value": w["net_worth"],
         })
-
-    rows.sort(key=lambda r: r["portfolio_value"], reverse=True)
-    for i, row in enumerate(rows[:limit], start=1):
+    rows.sort(key=lambda r: (-r["portfolio_value"], r["display_name"].lower()))
+    rows = rows[:limit]
+    for i, row in enumerate(rows, start=1):
         row["rank"] = i
-    return rows[:limit]
+    return rows

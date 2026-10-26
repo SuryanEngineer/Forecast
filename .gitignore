@@ -34,3 +34,4 @@ forecast-backend/demo.db
 
 # Local data backups (large)
 roster_backup_*/
+forecast-backend/analytics/
