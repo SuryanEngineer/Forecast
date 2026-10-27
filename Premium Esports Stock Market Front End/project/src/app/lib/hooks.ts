@@ -10,6 +10,7 @@ import type {
   PaginatedMarketSnapshotResponse,
   PositionResponse,
   SeasonInfo,
+  SeasonSummary,
   SeasonalLeaderboard,
   UserStats,
   TournamentResponse,
@@ -180,6 +181,11 @@ const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_perc
 
 export function useSeasonInfo() {
   return usePolledFetch<SeasonInfo>('/seasons/current', EMPTY_SEASON_INFO, 60_000);
+}
+
+// Every Fortnite season on the calendar (past, current, upcoming) -- GET /seasons. Used for the chart markers.
+export function useSeasonList() {
+  return usePolledFetch<SeasonSummary[]>('/seasons', [], 10 * 60_000);
 }
 
 // Lifetime stats for the logged-in user -- GET /stats/me.

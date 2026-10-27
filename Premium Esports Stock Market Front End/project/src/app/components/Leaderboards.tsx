@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { useLeaderboard, useSeasonalLeaderboard } from '../lib/hooks';
+import { seasonCountdown } from '../lib/seasons';
 import { toNumber, type LeaderboardEntry, type SeasonEntryRow } from '../lib/types';
 import { RankBadge } from './RankBadge';
 import { UserTag } from './UserTag';
@@ -187,12 +188,8 @@ function SeasonRow({ row, isMe, onOpen }: { row: SeasonEntryRow; isMe: boolean; 
   );
 }
 
-function daysLeft(iso: string): string {
-  const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return 'ending now';
-  const d = Math.floor(ms / 86_400_000);
-  if (d >= 1) return `${d} day${d === 1 ? '' : 's'} left`;
-  return `${Math.max(1, Math.floor(ms / 3_600_000))}h left`;
+function daysLeft(iso: string | null): string {
+  return seasonCountdown({ ends_at: iso });
 }
 
 function SeasonalBoard({ openTeam }: { openTeam: (userId: string) => void }) {

@@ -60,14 +60,20 @@ export interface SeasonEntryRow {
 }
 
 export interface SeasonalLeaderboard {
-  season: { id: string; name: string; starts_at: string; ends_at: string; finalized?: boolean } | null;
+  season: { id: string; name: string; kind?: string; starts_at: string; ends_at: string | null; ends_tbd?: boolean; finalized?: boolean } | null;
   entries: SeasonEntryRow[];
   me: SeasonEntryRow | null;
   total?: number;
 }
 
+export interface SeasonSummary {
+  id: string; name: string; kind: string; starts_at: string; ends_at: string | null; ends_tbd: boolean;
+  is_active?: boolean; finalized?: boolean;
+}
+
 export interface SeasonInfo {
-  season: { id: string; name: string; starts_at: string; ends_at: string } | null;
+  season: SeasonSummary | null;
+  next_season?: SeasonSummary | null;
   ranks: { name: string; min_points: number }[];
   points_per_percent: number;
 }
@@ -83,7 +89,7 @@ export interface UserStats {
   best_holding: { player_id: string; gamertag: string; unrealized: number; pct: number } | null;
   worst_holding: { player_id: string; gamertag: string; unrealized: number; pct: number } | null;
   member_since: string | null; sessions: number; minutes_on_site: number;
-  season: (SeasonEntryRow & { rank: string; next_rank: string | null; points_to_next: number; progress: number; season_name: string; ends_at: string }) | null;
+  season: (SeasonEntryRow & { rank: string; next_rank: string | null; points_to_next: number; progress: number; season_name: string; ends_at: string | null }) | null;
   season_history: { season_id: string; name: string; final_points: number | null; final_rank: string | null; final_position: number | null; start_value: Money; final_value: Money | null }[];
   history: { day: string; net_worth: number }[];
 }

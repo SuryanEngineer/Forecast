@@ -474,3 +474,19 @@ python3 scripts/sync_qualifiers.py --fit            # see what the bots learned 
 The running server also does this in its Osirion sync loop. Settings (all optional): `QUALIFIER_SYNC_ENABLED`,
 `QUALIFIER_PAGES_PER_PASS`, `QUALIFIER_MAX_PAGES_PER_WINDOW`, `QUALIFIER_TOURNAMENT_TYPES`, `QUALIFIER_HISTORY_EVENTS`.
 Only roster players' results are stored (no players are created, no dividends paid).
+
+## Fortnite seasons
+
+The ranked ladder follows the Fortnite calendar in `forecast-backend/app/services/season_calendar.py`
+(Chapter 7 Season 4 -> Mini-Season -> Chapter 8 Season 1, whose end date is TBD). After `alembic upgrade head`:
+
+```powershell
+cd forecast-backend
+python3 scripts/manage_seasons.py delete "Chapter 7 Season 1" --confirm   # only if you created that placeholder earlier
+python3 scripts/manage_seasons.py sync-calendar
+python3 scripts/manage_seasons.py list
+```
+
+The server rolls seasons over by itself (maintenance loop). When Epic announces a new season or an end date, either add it
+to `FORTNITE_CALENDAR` and re-run `sync-calendar`, or use `manage_seasons.py create/set`. The site shows the current season in
+the sidebar and marks each season start on the price charts.

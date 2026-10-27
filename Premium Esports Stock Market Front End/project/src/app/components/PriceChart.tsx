@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../lib/api';
+import { useSeasonList } from '../lib/hooks';
+import { seasonMarkersBetween } from '../lib/seasons';
 import { toNumber, type PriceHistoryPoint } from '../lib/types';
 
 const HOUR = 3_600_000;
@@ -54,6 +56,7 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
   const [range, setRange] = useState<RangeKey>('1w');
   const [raw, setRaw] = useState<PriceHistoryPoint[] | null>(null);
   const loadedKey = useRef('');
+  const { data: seasons } = useSeasonList();
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +96,9 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
     const first = pts[0].price;
     return { pts, start, end, ticks, step, yMin: Math.max(0, lo - pad), yMax: hi + pad, changePct: first > 0 ? ((last.price - first) / first) * 100 : 0 };
   }, [raw]);
+
+  // Dashed lines where a Fortnite season begins -- only inside the span this chart actually has data for.
+  const markers = useMemo(() => (view ? seasonMarkersBetween(seasons, view.start, view.end) : []), [view, seasons]);
 
   const up = (view?.changePct ?? 0) >= 0;
   const stroke = view ? (up ? '#10d9a0' : '#ff3d5c') : color;
@@ -165,10 +171,24 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
               tickFormatter={(v: number) => `$${v < 100 ? v.toFixed(2) : v.toFixed(0)}`}
               tickCount={4}
             />
+            {markers.map(m => (
+              <ReferenceLine
+                key={m.t}
+                x={m.t}
+                stroke="rgba(155,111,255,0.75)"
+                strokeDasharray="3 3"
+                label={{ value: m.label, position: 'insideTopRight', fill: '#9b6fff', fontSize: 10 }}
+              />
+            ))}
             <Tooltip content={<ChartTooltip />} />
             <Area type="stepAfter" dataKey="price" stroke={stroke} strokeWidth={2} fill={`url(#${gid})`} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
+      )}
+      {markers.length > 0 && (
+        <p className="text-muted-foreground mt-1" style={{ fontSize: 10.5 }}>
+          Dashed line = start of a Fortnite season ({markers.map(m => m.full).join(', ')})
+        </p>
       )}
     </div>
   );

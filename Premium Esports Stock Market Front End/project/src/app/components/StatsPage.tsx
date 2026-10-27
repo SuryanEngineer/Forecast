@@ -1,5 +1,6 @@
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { useMyStats, useSeasonInfo } from '../lib/hooks';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { useMyStats, useSeasonInfo, useSeasonList } from '../lib/hooks';
+import { shortSeasonName } from '../lib/seasons';
 import { RankBadge, rankColor } from './RankBadge';
 
 const money0 = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -30,6 +31,7 @@ function fmtMinutes(m: number): string {
 export function StatsPage() {
   const { data: stats, loading, error } = useMyStats();
   const { data: info } = useSeasonInfo();
+  const { data: seasonList } = useSeasonList();
 
   if (!stats) {
     return (
@@ -42,6 +44,11 @@ export function StatsPage() {
 
   const s = stats.season;
   const chart = stats.history.map(h => ({ day: h.day.slice(5), value: h.net_worth }));
+  // Season starts that fall on a day this chart has data for (nothing earlier than the chart's first day is drawn).
+  const dayLabel = new Map(stats.history.map(h => [h.day, h.day.slice(5)]));
+  const seasonLines = seasonList
+    .map(s => ({ label: shortSeasonName(s.name), day: dayLabel.get(s.starts_at.slice(0, 10)), first: s.starts_at.slice(0, 10) === stats.history[0]?.day }))
+    .filter((m): m is { label: string; day: string; first: boolean } => !!m.day && !m.first);
 
   return (
     <div className="p-6 max-w-[1000px] mx-auto space-y-6">
@@ -110,6 +117,10 @@ export function StatsPage() {
                 <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} minTickGap={24} />
                 <YAxis domain={['auto', 'auto']} width={58} tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => (Math.abs(v) >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${(v / 1e3).toFixed(0)}K`)} />
                 <Tooltip formatter={(v: number) => [money0(v), 'Net worth']} contentStyle={{ background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }} />
+                {seasonLines.map(m => (
+                  <ReferenceLine key={m.day} x={m.day} stroke="rgba(155,111,255,0.75)" strokeDasharray="3 3"
+                    label={{ value: m.label, position: 'insideTopRight', fill: '#9b6fff', fontSize: 10 }} />
+                ))}
                 <Area type="monotone" dataKey="value" stroke="#00c8ff" strokeWidth={2} fill="url(#statsNw)" />
               </AreaChart>
             </ResponsiveContainer>
