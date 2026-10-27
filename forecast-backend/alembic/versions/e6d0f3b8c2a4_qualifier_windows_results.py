@@ -7,6 +7,7 @@ Create Date: 2026-10-27 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision = 'e6d0f3b8c2a4'
 down_revision = 'd5c9e2a7b1f3'
@@ -52,7 +53,7 @@ def upgrade() -> None:
         sa.Column('points', sa.Numeric(10, 2), nullable=True),
         sa.Column('team_id', sa.Text(), nullable=True),
         sa.Column('team_size', sa.Integer(), nullable=False, server_default='1'),
-        sa.Column('teammate_player_ids', sa.JSON(), nullable=True),
+        sa.Column('teammate_player_ids', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
         sa.UniqueConstraint('window_id', 'player_id', name='uq_qualifier_result'),
     )
