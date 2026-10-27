@@ -6,6 +6,7 @@ import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
+import { ActivityHistory } from './ActivityHistory';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -224,6 +225,8 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           </div>
         </>
       )}
+
+      <ActivityHistory openPlayer={openPlayer} />
     </div>
   );
 }

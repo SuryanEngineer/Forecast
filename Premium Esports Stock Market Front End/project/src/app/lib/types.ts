@@ -422,3 +422,24 @@ export function toNumber(value: Money | null | undefined): number {
   const n = parseFloat(value);
   return Number.isFinite(n) ? n : 0;
 }
+
+// One row of the account activity feed -- GET /wallet/activity (buys, sells, dividends, fees, treasury, deposits).
+export interface ActivityItem {
+  id: string;
+  at: string;
+  type: 'buy' | 'sell' | 'dividend' | 'fee' | 'treasury_buy' | 'treasury_redeem' | 'deposit' | 'withdrawal' | string;
+  title: string;
+  detail: string;
+  amount: Money; // signed cash effect: + increases cash, - decreases it
+  balance_after: Money;
+  player_id: string | null;
+  gamertag: string | null;
+  quantity: number | null;
+  price: Money | null;
+}
+
+export interface ActivityPage {
+  items: ActivityItem[];
+  total: number;
+  next_offset: number | null;
+}

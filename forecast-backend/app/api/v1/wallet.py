@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_current_user
@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.wallet import LedgerEntry
 from app.schemas.wallet import DepositRequest, LedgerEntryResponse, WalletResponse, WithdrawRequest
-from app.services import wallet_service
+from app.services import activity_service, wallet_service
 from app.services.exceptions import ServiceError
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
@@ -55,6 +55,18 @@ def withdraw(payload: WithdrawRequest, user: User = Depends(get_current_user), d
         id=wallet.id, user_id=wallet.user_id, cash_balance=wallet.cash_balance,
         held_balance=wallet.held_balance, available_balance=wallet.available_balance,
     )
+
+
+@router.get("/activity")
+def get_my_activity(
+    kind: str = Query("all", pattern="^(all|trades|dividends|fees|treasury|cash)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Buy/sell history, dividend payouts, fees, treasury moves and deposits -- newest first, paginated."""
+    return activity_service.user_activity(db, user.id, kind, limit, offset)
 
 
 @router.get("/ledger", response_model=list[LedgerEntryResponse])

@@ -477,6 +477,25 @@ def check_seasons_stats(ctx: dict) -> None:
         r = client.get("/api/v1/stats/me", headers=auth(r.json()["access_token"]))
         check("GET /stats/me works", r.status_code == 200 and "net_worth" in r.json(), r.text[:200])
 
+        # Account activity feed (Portfolio page "Activity")
+        hdr = auth(client.post("/api/v1/auth/login", json={"email": "t_alice@forecastcheck.dev", "password": PW}).json()["access_token"])
+        r = client.get("/api/v1/wallet/activity?limit=100", headers=hdr)
+        feed = r.json() if r.status_code == 200 else {"items": []}
+        types = [i["type"] for i in feed["items"]]
+        check("activity feed loads", r.status_code == 200 and feed.get("total", 0) >= 3, r.text[:200])
+        check("activity feed has the starting deposit, a buy, a fee and the dividend", all(t in types for t in ("deposit", "buy", "fee", "dividend")), str(types))
+        buy = next((i for i in feed["items"] if i["type"] == "buy"), None)
+        check("buy row names the player with quantity and price", buy is not None and buy["gamertag"] and buy["quantity"] == 10 and buy["price"] is not None, str(buy))
+        div = next((i for i in feed["items"] if i["type"] == "dividend"), None)
+        check("dividend row names the player and tournament", div is not None and div["gamertag"] and "System Check" in div["detail"], str(div))
+        check("hold/release bookkeeping rows are hidden", not any(t in ("order_hold", "order_release") for t in types))
+        ats = [i["at"] for i in feed["items"]]
+        check("activity is newest first", ats == sorted(ats, reverse=True))
+        r2 = client.get("/api/v1/wallet/activity?kind=dividends", headers=hdr).json()
+        check("filter: dividends only", r2["items"] and all(i["type"] == "dividend" for i in r2["items"]))
+        r3 = client.get("/api/v1/wallet/activity?limit=2&offset=0", headers=hdr).json()
+        check("pagination: next_offset set when more rows exist", len(r3["items"]) == 2 and r3["next_offset"] == 2)
+
         section("Season rollover")
         n_final = season_service.finalize_season(db, s)
         db.commit()
