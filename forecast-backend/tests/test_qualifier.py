@@ -96,6 +96,37 @@ class QualifierViews(unittest.TestCase):
         self.assertEqual(views[good.id].status, "likely")
         self.assertIn(bad.id, views[good.id].teammates)
 
+    def test_same_field_earlier_day_is_not_an_elimination_risk(self):
+        """Day 1 of a 2-day Finals (no advancement cutoff, ~100 players) must not mark weak day-1 players as unlikely."""
+        from app.models.player import Player
+        from app.models.qualifier import QualifierResult, QualifierWindow
+        from app.models.tournament import Tournament, TournamentStatus, TournamentType
+        from app.services import qualifier_model_service as qms
+        db = self.db
+        now = datetime.now(timezone.utc)
+        t = Tournament(name="Solos Finals", tournament_type=TournamentType.FNCS_FINALS, start_time=now + timedelta(hours=10), status=TournamentStatus.SCHEDULED)
+        db.add(t)
+        p = Player(gamertag="sf_" + uuid.uuid4().hex[:6], ipo_price=10, total_shares_outstanding=1000)
+        db.add(p); db.flush()
+        w = QualifierWindow(tournament_id=t.id, osirion_event_id="e2", event_window_id="w2", leaderboard_event_id="le2",
+                            leaderboard_event_window_id="lw2", stage_index=1, field_estimate=100, advance_cutoff=None,
+                            is_complete=True, begin_time=now - timedelta(days=1), end_time=now - timedelta(hours=12))
+        db.add(w); db.flush()
+        db.add(QualifierResult(window_id=w.id, tournament_id=t.id, player_id=p.id, rank=95, team_id="x", team_size=1, teammate_player_ids=[]))
+        db.commit()
+        qms.clear_cache()
+        v = qms.build_views(db, [p.id], {p.id: 0.05}, {p.id: 0.5})[p.id]
+        self.assertEqual(v.status, "likely")
+        self.assertGreaterEqual(v.p_qualify, 0.95)
+
+    def test_same_field_helper(self):
+        from types import SimpleNamespace as NS
+        from app.services.qualifier_model_service import _same_field
+        self.assertTrue(_same_field([NS(stage_index=1, advance_cutoff=None, field_estimate=100)]))
+        self.assertFalse(_same_field([NS(stage_index=1, advance_cutoff=50, field_estimate=100)]))
+        self.assertFalse(_same_field([NS(stage_index=1, advance_cutoff=None, field_estimate=5000)]))
+        self.assertFalse(_same_field([]))
+
 
 if __name__ == "__main__":
     unittest.main()

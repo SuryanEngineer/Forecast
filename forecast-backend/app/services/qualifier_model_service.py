@@ -48,6 +48,16 @@ logger = logging.getLogger("forecast.bots")
 _MODEL_TTL = 30 * 60
 DEFAULT_FIELD = 100
 FIELD_KNOWN_MIN = 20  # this many placements means the Finals field is known/under way
+SAME_FIELD_MAX = 150  # a small, cutoff-less earlier round (e.g. day 1 of a 2-day Finals) is the SAME field as the Finals
+
+
+def _same_field(windows: list) -> bool:
+    """True when the last earlier round is just an earlier day of the Finals' own field: nobody is eliminated between it
+    and the Finals, so it says how players are performing, not whether they will qualify."""
+    if not windows:
+        return False
+    last = max(windows, key=lambda w: w.stage_index)
+    return last.advance_cutoff is None and bool(last.field_estimate) and last.field_estimate <= SAME_FIELD_MAX
 
 
 @dataclass
@@ -126,7 +136,20 @@ def fit_model(db: Session, force: bool = False) -> QualModel:
             .filter(Tournament.status == TournamentStatus.FINALIZED).distinct().all()
         ]
         if done_ids:
-            rounds, _by_t, _teams = _round_strengths(db, done_ids)
+            rounds, by_t, _teams = _round_strengths(db, done_ids)
+            # The same event is often tracked twice (e.g. a [NAC] listing and a global one over the same leaderboards).
+            # Train on each distinct set of rounds once so duplicates don't make the model overconfident.
+            seen_keys: set = set()
+            skip: set = set()
+            same_field_ids: set = set()
+            for tid, ws in by_t.items():
+                key = frozenset((w.leaderboard_event_id, w.leaderboard_event_window_id) for w in ws)
+                if key in seen_keys:
+                    skip.add(tid)
+                    continue
+                seen_keys.add(key)
+                if _same_field(ws):
+                    same_field_ids.add(tid)
             placements: dict[tuple, int] = {}
             field_size: dict[uuid.UUID, int] = {}
             for tid, pid, plc in db.query(PlacementResult.tournament_id, PlacementResult.player_id, PlacementResult.placement).filter(
@@ -140,13 +163,14 @@ def fit_model(db: Session, force: bool = False) -> QualModel:
             pairs: list[tuple[float, float]] = []
             rows: list[tuple[float, bool]] = []
             for (tid, pid), rs in rounds.items():
-                if field_size.get(tid, 0) < FIELD_KNOWN_MIN:
-                    continue  # the Finals field isn't complete enough to say who qualified
+                if tid in skip or field_size.get(tid, 0) < FIELD_KNOWN_MIN:
+                    continue  # duplicate listing, or the Finals field isn't complete enough to say who qualified
                 q = weighted_qual([(st, qv) for st, qv, _r, _w in rs])
                 if q is None:
                     continue
                 plc = placements.get((tid, pid))
-                rows.append((q, plc is not None))
+                if tid not in same_field_ids:  # same-field events say nothing about who qualifies
+                    rows.append((q, plc is not None))
                 if plc is not None:
                     pairs.append((q, final_strength(plc, field_size[tid])))
             model.a, model.b, model.resid_sd, model.n_pairs = fit_line(pairs)
@@ -222,6 +246,8 @@ def build_views(
                 status, p_q, detail = "qualified", 1.0, "in the Finals field"
             elif field_known:
                 status, p_q, detail = "eliminated", 0.02, "Finals field is set and they are not in it"
+            elif _same_field(wins) and last.is_complete and last.stage_index in by_stage:
+                status, p_q, detail = "likely", 0.97, "played the earlier day of the same Finals field"
             else:
                 # Did they miss an advancement cutoff in a completed round?
                 missed = next(
