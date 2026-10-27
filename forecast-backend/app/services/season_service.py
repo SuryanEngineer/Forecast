@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.account import Season, SeasonEntry
@@ -78,10 +79,12 @@ def get_active_season(db: Session) -> Season | None:
     return db.query(Season).filter(Season.is_active.is_(True)).order_by(Season.starts_at.desc()).first()
 
 
-def create_season(db: Session, name: str, starts_at: datetime, ends_at: datetime, activate: bool = False) -> Season:
-    if ends_at <= starts_at:
+def create_season(db: Session, name: str, starts_at: datetime, ends_at: datetime | None, activate: bool = False,
+                  kind: str = "season") -> Season:
+    """`ends_at=None` means the end date is not announced yet (TBD)."""
+    if ends_at is not None and ends_at <= starts_at:
         raise ValueError("Season must end after it starts.")
-    season = Season(id=uuid.uuid4(), name=name, starts_at=starts_at, ends_at=ends_at, is_active=False)
+    season = Season(id=uuid.uuid4(), name=name, starts_at=starts_at, ends_at=ends_at, is_active=False, kind=kind)
     db.add(season)
     db.flush()
     if activate:
@@ -162,32 +165,52 @@ def finalize_season(db: Session, season: Season) -> int:
 
 
 def run_rollover(db: Session) -> list[str]:
-    """Idempotent housekeeping, safe to call every few minutes: finalize the active season once it has ended, and
-    activate a scheduled season whose window has begun. Returns human-readable actions taken."""
+    """Idempotent housekeeping, safe to call every few minutes. Finalizes the active season when it has ended -- either
+    its end date passed, or (for a season whose end is still TBD) the next season has begun -- and activates the season
+    whose window is open. Returns human-readable actions taken."""
     actions: list[str] = []
     now = _now()
     active = get_active_season(db)
-    if active is not None and _aware(active.ends_at) <= now:
+    if active is not None and active.ends_at is not None and _aware(active.ends_at) <= now:
         n = finalize_season(db, active)
         actions.append(f"finalized '{active.name}' ({n} entries)")
         active = None
-    if active is None:
-        upcoming = (
-            db.query(Season)
-            .filter(Season.finalized_at.is_(None), Season.starts_at <= now, Season.ends_at > now)
-            .order_by(Season.starts_at.desc()).first()
-        )
-        if upcoming is not None:
-            activate_season(db, upcoming)
-            actions.append(f"activated '{upcoming.name}'")
+    current = (
+        db.query(Season)
+        .filter(Season.finalized_at.is_(None), Season.starts_at <= now, or_(Season.ends_at.is_(None), Season.ends_at > now))
+        .order_by(Season.starts_at.desc()).first()
+    )
+    if active is not None and current is not None and current.id != active.id and _aware(current.starts_at) > _aware(active.starts_at):
+        n = finalize_season(db, active)  # a later season has started: close the old one even if its end was TBD
+        actions.append(f"finalized '{active.name}' ({n} entries; '{current.name}' began)")
+        active = None
+    if active is None and current is not None:
+        activate_season(db, current)
+        actions.append(f"activated '{current.name}'")
     return actions
+
+
+def current_and_next(db: Session) -> tuple[Season | None, Season | None]:
+    """The active season plus the next scheduled one (soonest start after now), for the website banner."""
+    now = _now()
+    cur = get_active_season(db)
+    nxt = (
+        db.query(Season).filter(Season.finalized_at.is_(None), Season.starts_at > now, Season.is_active.is_(False))
+        .order_by(Season.starts_at.asc()).first()
+    )
+    return cur, nxt
+
+
+def season_dict(s: Season) -> dict:
+    return {"id": s.id, "name": s.name, "kind": s.kind, "starts_at": s.starts_at, "ends_at": s.ends_at,
+            "ends_tbd": s.ends_at is None}
 
 
 def user_season_history(db: Session, user_id: uuid.UUID) -> list[dict]:
     rows = (
         db.query(SeasonEntry, Season).join(Season, Season.id == SeasonEntry.season_id)
         .filter(SeasonEntry.user_id == user_id, Season.finalized_at.isnot(None))
-        .order_by(Season.ends_at.desc()).all()
+        .order_by(Season.starts_at.desc()).all()
     )
     return [
         {"season_id": s.id, "name": s.name, "final_points": e.final_points, "final_rank": e.final_rank,

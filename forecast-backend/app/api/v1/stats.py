@@ -23,12 +23,11 @@ def my_stats(user: User = Depends(get_current_user), db: Session = Depends(get_d
 
 @router.get("/seasons/current")
 def current_season(db: Session = Depends(get_db)) -> dict:
-    s = season_service.get_active_season(db)
-    if s is None:
-        return {"season": None, "ranks": [{"name": n, "min_points": m} for n, m in season_service.RANKS],
-                "points_per_percent": season_service.POINTS_PER_PERCENT}
+    """The Fortnite season we are in now (None between seasons), the next scheduled one, and the rank ladder."""
+    cur, nxt = season_service.current_and_next(db)
     return {
-        "season": {"id": s.id, "name": s.name, "starts_at": s.starts_at, "ends_at": s.ends_at},
+        "season": season_service.season_dict(cur) if cur is not None else None,
+        "next_season": season_service.season_dict(nxt) if nxt is not None else None,
         "ranks": [{"name": n, "min_points": m} for n, m in season_service.RANKS],
         "points_per_percent": season_service.POINTS_PER_PERCENT,
     }
@@ -64,8 +63,8 @@ def seasonal_leaderboard(
         db.commit()
     mine = next((r for r in rows if me is not None and r["user_id"] == me.id), None)
     return {
-        "season": {"id": season.id, "name": season.name, "starts_at": season.starts_at, "ends_at": season.ends_at,
-                   "finalized": season.finalized_at is not None},
+        "season": {"id": season.id, "name": season.name, "kind": season.kind, "starts_at": season.starts_at,
+                   "ends_at": season.ends_at, "ends_tbd": season.ends_at is None, "finalized": season.finalized_at is not None},
         "entries": rows[:limit],
         "me": mine if mine is not None and mine["position"] > limit else None,
         "total": len(rows),
@@ -75,7 +74,7 @@ def seasonal_leaderboard(
 @router.get("/seasons")
 def list_seasons(db: Session = Depends(get_db)) -> list[dict]:
     return [
-        {"id": s.id, "name": s.name, "starts_at": s.starts_at, "ends_at": s.ends_at, "is_active": s.is_active,
-         "finalized": s.finalized_at is not None}
+        {"id": s.id, "name": s.name, "kind": s.kind, "starts_at": s.starts_at, "ends_at": s.ends_at,
+         "ends_tbd": s.ends_at is None, "is_active": s.is_active, "finalized": s.finalized_at is not None}
         for s in db.query(Season).order_by(Season.starts_at.desc()).limit(50).all()
     ]
