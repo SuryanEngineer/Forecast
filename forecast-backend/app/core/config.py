@@ -190,6 +190,7 @@ class Settings(BaseSettings):
     # asyncio task started in main.py's lifespan).
     BOT_TRADING_ENABLED: bool = True
     BOT_TICK_INTERVAL_SECONDS: int = 20
+    BOT_SLOW_CACHE_SECONDS: int = 300  # reuse career/dividend/qualifier reads this long (cuts DB egress); 0 = always re-read
 
 
 settings = Settings()

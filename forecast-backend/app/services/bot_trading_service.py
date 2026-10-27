@@ -45,6 +45,7 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.engine.dividend_calculator import placement_payout_fraction
 from app.models.bot import BotProfile
 from app.models.dividend import DividendPayout, DividendPayoutStatus
@@ -335,6 +336,25 @@ def _find_movers(pct_change, signals, qviews) -> list:
     return [pid for _, pid in scored[:25]]
 
 
+_SLOW_CACHE: dict[str, tuple[float, object]] = {}
+
+
+def _slow(key: str, ids: list, loader):
+    """Career history, past dividends and qualifier views change only when a tournament or sync lands, but reading them
+    pulls tens of thousands of rows. Re-reading every 20-second tick would burn database egress (Supabase free plan: 5 GB
+    a month) for nothing, so reuse the result for BOT_SLOW_CACHE_SECONDS. Keyed on the roster so a roster change reloads."""
+    ttl = max(0, int(getattr(settings, "BOT_SLOW_CACHE_SECONDS", 300)))
+    stamp = hash(frozenset(ids))
+    hit = _SLOW_CACHE.get(key)
+    now = time.monotonic()
+    if ttl and hit is not None and hit[0] > now - ttl and _SLOW_CACHE.get(key + ":k", (0, None))[1] == stamp:
+        return hit[1]
+    value = loader()
+    _SLOW_CACHE[key] = (now, value)
+    _SLOW_CACHE[key + ":k"] = (now, stamp)
+    return value
+
+
 def _build_snapshot(db: Session) -> MarketSnapshot:
     players = db.query(Player).filter(Player.is_active.is_(True)).all()
     player_ids = [p.id for p in players]
@@ -365,7 +385,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         else:
             pct_change[pid] = Decimal("0")
 
-    expected_value, form, career_fraction, career_strength = _career_stats(db, player_ids)
+    expected_value, form, career_fraction, career_strength = _slow("career", player_ids, lambda: _career_stats(db, player_ids))
     ev_values = sorted(expected_value.values())
     roster_median_ev = ev_values[len(ev_values) // 2] if ev_values else None
     fair_value = {p.id: _compute_fair_value(p.ipo_price, expected_value.get(p.id), roster_median_ev) for p in players}
@@ -373,7 +393,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     # Expected dividend yield per share (net of fee), blended with what was actually paid out.
     fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
     fee = fee / 100.0 if fee > 1 else fee
-    realized = _realized_dividends_per_share(db, player_ids)
+    realized = _slow("realized", player_ids, lambda: _realized_dividends_per_share(db, player_ids))
     yield_raw: dict[uuid.UUID, float] = {}
     for p in players:
         ev = expected_value.get(p.id)
@@ -389,7 +409,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     median_yield = positives[len(positives) // 2] if positives else None
 
     events = _event_signals(db, player_ids)
-    qviews = qualifier_model_service.build_views(db, player_ids, career_fraction, career_strength)
+    qviews = _slow("qviews", player_ids, lambda: qualifier_model_service.build_views(db, player_ids, career_fraction, career_strength))
     # A qualifier-derived event time overrides the calendar signal when the player has no entrant row yet
     for pid, qv in qviews.items():
         if pid in events or qv.event_start is None or qv.status == "eliminated":
