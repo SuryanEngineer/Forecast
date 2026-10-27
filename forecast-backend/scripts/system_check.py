@@ -190,7 +190,7 @@ def check_auth_flows() -> None:
     start = economic_params_service.DEFAULTS["wallet.starting_balance"][0]
     check("new user got the starting balance", Decimal(str(w["cash_balance"])) == Decimal(start), str(w))
 
-    check("login works (email is case-insensitive)", client.post("/api/v1/auth/login", json={"email": "Alice@Test.local", "password": PW}).status_code == 200)
+    check("login works (email is case-insensitive)", client.post("/api/v1/auth/login", json={"email": "ALICE@forecastcheck.dev", "password": PW}).status_code == 200)
     bad = client.post("/api/v1/auth/login", json={"email": "alice@forecastcheck.dev", "password": "wrong-pass1"})
     nouser = client.post("/api/v1/auth/login", json={"email": "ghost@forecastcheck.dev", "password": "wrong-pass1"})
     check("wrong password and unknown email give the SAME error", bad.status_code == 401 and nouser.status_code == 401 and bad.json() == nouser.json())
@@ -546,6 +546,8 @@ def check_bots() -> None:
         check("bot usernames look human (no 'Bot #' names, all unique)", not any("Bot #" in x for x in names) and len(set(n.lower() for n in names)) == len(names), str(names[:6]))
         valid = all(account_service.NAME_RE.match(x) for x in names)
         check("bot usernames satisfy the site's username rules", valid, str([x for x in names if not account_service.NAME_RE.match(x)][:5]))
+        from app.services import portfolio_service
+        portfolio_service.clear_cache()  # net worths are memoised for a few seconds; earlier checks filled the cache
         board = leaderboard_service.compute_leaderboard(db, 100)
         check("leaderboard includes bots", len(board) > 12)
     finally:
