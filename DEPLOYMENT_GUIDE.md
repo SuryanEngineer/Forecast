@@ -500,9 +500,9 @@ the sidebar and marks each season start on the price charts.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BOT_TICK_INTERVAL_SECONDS` | 15 | seconds between bot ticks |
-| `BOT_ACTIONS_PER_TICK` | 4 | max orders the whole bot population places per tick |
-| `BOT_MM_PLAYERS_PER_TICK` | 3 | max market-maker re-quotes per tick |
+| `BOT_TICK_INTERVAL_SECONDS` | 5 | seconds between bot ticks |
+| `BOT_ACTIONS_PER_TICK` | 2 | max orders the whole bot population places per tick |
+| `BOT_MM_PLAYERS_PER_TICK` | 2 | max market-maker re-quotes per tick |
 | `BOT_STATE_REFRESH_SECONDS` | 900 | how often bot wallets/holdings are re-read (cached in between) |
 
 Every order costs the database a few KB of reads, so these are the dials for Supabase's free 5 GB/month egress. Watch **Supabase → Settings → Usage** for a day: if egress is trending above ~150 MB/day, double `BOT_TICK_INTERVAL_SECONDS` or halve `BOT_ACTIONS_PER_TICK`; if you are far below, raise them for a livelier feed.

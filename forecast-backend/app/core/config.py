@@ -189,9 +189,9 @@ class Settings(BaseSettings):
     # DOES require restarting the process (they control the background
     # asyncio task started in main.py's lifespan).
     BOT_TRADING_ENABLED: bool = True
-    BOT_TICK_INTERVAL_SECONDS: int = 15
-    BOT_ACTIONS_PER_TICK: int = 4  # cap on orders the whole bot population places per tick (each costs DB egress)
-    BOT_MM_PLAYERS_PER_TICK: int = 3  # cap on market-maker player re-quotes per tick
+    BOT_TICK_INTERVAL_SECONDS: int = 5
+    BOT_ACTIONS_PER_TICK: int = 2  # cap on orders the whole bot population places per tick (each costs DB egress)
+    BOT_MM_PLAYERS_PER_TICK: int = 2  # cap on market-maker player re-quotes per tick
     BOT_STATE_REFRESH_SECONDS: int = 900  # how often bots' cash/holdings/open orders are re-read from the DB (cached between)
     # Disk guard (Supabase free plan = 500 MB): bot-only history older than this is pruned -- see retention_service.py
     RETENTION_ENABLED: bool = True
