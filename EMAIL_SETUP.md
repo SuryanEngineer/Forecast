@@ -58,3 +58,64 @@ Check: it arrives in the **inbox**, the sender shows **Forecast**, and "Reply" g
 - Resending is rate-limited (per-user minimum gap + hourly cap).
 - Logins lock for 15 minutes after 8 wrong passwords.
 - Resetting or changing a password signs out every other device.
+
+---
+
+# Option B — Gmail (a dedicated Gmail account), full walkthrough
+
+Use this if you don't have a domain yet. It sends the site's emails (verification codes, forgot-password codes, notices) from a
+Gmail address. **It needs the backend on a paid Render plan** (Render's free plan blocks the SMTP port), and Gmail limits how many
+messages one account can send per day (fine for launch). Until this is set up, `EMAIL_PROVIDER` stays `console`: **forgot-password
+does not work for real users** (the code only shows in the Render logs).
+
+### 1. Create the dedicated Gmail account
+1. Go to accounts.google.com → Create account. Pick a name that looks official, e.g. `forecastfantasy.support@gmail.com`.
+2. Use a strong password stored in a password manager. This account will own your support inbox, so use a recovery phone/email you control.
+
+### 2. Turn on 2-Step Verification (required for App Passwords)
+1. Signed in to that account: myaccount.google.com → **Security** → **2-Step Verification** → turn it on.
+
+### 3. Create an App Password
+1. myaccount.google.com → search **App passwords** (or Security → 2-Step Verification → App passwords at the bottom).
+2. Name it `Forecast` → **Create**. Google shows a 16-character code like `abcd efgh ijkl mnop`.
+3. Copy it **without spaces** (`abcdefghijklmnop`). It is shown once. Never commit it or paste it in chat.
+
+### 4. Test it on your computer first
+1. `cd forecast-backend` → `notepad .env` and add (replace with your account and App Password):
+   ```
+   EMAIL_PROVIDER=smtp
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_USERNAME=forecastfantasy.support@gmail.com
+   SMTP_PASSWORD=abcdefghijklmnop
+   EMAIL_FROM_ADDRESS=Forecast <forecastfantasy.support@gmail.com>
+   EMAIL_REPLY_TO=forecastfantasy.support@gmail.com
+   SUPPORT_EMAIL=forecastfantasy.support@gmail.com
+   ```
+2. `python3 scripts/send_test_email.py you@yourpersonalemail.com` → the email should arrive (check spam).
+   An "authentication" error means a wrong App Password or 2-Step Verification is off.
+3. **Remove or comment out those lines in your local `.env` afterwards if you don't want local runs sending real email.**
+
+### 5. Put the backend on a paid plan
+Render dashboard → `forecast-backend` → **Settings** → **Instance Type** → choose the cheapest paid option (Starter).
+
+### 6. Set the variables on Render
+`forecast-backend` → **Environment** → add/edit these, then Save (it redeploys):
+```
+EMAIL_PROVIDER      = smtp
+SMTP_HOST           = smtp.gmail.com
+SMTP_PORT           = 587
+SMTP_USERNAME       = (your Gmail address)
+SMTP_PASSWORD       = (the 16-character App Password)
+EMAIL_FROM_ADDRESS  = Forecast <your Gmail address>
+EMAIL_REPLY_TO      = (your Gmail address)
+SUPPORT_EMAIL       = (your Gmail address)
+```
+Also set `VITE_SUPPORT_EMAIL` on `forecast-frontend` → Environment to the same address (shown in Terms, Privacy and Settings).
+
+### 7. Test on the live site
+Log out → **Forgot password** → enter a real account's email → the 6-digit code should arrive in that inbox. Also try registering a
+new account: a verification email should arrive.
+
+### Later: move to your own domain
+Once you buy a domain, switch to Option A above (Resend) so mail comes from `no-reply@yourdomain.com` with proper SPF/DKIM/DMARC.

@@ -103,3 +103,12 @@ Verified live tonight: registration, login, limit buy/sell orders. Quick-buy was
    - Some hybrid (manual entry now, revisit a paid API once the user base justifies the cost)
 3. **Version control.** This project has no git repository anywhere on your machine right now. Want me to set one up (with a `.gitignore` that correctly excludes `.env`, `node_modules`, `venv`, `__pycache__`) so you have real history and can safely experiment? I'd want to confirm where you want it hosted (just local, or pushed to a private GitHub repo) before doing anything, since that's a bigger decision than editing code.
 4. **Deployment target.** Everything currently runs on your own machine (`localhost`). If/when you want other people to actually use this, the backend and frontend both need real hosting (separate from the already-live Supabase/Upstash) — worth a dedicated conversation when you're ready, not something to decide now.
+
+
+---
+
+## Pending setup (added Oct 29, 2026)
+
+- [ ] **Set up real emails (forgot-password + verification).** Currently `EMAIL_PROVIDER=console`, so forgot-password does NOT work for real
+  users (codes only appear in Render logs). Follow "Option B — Gmail" in `EMAIL_SETUP.md` (dedicated Gmail + App Password + paid Render
+  plan), or Option A (own domain + Resend). Do this before inviting real users.
