@@ -1,3 +1,4 @@
+import { timeAgo } from '../lib/timeAgo';
 import { useEffect, useRef, useState } from 'react';
 import { X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -128,14 +129,6 @@ function playerName(m: MarketSnapshot): string {
   return m.real_name || m.gamertag;
 }
 
-function timeAgo(iso: string): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.floor(minutes / 60)}h ago`;
-}
 
 /** A recent-trades tape for this one player -- the closest real-data
  * equivalent to ForecastDemo's live bid/ask order-book ladder that the
