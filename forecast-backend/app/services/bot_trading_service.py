@@ -125,7 +125,7 @@ HISTORY_RECENCY_DECAY = 0.85
 HISTORY_MAX_RESULTS_PER_PLAYER = 20
 PERFORMANCE_ELASTICITY = 0.5
 PERFORMANCE_MULT_MIN = 0.4
-PERFORMANCE_MULT_MAX = 3.0
+PERFORMANCE_MULT_MAX = 6.0
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -249,7 +249,7 @@ def _compute_fair_value(base_price: Decimal, own_ev: Decimal | None, roster_medi
     """Skill-based fair value, anchored to ONE roster-wide base price (the median IPO price), NOT to each player's own
     IPO price. Every Osirion-created player starts at the same default IPO price whatever their skill, so scaling that
     price by skill is what separates the stars from the rest: a player earning as much as the median pro is worth the
-    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.4, 3.0]."""
+    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.4, 6.0] (a 3.0 cap used to flatten every top earner to the same value)."""
     if own_ev is None or roster_median_ev is None or roster_median_ev <= 0:
         return base_price * Decimal(str(UNPROVEN_MULT))
     ratio = float(own_ev / roster_median_ev)
