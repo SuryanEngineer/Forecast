@@ -490,3 +490,27 @@ python3 scripts/manage_seasons.py list
 The server rolls seasons over by itself (maintenance loop). When Epic announces a new season or an end date, either add it
 to `FORTNITE_CALENDAR` and re-run `sync-calendar`, or use `manage_seasons.py create/set`. The site shows the current season in
 the sidebar and marks each season start on the price charts.
+
+
+## Bot pace, prices and database limits
+
+**How prices work now.** The listed price is the last trade, pulled up to the best resting bid if buyers are bidding above it, or down to the best resting ask if sellers are asking below it (never more than 25% away from the last trade, and only orders worth at least $100 count, so a 1-share order cannot move a price). Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.
+
+**Pace knobs** (Render → backend → Environment; all optional, defaults shown):
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BOT_TICK_INTERVAL_SECONDS` | 15 | seconds between bot ticks |
+| `BOT_ACTIONS_PER_TICK` | 4 | max orders the whole bot population places per tick |
+| `BOT_MM_PLAYERS_PER_TICK` | 3 | max market-maker re-quotes per tick |
+| `BOT_STATE_REFRESH_SECONDS` | 900 | how often bot wallets/holdings are re-read (cached in between) |
+
+Every order costs the database a few KB of reads, so these are the dials for Supabase's free 5 GB/month egress. Watch **Supabase → Settings → Usage** for a day: if egress is trending above ~150 MB/day, double `BOT_TICK_INTERVAL_SECONDS` or halve `BOT_ACTIONS_PER_TICK`; if you are far below, raise them for a livelier feed.
+
+**Disk guard.** A background job prunes bot-only history: bot-vs-bot trades, bot wallet ledger rows and finished bot orders older than `RETENTION_BOT_TRADE_DAYS` (3), bot share-ledger rows older than `RETENTION_SHARE_LEDGER_DAYS` (30), and thins price history older than `RETENTION_SNAPSHOT_DAYS` (14) to one point per player per hour. Nothing a human did is ever deleted. Turn it off with `RETENTION_ENABLED=false`.
+
+**One-time price clean-up after deploying this version** (prices that were previously far off converge by themselves, this just speeds it up). Run once, from `forecast-backend`, against production:
+
+```powershell
+python3 scripts/kickstart_market.py --ticks 150
+```

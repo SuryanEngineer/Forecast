@@ -54,3 +54,17 @@ class PriceHistoryPointResponse(BaseModel):
     recorded_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BookLevelResponse(BaseModel):
+    price: Decimal
+    quantity: int  # shares resting at this price
+    orders: int
+
+
+class OrderBookResponse(BaseModel):
+    """Aggregated resting limit orders for one player (best price first on both sides)."""
+
+    bids: list[BookLevelResponse]
+    asks: list[BookLevelResponse]
+    last_trade: Decimal | None = None  # last executed price (the listed price may sit at the best bid / ask instead)

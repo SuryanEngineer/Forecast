@@ -17,6 +17,7 @@ from app.models.tournament import PlacementResult, Tournament, TournamentEntrant
 from app.models.user import User
 from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
 from app.schemas.tournament import (
+    AnnouncedTournamentResponse,
     CalendarTournamentResponse,
     GameResultsResponse,
     GameStatResponse,
@@ -34,7 +35,7 @@ from app.schemas.tournament import (
     TournamentResponse,
     compute_tournament_phase,
 )
-from app.services import dividend_service, economic_params_service, position_service
+from app.services import dividend_service, economic_params_service, osirion_service, position_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
@@ -122,6 +123,15 @@ def get_tournament_calendar(
         )
     db.commit()
     return rows
+
+
+@router.get("/announced", response_model=list[AnnouncedTournamentResponse])
+def get_announced_tournaments(db: Session = Depends(get_db)) -> list[AnnouncedTournamentResponse]:
+    """Future events Osirion has announced that qualify but aren't tracked yet, so the calendar is complete even before a
+    window's payout table is published. Cached server-side for 15 minutes. Registered above /{tournament_id}."""
+    rows = osirion_service.list_announced_events(db)
+    db.commit()  # region-multiplier defaults may have been seeded while projecting pools
+    return [AnnouncedTournamentResponse(**row) for row in rows]
 
 
 @router.get("/{tournament_id}/entrants", response_model=list[TournamentEntrantResponse])

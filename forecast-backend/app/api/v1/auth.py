@@ -13,7 +13,6 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.schemas.auth import (
-    CodeRequest,
     LoginRequest,
     MessageResponse,
     PasswordResetConfirmRequest,
@@ -24,9 +23,7 @@ from app.schemas.auth import (
 )
 from app.services import (
     account_service,
-    auth_code_service,
     economic_params_service,
-    email_service,
     password_reset_service,
     session_service,
     wallet_service,
@@ -52,7 +49,7 @@ def _aware(dt: datetime) -> datetime:
 def user_response(user: User) -> UserResponse:
     return UserResponse(
         id=user.id, email=user.email, display_name=user.display_name, role=user.role.value, tag=user.tag,
-        tag_color=user.tag_color, email_verified=user.email_verified_at is not None, created_at=user.created_at,
+        tag_color=user.tag_color, created_at=user.created_at,
     )
 
 
@@ -85,15 +82,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         wallet_service.deposit(db, user.id, starting_balance, memo="Starting balance")
     ip, ua = _client(request)
     session_service.start_session(db, user, "register", ip, ua)
-    verify_code = None
-    try:
-        verify_code = auth_code_service.issue_code(db, user.id, "verify_email")
-    except auth_code_service.CodeRateLimited:
-        pass
     db.commit()
-
-    if verify_code:
-        email_service.send_verify_email_code(user.email, verify_code)
     return TokenResponse(access_token=create_access_token(user.id), user_id=user.id)
 
 
@@ -162,31 +151,3 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest, db: Session = D
     if not ok:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That code is invalid or has expired.")
     return MessageResponse(message="Password updated. You can now log in with your new password.")
-
-
-# ---- Email verification ------------------------------------------------------------------------------------------
-
-@router.post("/email/send-verification", response_model=MessageResponse)
-def send_verification(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
-    if user.email_verified_at is not None:
-        return MessageResponse(message="Your email is already verified.")
-    try:
-        code = auth_code_service.issue_code(db, user.id, "verify_email")
-    except auth_code_service.CodeRateLimited as exc:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
-    db.commit()
-    email_service.send_verify_email_code(user.email, code)
-    return MessageResponse(message="Verification code sent.")
-
-
-@router.post("/email/verify", response_model=MessageResponse)
-def verify_email(payload: CodeRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
-    if user.email_verified_at is not None:
-        return MessageResponse(message="Your email is already verified.")
-    row = auth_code_service.verify_code(db, user.id, "verify_email", payload.code)
-    if row is None:
-        db.commit()  # persist the failed-attempt counter
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That code is invalid or has expired.")
-    user.email_verified_at = datetime.now(timezone.utc)
-    db.commit()
-    return MessageResponse(message="Email verified.")

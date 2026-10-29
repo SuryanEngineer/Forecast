@@ -53,7 +53,7 @@ function Privacy() {
         <p>Usage data: when you log in, how long and how often you use the site (session activity), and your IP address and browser type for security and abuse prevention. We use this to run and improve the game and to protect accounts.</p>
       </Section>
       <Section title="How we use it">
-        <p>To operate your account, show leaderboards, send account emails (verification codes, password resets, security notices), keep the service secure, and understand how the game is used so we can improve it. We don't send marketing email unless you opt in, and we don't sell your personal data.</p>
+        <p>To operate your account, show leaderboards, send account emails (password-reset codes, security notices), keep the service secure, and understand how the game is used so we can improve it. We don't send marketing email unless you opt in, and we don't sell your personal data.</p>
       </Section>
       <Section title="What others can see">
         <p>Your username, tag, rank, and portfolio standings appear on public leaderboards and may be viewable by other players. Your email is never shown to other users.</p>

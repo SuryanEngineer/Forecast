@@ -80,7 +80,7 @@ def user_table(db: Session) -> list[dict]:
         st = standings.get(u.id)
         rows.append({
             "email": u.email, "username": u.display_name, "created_at": _aware(u.created_at),
-            "email_verified": u.email_verified_at is not None, "active": u.is_active,
+            "active": u.is_active,
             "last_login": _aware(u.last_login_at), "last_seen": _aware(u.last_seen_at or last),
             "logins": u.login_count or 0, "sessions": n, "minutes_on_site": round(int(secs) / 60, 1),
             "avg_session_min": round(int(secs) / 60 / n, 1) if n else 0.0,
@@ -120,7 +120,6 @@ def kpis(db: Session, rows: list[dict] | None = None) -> dict:
         "active_24h": seen(1), "active_7d": seen(7), "active_30d": seen(30),
         "pct_ever_traded": round(100 * traded / total, 1) if total else 0.0,
         "pct_returning": round(100 * returning / total, 1) if total else 0.0,
-        "pct_email_verified": round(100 * sum(1 for r in rows if r["email_verified"]) / total, 1) if total else 0.0,
         "total_trades": sum(r["trades"] for r in rows), "total_minutes_on_site": round(sum(r["minutes_on_site"] for r in rows), 1),
         "avg_minutes_per_user": round(sum(r["minutes_on_site"] for r in rows) / total, 1) if total else 0.0,
         "avg_sessions_per_user": round(sum(r["sessions"] for r in rows) / total, 2) if total else 0.0,

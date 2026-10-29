@@ -37,7 +37,9 @@ import math
 import random
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
+from types import SimpleNamespace
+from typing import NamedTuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -51,9 +53,10 @@ from app.models.bot import BotProfile
 from app.models.dividend import DividendPayout, DividendPayoutStatus
 from app.models.order import Order, OrderSide, OrderStatus
 from app.models.player import Player, Position, PriceSnapshot
+from app.models.wallet import Wallet
 from app.models.tournament import PlacementResult, Tournament, TournamentEntrant, TournamentStatus
 from app.models.user import User, UserRole
-from app.services import economic_params_service, order_service, qualifier_model_service, wallet_service
+from app.services import book_price_service, economic_params_service, order_service, qualifier_model_service, wallet_service
 from app.services.bot_names import generate_username
 from app.services.exceptions import ServiceError
 
@@ -100,11 +103,16 @@ POSITION_CAP = {"whale": 0.30, "index_investor": 0.05, "scalper": 0.08, "dividen
 
 MIN_CASH_FRACTION = 0.03
 REST_PER_TICK = 2            # strategic resting-order refreshes per bot per tick
-TAKER_BUDGET_FRACTION = 0.06  # aggressive orders per tick across the whole population, as a fraction of the bots acting
+ANCHOR_SCALE = 0.5            # how much of a bot's style anchor to the recent trade average is kept (lower = values follow the model)
+TAKE_BAND = 0.10              # a take may reach this far through the current price (bigger moves than the old +-2%)
+REST_UP, REST_DOWN = 1.20, 0.70  # resting bids / asks are posted within this band of the current price
+STALE_AFTER_SECONDS = 4 * 3600   # a player with no trade for this long is "stale" and gets spotlighted
+SPOTLIGHT_PER_BOT = 3            # stale players added to each bot's watchlist (spreads trading across the whole market)
+RECENT_HALF_LIFE = 1800.0        # seconds; how long a player counts as "already busy" when picking what to trade
 BELIEF_EPOCH_SECONDS = 6 * 3600  # a bot's private beliefs drift (interpolated) over this period
 
 # Market makers
-MM_COVERAGE = 2            # every active player is quoted by at least this many makers
+MM_COVERAGE = 1            # every active player is quoted by at least this many makers
 MM_PLAYERS_PER_TICK = 6
 MM_PLAYERS_PER_MAKER = 25  # how many players one maker can reasonably cover (drives the minimum maker count)
 MM_MIN_MAKERS = 8
@@ -234,13 +242,20 @@ def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> 
     return _career_stats(db, player_ids)[0]
 
 
-def _compute_fair_value(ipo_price: Decimal, own_ev: Decimal | None, roster_median_ev: Decimal | None) -> Decimal:
+UNPROVEN_MULT = 0.75  # a player with no usable results is worth a bit less than the typical pro
+
+
+def _compute_fair_value(base_price: Decimal, own_ev: Decimal | None, roster_median_ev: Decimal | None) -> Decimal:
+    """Skill-based fair value, anchored to ONE roster-wide base price (the median IPO price), NOT to each player's own
+    IPO price. Every Osirion-created player starts at the same default IPO price whatever their skill, so scaling that
+    price by skill is what separates the stars from the rest: a player earning as much as the median pro is worth the
+    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.4, 3.0]."""
     if own_ev is None or roster_median_ev is None or roster_median_ev <= 0:
-        return ipo_price
+        return base_price * Decimal(str(UNPROVEN_MULT))
     ratio = float(own_ev / roster_median_ev)
     multiplier = ratio**PERFORMANCE_ELASTICITY if ratio > 0 else 0.0
     multiplier = _clamp(multiplier, PERFORMANCE_MULT_MIN, PERFORMANCE_MULT_MAX)
-    return ipo_price * Decimal(str(round(multiplier, 6)))
+    return base_price * Decimal(str(round(multiplier, 6)))
 
 
 def _realized_dividends_per_share(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[float]]:
@@ -319,6 +334,8 @@ class MarketSnapshot:
     qual_uncertainty: dict[uuid.UUID, float] = field(default_factory=dict)
     movers: list = field(default_factory=list)  # players the whole market is looking at right now (big moves / news)
     best_recent_placement: dict[uuid.UUID, int] = field(default_factory=dict)
+    stale: list = field(default_factory=list)  # players nobody has traded for a while, stalest first (capped)
+    base_price: Decimal = Decimal("70")
 
 
 def _find_movers(pct_change, signals, qviews) -> list:
@@ -355,25 +372,97 @@ def _slow(key: str, ids: list, loader):
     return value
 
 
+_PLAYER_CACHE: dict = {"t": 0.0, "key": None, "rows": []}
+_HIST: dict = {"cursor": None, "roster": None, "full_at": 0.0, "buckets": {}, "last_ts": {}}
+PLAYER_CACHE_SECONDS = 120
+HISTORY_FULL_RELOAD_SECONDS = 3600
+
+
+def reset_caches() -> None:
+    """Forget everything cached between ticks (tests, scripts that edit the DB behind the bots' back)."""
+    _PLAYER_CACHE.update(t=0.0, key=None, rows=[])
+    _HIST.update(cursor=None, roster=None, full_at=0.0, buckets={}, last_ts={})
+    _SLOW_CACHE.clear()
+    _BOT_STATE.clear()
+    _STATE_META.update(loaded_at=0.0, key=None)
+    _RECENT.clear()
+
+
+def _load_players(db: Session):
+    """Active players as light rows (id, ipo_price, total_shares_outstanding, is_verified), reused for a couple of minutes
+    instead of re-reading the whole roster every tick. A cheap count/max(created_at) probe notices roster changes."""
+    probe = db.query(func.count(Player.id), func.max(Player.created_at)).filter(Player.is_active.is_(True)).one()
+    key = (int(probe[0] or 0), str(probe[1]))
+    now = time.monotonic()
+    if _PLAYER_CACHE["rows"] and _PLAYER_CACHE["key"] == key and now - _PLAYER_CACHE["t"] < PLAYER_CACHE_SECONDS:
+        return _PLAYER_CACHE["rows"]
+    rows = db.query(Player.id, Player.ipo_price, Player.total_shares_outstanding, Player.is_verified).filter(Player.is_active.is_(True)).all()
+    _PLAYER_CACHE.update(t=now, key=key, rows=rows)
+    return rows
+
+
+def _price_history(db: Session, player_ids: list[uuid.UUID], roster_key) -> tuple[dict, dict]:
+    """Newest-first deque of each player's last 20 trade prices plus the time of its last trade. After a full load the
+    cache only asks the database for snapshots newer than its cursor (a handful of rows per tick instead of thousands --
+    this loop runs all day, so it matters for the free plan's egress); a full reload happens hourly."""
+    now = time.monotonic()
+    h = _HIST
+    full = h["cursor"] is None or h["roster"] != roster_key or now - h["full_at"] > HISTORY_FULL_RELOAD_SECONDS
+    if full:
+        buckets: dict = {pid: deque(maxlen=20) for pid in player_ids}
+        last_ts: dict = {}
+        cursor = None
+        if player_ids:
+            rows = (
+                db.query(PriceSnapshot.player_id, PriceSnapshot.price, PriceSnapshot.recorded_at)
+                .filter(PriceSnapshot.player_id.in_(player_ids))
+                .order_by(PriceSnapshot.recorded_at.desc())
+                .limit(max(4000, len(player_ids) * 25))
+                .all()
+            )
+            for pid, price, at in rows:
+                b = buckets.get(pid)
+                if b is None:
+                    continue
+                if len(b) < 20:
+                    b.append(price)
+                if pid not in last_ts:
+                    last_ts[pid] = at
+                if cursor is None or _aware(at) > cursor:
+                    cursor = _aware(at)
+        h.update(cursor=cursor or datetime.now(timezone.utc) - timedelta(minutes=1), roster=roster_key, full_at=now, buckets=buckets, last_ts=last_ts)
+    else:
+        rows = (
+            db.query(PriceSnapshot.player_id, PriceSnapshot.price, PriceSnapshot.recorded_at)
+            .filter(PriceSnapshot.recorded_at > h["cursor"], PriceSnapshot.player_id.in_(player_ids))
+            .order_by(PriceSnapshot.recorded_at.asc())
+            .all()
+        )
+        for pid, price, at in rows:
+            b = h["buckets"].get(pid)
+            if b is None:
+                b = h["buckets"][pid] = deque(maxlen=20)
+            b.appendleft(price)
+            h["last_ts"][pid] = at
+            if _aware(at) > h["cursor"]:
+                h["cursor"] = _aware(at)
+    return h["buckets"], h["last_ts"]
+
+
 def _build_snapshot(db: Session) -> MarketSnapshot:
-    players = db.query(Player).filter(Player.is_active.is_(True)).all()
+    players = _load_players(db)
     player_ids = [p.id for p in players]
     ipo_price_by_id = {p.id: p.ipo_price for p in players}
+    ipo_sorted = sorted(ipo_price_by_id.values())
+    base_price = ipo_sorted[len(ipo_sorted) // 2] if ipo_sorted else Decimal("70")
 
-    history: dict[uuid.UUID, list[Decimal]] = {pid: [] for pid in player_ids}
-    if player_ids:
-        for row in (
-            db.query(PriceSnapshot)
-            .filter(PriceSnapshot.player_id.in_(player_ids))
-            .order_by(PriceSnapshot.recorded_at.desc())
-            .limit(max(4000, len(player_ids) * 25))
-            .all()
-        ):
-            bucket = history.setdefault(row.player_id, [])
-            if len(bucket) < 20:
-                bucket.append(row.price)
+    buckets, last_ts = _price_history(db, player_ids, (len(player_ids), str(player_ids[:3])))
+    history = {pid: list(buckets.get(pid) or ()) for pid in player_ids}
 
-    price = {pid: (history[pid][0] if history.get(pid) else ipo_price_by_id[pid]) for pid in player_ids}
+    last_trade = {pid: (history[pid][0] if history.get(pid) else ipo_price_by_id[pid]) for pid in player_ids}
+    # The listed price also reflects the resting order book (bids above / asks below the last trade), exactly as users see it.
+    quotes = book_price_service.bulk_best_quotes(db)
+    price = {pid: book_price_service.effective_price(last_trade[pid], *quotes.get(pid, (None, None))) for pid in player_ids}
     ref_price = {
         pid: (sum(history[pid], Decimal("0")) / len(history[pid]) if history.get(pid) else ipo_price_by_id[pid])
         for pid in player_ids
@@ -388,7 +477,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     expected_value, form, career_fraction, career_strength = _slow("career", player_ids, lambda: _career_stats(db, player_ids))
     ev_values = sorted(expected_value.values())
     roster_median_ev = ev_values[len(ev_values) // 2] if ev_values else None
-    fair_value = {p.id: _compute_fair_value(p.ipo_price, expected_value.get(p.id), roster_median_ev) for p in players}
+    fair_value = {p.id: _compute_fair_value(base_price, expected_value.get(p.id), roster_median_ev) for p in players}
 
     # Expected dividend yield per share (net of fee), blended with what was actually paid out.
     fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
@@ -408,7 +497,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     positives = sorted(v for v in yield_raw.values() if v > 0)
     median_yield = positives[len(positives) // 2] if positives else None
 
-    events = _event_signals(db, player_ids)
+    events = dict(_slow("events", player_ids, lambda: _event_signals(db, player_ids)))
     qviews = _slow("qviews", player_ids, lambda: qualifier_model_service.build_views(db, player_ids, career_fraction, career_strength))
     # A qualifier-derived event time overrides the calendar signal when the player has no entrant row yet
     for pid, qv in qviews.items():
@@ -486,7 +575,17 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         qual_out=qual_out,
         qual_uncertainty={pid: qv.uncertainty for pid, qv in qviews.items()},
         movers=_find_movers(pct_change, signals, qviews),
+        stale=_stale_players(player_ids, last_ts),
+        base_price=base_price,
     )
+
+
+def _stale_players(player_ids: list, last_ts: dict) -> list:
+    """Players with no trade for STALE_AFTER_SECONDS (never-traded ones first), capped so the list stays small."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_AFTER_SECONDS)
+    never = [pid for pid in player_ids if pid not in last_ts]
+    old = sorted((pid for pid in player_ids if pid in last_ts and (_aware(last_ts[pid]) or cutoff) < cutoff), key=lambda pid: _aware(last_ts[pid]))
+    return (never + old)[:400]
 
 
 # --- Bot population ------------------------------------------------------------------------------------------------
@@ -628,7 +727,7 @@ def _bot_value(snapshot: MarketSnapshot, pid: uuid.UUID, pers: dict, user_id: uu
     ref = snapshot.ref_price.get(pid)
     if not model or not ref or model <= 0 or ref <= 0:
         return None
-    h = pers["anchor"]
+    h = max(0.02, pers["anchor"] * ANCHOR_SCALE)
     base = math.exp((1.0 - h) * math.log(float(model)) + h * math.log(float(ref)))
     # Belief drifts smoothly: interpolate between this epoch's draw and the next.
     pos = now_ts / BELIEF_EPOCH_SECONDS
@@ -657,7 +756,97 @@ def _weighted_sample(rng: random.Random, items: list, weights: list[float], k: i
     return [it for _, it in keyed[:k]]
 
 
-def _trim_open_orders(db: Session, user_id: uuid.UUID, orders: list[Order], max_open: int) -> set:
+class _O(NamedTuple):
+    id: uuid.UUID
+    player_id: uuid.UUID
+    side: OrderSide
+    limit_price: Decimal | None
+    created_at: datetime | None
+
+
+class _P(NamedTuple):
+    quantity: int
+    available_quantity: int
+
+
+class _W(NamedTuple):
+    available_balance: Decimal
+    held_balance: Decimal
+
+
+@dataclass
+class _BotState:
+    wallet: _W
+    positions: dict
+    orders: list
+
+
+# A bot's cash, holdings and open orders, kept in memory. Reading them from the database for every bot on every tick is
+# what would eat the free plan's egress, so they are bulk-loaded every BOT_STATE_REFRESH_SECONDS and re-read for a single
+# bot right after it places or cancels something. Slightly stale between refreshes is harmless: the order service
+# re-validates every order against the real balances, and a rejected one is simply skipped.
+_BOT_STATE: dict = {}
+_STATE_META: dict = {"loaded_at": 0.0, "key": None}
+_RECENT: dict = {}  # player id -> (decayed count of recent bot orders, monotonic time of last update)
+_OPEN_STATUSES = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
+
+
+def _load_states(db: Session, user_ids: list) -> None:
+    wallets = {
+        uid: _W(cash - held, held)
+        for uid, cash, held in db.query(Wallet.user_id, Wallet.cash_balance, Wallet.held_balance).filter(Wallet.user_id.in_(user_ids)).all()
+    }
+    positions: dict = defaultdict(dict)
+    for uid, pid, qty, held in db.query(Position.user_id, Position.player_id, Position.quantity, Position.held_quantity).filter(
+        Position.user_id.in_(user_ids), Position.quantity > 0
+    ):
+        positions[uid][pid] = _P(int(qty), int(qty) - int(held or 0))
+    orders: dict = defaultdict(list)
+    for oid, uid, pid, side, lp, at in db.query(Order.id, Order.user_id, Order.player_id, Order.side, Order.limit_price, Order.created_at).filter(
+        Order.user_id.in_(user_ids), Order.status.in_(_OPEN_STATUSES)
+    ):
+        orders[uid].append(_O(oid, pid, side, lp, at))
+    _BOT_STATE.clear()
+    for uid in user_ids:
+        _BOT_STATE[uid] = _BotState(wallets.get(uid, _W(Decimal("0"), Decimal("0"))), dict(positions.get(uid, {})), list(orders.get(uid, [])))
+    _STATE_META.update(loaded_at=time.monotonic(), key=len(user_ids))
+
+
+def _reload_state(db: Session, user_id: uuid.UUID) -> None:
+    cash, held = db.query(Wallet.cash_balance, Wallet.held_balance).filter(Wallet.user_id == user_id).one_or_none() or (Decimal("0"), Decimal("0"))
+    positions = {
+        pid: _P(int(q), int(q) - int(h or 0))
+        for pid, q, h in db.query(Position.player_id, Position.quantity, Position.held_quantity).filter(Position.user_id == user_id, Position.quantity > 0)
+    }
+    orders = [
+        _O(oid, pid, side, lp, at)
+        for oid, pid, side, lp, at in db.query(Order.id, Order.player_id, Order.side, Order.limit_price, Order.created_at).filter(
+            Order.user_id == user_id, Order.status.in_(_OPEN_STATUSES)
+        )
+    ]
+    _BOT_STATE[user_id] = _BotState(_W(cash - held, held), positions, orders)
+
+
+def _get_state(db: Session, user_id: uuid.UUID) -> _BotState:
+    st = _BOT_STATE.get(user_id)
+    if st is None:
+        _reload_state(db, user_id)
+        st = _BOT_STATE[user_id]
+    return st
+
+
+def _busy(pid: uuid.UUID, now: float) -> float:
+    hit = _RECENT.get(pid)
+    if hit is None:
+        return 0.0
+    return hit[0] * 0.5 ** ((now - hit[1]) / RECENT_HALF_LIFE)
+
+
+def _note_order(pid: uuid.UUID, now: float) -> None:
+    _RECENT[pid] = (_busy(pid, now) + 1.0, now)
+
+
+def _trim_open_orders(db: Session, user_id: uuid.UUID, orders: list, max_open: int) -> set:
     """Cancels stale / excess resting orders (oldest first) so cash and shares don't stay tied up. Returns the ids
     that were cancelled."""
     now = datetime.now(timezone.utc)
@@ -690,7 +879,7 @@ def _submit(db, user_id, pid, side: OrderSide, qty: int, limit_price: float | No
     return True
 
 
-def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapshot: MarketSnapshot, params: dict, rng: random.Random, budget: dict) -> bool:
+def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot, params: dict, rng: random.Random, budget: dict) -> bool:
     strategy = profile_row.strategy
     profile = STRATEGY_PROFILE.get(strategy, DEFAULT_PROFILE)
     if profile["skip_prob"] > 0 and rng.random() < profile["skip_prob"]:
@@ -701,24 +890,17 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
     cash_fraction_cap = float(params["max_trade_cash_fraction"])
     share_fraction_cap = float(params["max_trade_share_fraction"])
 
-    open_orders = (
-        db.query(Order)
-        .filter(Order.user_id == bot_user.id, Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]))
-        .all()
-    )
+    state = _get_state(db, bot_user.id)
+    open_orders = state.orders
     cancelled = _trim_open_orders(db, bot_user.id, open_orders, pers["max_open"])
     acted = bool(cancelled)
-    by_player: dict[uuid.UUID, list[Order]] = defaultdict(list)
+    by_player: dict[uuid.UUID, list] = defaultdict(list)
     for o in open_orders:
         if o.id not in cancelled:
             by_player[o.player_id].append(o)
 
-    wallet = wallet_service.get_or_create_wallet(db, bot_user.id)
-    holdings = {
-        pos.player_id: pos
-        for pos in db.query(Position).filter(Position.user_id == bot_user.id, Position.quantity > 0).all()
-        if pos.player_id in snapshot.price
-    }
+    wallet = state.wallet
+    holdings = {pid: pos for pid, pos in state.positions.items() if pid in snapshot.price}
     held_value = sum(float(snapshot.price[pid]) * pos.quantity for pid, pos in holdings.items())
     cash = float(wallet.available_balance)
     portfolio = cash + float(getattr(wallet, "held_balance", 0) or 0) + held_value
@@ -740,6 +922,11 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
     for pid in held_ids:
         if pid not in watch:
             watch.append(pid)
+    # Spotlight: players nobody has traded for hours, so activity reaches the whole market and not just the popular names.
+    if snapshot.stale:
+        for pid in rng.sample(snapshot.stale, min(len(snapshot.stale), SPOTLIGHT_PER_BOT)):
+            if pid not in watch:
+                watch.append(pid)
     alerts = [pid for pid in snapshot.movers if pid not in watch]
     for pid in rng.sample(alerts, min(len(alerts), 2 + pers["attention"] // 6)):
         watch.append(pid)
@@ -762,9 +949,11 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
     # ---- 1) Take: the price has crossed this bot's value by more than its required margin.
     handled: set = set()
     takes = 0
-    for pid, px, v, m in sorted(opps, key=lambda o: abs(math.log(o[2] / o[1])), reverse=True):
-        if takes >= pers["max_takes"] or budget["takes"] <= 0:
+    for pid, px, v, m in sorted(opps, key=lambda o: abs(math.log(o[2] / o[1])) / (1.0 + _busy(o[0], now_ts)), reverse=True):
+        if takes >= pers["max_takes"] or budget["takes"] <= 0 or budget["orders"] <= 0:
             break
+        if pid in budget["touched"]:
+            continue
         pos = holdings.get(pid)
         buy_edge = v / px - 1.0 - m
         sell_edge = px / v - 1.0 - m
@@ -776,38 +965,49 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
         try:
             if buy_edge > 0 and cash / portfolio > MIN_CASH_FRACTION:
                 spend = min(cash * cash_fraction_cap * size_mult * dampener * (0.6 + conviction), position_room(pid, px))
-                limit = min(v * (1.0 - m * 0.5), px * 1.02)
+                limit = min(v * (1.0 - m * 0.5), px * (1.0 + TAKE_BAND))
                 qty = int(spend // max(limit, 0.01))
                 if _submit(db, bot_user.id, pid, OrderSide.BUY, qty, None if instant else limit):
                     cash -= qty * limit
                     acted = True
                     takes += 1
                     budget["takes"] -= 1
+                    budget["orders"] -= 1
+                    budget["touched"].add(pid)
+                    _note_order(pid, now_ts)
                     handled.add(pid)
             elif sell_edge > 0 and pos is not None and pos.available_quantity > 0:
                 frac = min(1.0, share_fraction_cap * size_mult * dampener * (0.6 + conviction))
                 qty = min(pos.available_quantity, max(1, int(pos.available_quantity * frac)))
-                limit = max(v * (1.0 + m * 0.5), px * 0.98)
+                limit = max(v * (1.0 + m * 0.5), px * (1.0 - TAKE_BAND))
                 if _submit(db, bot_user.id, pid, OrderSide.SELL, qty, None if instant else limit):
                     acted = True
                     takes += 1
                     budget["takes"] -= 1
+                    budget["orders"] -= 1
+                    budget["touched"].add(pid)
+                    _note_order(pid, now_ts)
                     handled.add(pid)
         except (ServiceError, ValueError):
             continue
 
     # ---- 2) Rest: strategic orders at its own value band, even when it doesn't want to trade at today's price.
     rests = 0
-    for pid, px, v, m in opps:
-        if rests >= REST_PER_TICK:
+    rest_order = list(opps)
+    rng.shuffle(rest_order)
+    for pid, px, v, m in rest_order:
+        if rests >= REST_PER_TICK or budget["orders"] <= 0:
             break
-        if pid in handled:
+        if pid in handled or pid in budget["touched"]:
             continue
-        bid = min(v * (1.0 - m), px * 0.998)
-        ask = max(v * (1.0 + m), px * 1.002)
-        if not (0.7 * px <= bid):
+        # Quotes sit at the bot's own value band, even when that is on the far side of today's price: a bid above the
+        # last trade (it thinks the stock is cheap) or an ask below it (it thinks it is dear) is exactly what moves the
+        # listed price (see book_price_service).
+        bid = min(v * (1.0 - m), px * REST_UP)
+        ask = max(v * (1.0 + m), px * REST_DOWN)
+        if bid < REST_DOWN * px:
             bid = 0.0
-        if not (ask <= 1.45 * px):
+        if ask > 1.45 * px:
             ask = 0.0
         pos = holdings.get(pid)
         can_ask = ask > 0 and pos is not None and pos.available_quantity > 0
@@ -820,6 +1020,7 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
         need_ask = can_ask and not has_ask
         if not (need_bid or need_ask):
             continue
+        placed = False
         try:
             # Replace this bot's stale quotes on the player before posting fresh ones.
             for o in existing:
@@ -832,10 +1033,17 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
                 if _submit(db, bot_user.id, pid, OrderSide.BUY, qty, bid):
                     cash -= qty * bid
                     acted = True
+                    budget["orders"] -= 1
+                    placed = True
             if need_ask and pos is not None:
                 qty = min(pos.available_quantity, max(1, int(pos.available_quantity * rng.uniform(0.2, 0.5))))
                 if _submit(db, bot_user.id, pid, OrderSide.SELL, qty, ask):
                     acted = True
+                    budget["orders"] -= 1
+                    placed = True
+            if placed:
+                budget["touched"].add(pid)
+                _note_order(pid, now_ts)
             rests += 1
         except (ServiceError, ValueError):
             continue
@@ -846,20 +1054,17 @@ def _run_bot_agent(db: Session, bot_user: User, profile_row: BotProfile, snapsho
 # --- Market makers ------------------------------------------------------------------------------------------------
 
 
-def _run_liquidity_provider(db: Session, bot_user: User, profile_row: BotProfile, snapshot: MarketSnapshot, params: dict, rng: random.Random) -> bool:
+def _run_liquidity_provider(db: Session, bot_user, profile_row, snapshot: MarketSnapshot, params: dict, rng: random.Random, budget: dict | None = None) -> bool:
     assigned = [uuid.UUID(s) for s in (profile_row.mm_player_ids or [])]
     if not assigned:
         return False
     assigned_set = set(assigned)
 
-    open_orders = (
-        db.query(Order)
-        .filter(Order.user_id == bot_user.id, Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]))
-        .all()
-    )
-    by_player: dict[uuid.UUID, list[Order]] = defaultdict(list)
-    for o in open_orders:
+    state = _get_state(db, bot_user.id)
+    by_player: dict[uuid.UUID, list] = defaultdict(list)
+    for o in state.orders:
         by_player[o.player_id].append(o)
+    mm_budget = budget if budget is not None else {"mm": MM_PLAYERS_PER_TICK}
 
     acted = False
     # Quotes on players this maker no longer covers (assignment was rebalanced) are pulled.
@@ -878,6 +1083,8 @@ def _run_liquidity_provider(db: Session, bot_user: User, profile_row: BotProfile
     targets = assigned[:MM_PLAYERS_PER_TICK]
 
     for pid in targets:
+        if mm_budget["mm"] <= 0:
+            break
         price = snapshot.price.get(pid)
         if not price or price <= 0:
             continue
@@ -892,10 +1099,10 @@ def _run_liquidity_provider(db: Session, bot_user: User, profile_row: BotProfile
             continue
 
         existing = by_player.get(pid, [])
-        position = db.query(Position).filter(Position.user_id == bot_user.id, Position.player_id == pid).one_or_none()
+        position = state.positions.get(pid)
         have = position.available_quantity if position is not None else 0
 
-        tol = price * spread * Decimal("0.5")
+        tol = price * spread
         bid_ok = any(o.side == OrderSide.BUY and o.limit_price is not None and abs(o.limit_price - bid) <= tol for o in existing)
         ask_ok = any(o.side == OrderSide.SELL and o.limit_price is not None and abs(o.limit_price - ask) <= tol for o in existing)
         if bid_ok and (ask_ok or have == 0):
@@ -908,7 +1115,8 @@ def _run_liquidity_provider(db: Session, bot_user: User, profile_row: BotProfile
             except ServiceError:
                 pass
 
-        wallet = wallet_service.get_or_create_wallet(db, bot_user.id)
+        mm_budget["mm"] -= 1
+        wallet = state.wallet
         quote_fraction = params["mm_quote_size_fraction"]
         max_qty = max(1, snapshot.shares_outstanding.get(pid, 10_000) // 100)
 
@@ -920,8 +1128,6 @@ def _run_liquidity_provider(db: Session, bot_user: User, profile_row: BotProfile
             except ServiceError:
                 pass
 
-        position = db.query(Position).filter(Position.user_id == bot_user.id, Position.player_id == pid).one_or_none()
-        have = position.available_quantity if position is not None else 0
         if have > 0:
             ask_qty = min(have, max(1, int(have * quote_fraction * 4)), max_qty)
             try:
@@ -970,32 +1176,57 @@ def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
     if _ensure_mm_coverage(db, snapshot, rng):
         db.commit()
 
+    now_m = time.monotonic()
+    if _STATE_META["key"] != len(bots) or now_m - _STATE_META["loaded_at"] > max(30, int(settings.BOT_STATE_REFRESH_SECONDS)):
+        _load_states(db, [b.user_id for b in bots])
+
+    # Plain copies: committing after each bot expires ORM objects, and re-reading every bot row after every commit is waste.
+    bots = [SimpleNamespace(user_id=b.user_id, strategy=b.strategy, mm_player_ids=list(b.mm_player_ids or [])) for b in bots]
     makers = [b for b in bots if b.strategy == "liquidity_provider"]
     agents = [b for b in bots if b.strategy != "liquidity_provider"]
     n_active = max(1, int(len(agents) * float(params["participation_rate"]))) if agents else 0
-    active = rng.sample(agents, k=min(n_active, len(agents))) + [m for m in makers if rng.random() < 0.8]
-    rng.shuffle(active)
-    # Caps how many aggressive (taking) orders the whole population fires this tick: lively, not frantic.
-    budget = {"takes": max(2, round(TAKER_BUDGET_FRACTION * max(1, len(agents))))}
+    active_agents = rng.sample(agents, k=min(n_active, len(agents)))
+    # Makers that still have players with no quotes go first (coverage builds up fastest where it is missing).
+    active_makers = [m for m in makers if rng.random() < 0.8]
+    def _unquoted(m) -> int:
+        quoted = {o.player_id for o in (_BOT_STATE.get(m.user_id).orders if _BOT_STATE.get(m.user_id) else [])}
+        return 0 if any(uuid.UUID(x) not in quoted for x in (m.mm_player_ids or [])) else 1
+    rng.shuffle(active_makers)
+    active_makers.sort(key=_unquoted)
+    active = active_agents + active_makers
+    rng.shuffle(active_agents)
+    # Pace controls. `orders` caps every order the whole population places this tick (each one costs database traffic, so
+    # this is the main egress/disk knob: BOT_ACTIONS_PER_TICK); `takes` is the share of those that may be aggressive, so
+    # resting quotes (the visible order book) always get a turn; `mm` caps maker re-quotes; `touched` spreads the
+    # orders over different players.
+    n_orders = max(1, int(settings.BOT_ACTIONS_PER_TICK))
+    budget = {"orders": n_orders, "takes": max(1, round(0.6 * n_orders)), "mm": max(1, int(settings.BOT_MM_PLAYERS_PER_TICK)), "touched": set()}
 
     actions = 0
     errors = 0
-    for profile_row in active:
-        bot_user = db.get(User, profile_row.user_id)
-        if bot_user is None or not bot_user.is_active:
+    # Makers first (they keep the book populated), then directional bots shuffled.
+    order = active_makers + active_agents
+    for profile_row in order:
+        is_maker = profile_row.strategy == "liquidity_provider"
+        if is_maker and budget["mm"] <= 0:
             continue
+        if not is_maker and budget["orders"] <= 0:
+            break
+        bot_user = SimpleNamespace(id=profile_row.user_id)
         try:
-            if profile_row.strategy == "liquidity_provider":
-                acted = _run_liquidity_provider(db, bot_user, profile_row, snapshot, params, rng)
+            if is_maker:
+                acted = _run_liquidity_provider(db, bot_user, profile_row, snapshot, params, rng, budget)
             else:
                 acted = _run_bot_agent(db, bot_user, profile_row, snapshot, params, rng, budget)
             if acted:
                 db.commit()
+                _reload_state(db, bot_user.id)
                 actions += 1
             else:
                 db.rollback()
         except (ServiceError, ValueError):
             db.rollback()
             errors += 1
+            _BOT_STATE.pop(profile_row.user_id, None)  # re-read next time: the cached view was probably stale
 
     return {"population": len(bots), "active": len(active), "actions": actions, "errors": errors}

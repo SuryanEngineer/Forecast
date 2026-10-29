@@ -15,10 +15,14 @@ full reasoning), so running a burst of these is really just fast-forwarding
 the same organic price discovery the app already does on its own, not a
 separate/different mechanism.
 
+The live loop deliberately places only a few orders per tick (BOT_ACTIONS_PER_TICK, BOT_MM_PLAYERS_PER_TICK) to protect
+the database's free-plan limits; this script raises both for the duration of the run so a fresh roster gets priced
+quickly. Run it against a database you are happy to write a few thousand rows to.
+
 Usage:
     cd forecast-backend
-    python3 scripts/kickstart_market.py            # 100 ticks (default)
-    python3 scripts/kickstart_market.py --ticks 300
+    python3 scripts/kickstart_market.py            # 100 ticks (default), 40 orders + 30 maker quotes per tick
+    python3 scripts/kickstart_market.py --ticks 300 --orders 60 --maker-quotes 40
 """
 from __future__ import annotations
 
@@ -35,7 +39,14 @@ from app.services import bot_trading_service  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ticks", type=int, default=100, help="Number of bot ticks to run (default: 100).")
+    parser.add_argument("--orders", type=int, default=40, help="Orders the bot population may place per tick (default 40).")
+    parser.add_argument("--maker-quotes", type=int, default=30, help="Market-maker player re-quotes per tick (default 30).")
     args = parser.parse_args()
+    from app.core.config import settings  # noqa: E402
+
+    settings.BOT_ACTIONS_PER_TICK = max(1, args.orders)
+    settings.BOT_MM_PLAYERS_PER_TICK = max(1, args.maker_quotes)
+    bot_trading_service.reset_caches()
 
     rng = random.Random()
     db = SessionLocal()

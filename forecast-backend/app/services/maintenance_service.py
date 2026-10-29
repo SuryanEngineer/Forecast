@@ -7,6 +7,7 @@ loop in app/main.py. Every step is idempotent and individually fault-isolated:
  2. treasury    - accrues whole days of interest on active treasury holdings (previously nothing scheduled this).
  3. snapshots   - upserts today's net-worth snapshot for every user (feeds best/worst day) every ~15 min.
  4. seasons     - finalizes an ended season / activates a scheduled one.
+ 5. retention   - prunes old bot-only history so the database stays small (see retention_service.py).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.dividend import DividendPayout, DividendPayoutStatus
-from app.services import dividend_service, season_service, stats_service, treasury_service
+from app.services import dividend_service, retention_service, season_service, stats_service, treasury_service
 
 logger = logging.getLogger("forecast.maintenance")
 SNAPSHOT_EVERY_SECONDS = 15 * 60
@@ -53,6 +54,7 @@ def run_maintenance_pass(db: Session, force_snapshot: bool = False) -> dict:
         ("payouts_processed", lambda: sweep_pending_payouts(db)),
         ("treasury_accrued", lambda: treasury_service.accrue_due_holdings(db)),
         ("season_actions", lambda: season_service.run_rollover(db)),
+        ("retention", lambda: retention_service.run_retention(db)),
     ):
         try:
             out[name] = fn()

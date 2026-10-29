@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import type {
+  AnnouncedTournament,
   CalendarTournamentResponse,
   LeaderboardEntry,
   LiveLeaderboardResponse,
@@ -164,6 +165,10 @@ export function useTournamentsList() {
 export function useTournamentCalendar(includeCompleted = false) {
   return usePolledFetch<CalendarTournamentResponse[]>(
     includeCompleted ? '/tournaments/calendar?include_completed=true' : '/tournaments/calendar', [], 45_000);
+}
+
+export function useAnnouncedTournaments() {
+  return usePolledFetch<AnnouncedTournament[]>('/tournaments/announced', [], 5 * 60_000);
 }
 
 export function useLeaderboard() {

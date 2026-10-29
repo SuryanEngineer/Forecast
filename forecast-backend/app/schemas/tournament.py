@@ -289,6 +289,21 @@ class CalendarTournamentResponse(BaseModel):
         return compute_tournament_phase(self.status, self.start_time, self.end_time)
 
 
+class AnnouncedTournamentResponse(BaseModel):
+    """An event Osirion has announced for the future that qualifies for this platform but is not a tracked Tournament yet
+    (GET /tournaments/announced) -- it becomes a normal calendar row automatically once its payout details appear."""
+
+    event_id: str
+    name: str
+    tournament_type: TournamentType
+    region: str | None
+    start_time: datetime | None
+    end_time: datetime | None
+    total_dividend_pool: Decimal | None = None
+    # False when only a qualifier/heat window is published so far: the date shown is that window's, not the Finals'.
+    finals_confirmed: bool = True
+
+
 class TournamentEntrantResponse(BaseModel):
     """One player known to have qualified for a tournament, before real
     placement results exist for it -- see

@@ -50,6 +50,10 @@ DEFAULT_MARKET_IMPACT_COEFFICIENT = Decimal("0.15")
 DEFAULT_SYNTHETIC_DEPTH_FRACTION = Decimal("0.01")  # 1% of shares outstanding
 DEFAULT_MIN_SYNTHETIC_DEPTH = Decimal("100")
 MIN_PRICE = Decimal("0.01")
+# Slippage on the synthetic (House) leg never exceeds this fraction of the reference price. Without a cap one large
+# quick order (impact grows with size/depth) priced at +100% or more became the "last price" and dragged the listed
+# price far above value; the cap keeps any single trade's price footprint bounded.
+MAX_SYNTHETIC_IMPACT = Decimal("0.25")
 
 SYSTEM_LIQUIDITY_MAKER_ID = "SYSTEM_LIQUIDITY"
 
@@ -140,12 +144,11 @@ def estimate_quick_order_cost(
         reference_price = book.mid_price() or fallback_reference_price
         if reference_price is None:
             return None
-        impact_ratio = remaining / depth
+        impact = min(market_impact_coefficient * (remaining / depth), MAX_SYNTHETIC_IMPACT)
         if side == Side.BUY:
-            synthetic_price = reference_price * (Decimal("1") + market_impact_coefficient * impact_ratio)
+            synthetic_price = reference_price * (Decimal("1") + impact)
         else:
-            synthetic_price = reference_price * (Decimal("1") - market_impact_coefficient * impact_ratio)
-            synthetic_price = max(synthetic_price, MIN_PRICE)
+            synthetic_price = max(reference_price * (Decimal("1") - impact), MIN_PRICE)
         total_notional += remaining * synthetic_price
 
     return total_notional
@@ -213,12 +216,11 @@ def execute_quick_order(
             result.unfilled_quantity = remaining
             return result
 
-        impact_ratio = remaining / depth
+        impact = min(market_impact_coefficient * (remaining / depth), MAX_SYNTHETIC_IMPACT)
         if side == Side.BUY:
-            synthetic_price = reference_price * (Decimal("1") + market_impact_coefficient * impact_ratio)
+            synthetic_price = reference_price * (Decimal("1") + impact)
         else:
-            synthetic_price = reference_price * (Decimal("1") - market_impact_coefficient * impact_ratio)
-            synthetic_price = max(synthetic_price, MIN_PRICE)
+            synthetic_price = max(reference_price * (Decimal("1") - impact), MIN_PRICE)
 
         result.fills.append(
             Fill(

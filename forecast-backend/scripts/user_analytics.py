@@ -58,7 +58,7 @@ def main() -> None:
     print("\n=== FORECAST USER ANALYTICS ===", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
     print(f"Accounts: {k['total_users']}   (+{k['signups_24h']} in 24h, +{k['signups_7d']} in 7d, +{k['signups_30d']} in 30d)")
     print(f"Active (last seen): 24h={k['active_24h']}  7d={k['active_7d']}  30d={k['active_30d']}")
-    print(f"Ever traded: {k['pct_ever_traded']}%   Came back (2+ sessions): {k['pct_returning']}%   Email verified: {k['pct_email_verified']}%")
+    print(f"Ever traded: {k['pct_ever_traded']}%   Came back (2+ sessions): {k['pct_returning']}%")
     print(f"Total trades: {k['total_trades']}   Time on site: {k['total_minutes_on_site']} min total, {k['avg_minutes_per_user']} min/user, {k['avg_sessions_per_user']} sessions/user")
     if k["daily_active_last_14d"]:
         print("Daily active users (last 14d): " + "  ".join(f"{d[5:]}:{n}" for d, n in k["daily_active_last_14d"].items()))
@@ -68,7 +68,7 @@ def main() -> None:
     key, desc = SORTS[args.sort]
     rows.sort(key=lambda r: (r[key] is None, r[key] or 0), reverse=desc)
     cols = ["username", "email", "created_at", "last_seen", "sessions", "minutes_on_site", "trades", "trade_volume",
-            "dividends", "net_worth", "return_pct", "season_rank", "email_verified"]
+            "dividends", "net_worth", "return_pct", "season_rank"]
     print(f"\nTop {min(args.top, len(rows))} by {args.sort}:")
     widths = {c: max(len(c), *(len(_fmt(r[c])) for r in rows[:args.top])) if rows else len(c) for c in cols}
     print("  ".join(c.ljust(widths[c]) for c in cols))

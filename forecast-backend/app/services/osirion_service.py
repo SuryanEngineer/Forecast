@@ -1377,3 +1377,84 @@ def sync_all_tracked(db: Session) -> list[SyncResult]:
             logger.exception("sync_tournament itself raised for mapping %s", mapping.id)
             results.append(SyncResult(tournament_id=mapping.tournament_id, error=f"unexpected error: {exc}"))
     return results
+
+
+# --- Announced-but-not-yet-tracked events (calendar completeness) ---------------------------------------------------
+
+_ANNOUNCED_CACHE: dict = {"t": 0.0, "rows": []}
+ANNOUNCED_CACHE_SECONDS = 15 * 60
+
+
+def list_announced_events(db: Session, force: bool = False) -> list[dict]:
+    """Every FUTURE event Osirion has announced that qualifies for this platform but isn't tracked as a Tournament yet.
+
+    The auto-tracker only creates a Tournament once a window shows a real cash payout table, and Osirion often publishes
+    that after the event is announced -- so for a while an announced Finals exists on Osirion but not in our calendar
+    (the calendar then looked empty between seasons). This lists those so the calendar can show them as "announced"
+    immediately. Same qualification rules as auto-tracking (no Zero Build, classified into a tier, in the NAC/EU scope,
+    the once-per-quarter FNCS Finals rule), minus the cash-payout requirement. One row per event, preferring its
+    cash-paying window and otherwise its latest window (the Finals come last). Cached for 15 minutes so the public
+    calendar never hammers Osirion; any Osirion error returns whatever was cached."""
+    import time as _time
+
+    now_m = _time.monotonic()
+    if not force and _ANNOUNCED_CACHE["rows"] is not None and _ANNOUNCED_CACHE["t"] and now_m - _ANNOUNCED_CACHE["t"] < ANNOUNCED_CACHE_SECONDS:
+        return _ANNOUNCED_CACHE["rows"]
+    try:
+        windows = list_available_windows()
+    except Exception:  # noqa: BLE001 -- no API key / Osirion down: calendar still works from tracked tournaments
+        _ANNOUNCED_CACHE["t"] = now_m
+        return _ANNOUNCED_CACHE["rows"] or []
+
+    from app.services import economic_params_service
+
+    now = datetime.now(timezone.utc)
+    tracked_keys = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()}
+    by_event: dict[str, list[AvailableWindow]] = {}
+    for w in windows:
+        if w.is_zero_build:
+            continue
+        when = w.end_time or w.begin_time
+        if when is None or when <= now:
+            continue  # already over (or undated): not an announcement
+        by_event.setdefault(w.event_id, []).append(w)
+
+    # Events that already have ANY window tracked are in the calendar as real tournaments.
+    tracked_events = {w.event_id for w in windows if (w.leaderboard_event_id, w.leaderboard_event_window_id) in tracked_keys}
+
+    rows: list[dict] = []
+    for event_id, group in by_event.items():
+        if event_id in tracked_events:
+            continue
+        cash = [w for w in group if w.has_cash_payout]
+        window = max(cash, key=lambda w: w.top_cash_amount) if cash else max(group, key=lambda w: w.begin_time or w.end_time)
+        tournament_type = tournament_classification_service.classify(db, window.classification_text)
+        if tournament_type is None or not _in_tracking_region_scope(tournament_type, window.regions):
+            continue
+        region_key = _region_key(window.regions)
+        if tournament_type == TournamentType.FNCS_FINALS:
+            quarter_key = _season_quarter_key(window.begin_time or now)
+            if _has_tournament_in_quarter_and_region(db, TournamentType.GLOBAL_CHAMPIONSHIP, quarter_key, region_key) or _has_tournament_in_quarter_and_region(
+                db, TournamentType.FNCS_FINALS, quarter_key, region_key
+            ):
+                continue
+        region = window.regions[0] if len(window.regions) == 1 else None
+        pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type)
+        if pool is not None:
+            pool = pool * economic_params_service.get_region_multiplier(db, region)
+        rows.append(
+            {
+                "event_id": event_id,
+                "name": window.display_name,
+                "tournament_type": tournament_type,
+                "region": region,
+                "start_time": window.begin_time,
+                "end_time": window.end_time,
+                "total_dividend_pool": pool,
+                "finals_confirmed": bool(window.has_cash_payout),
+            }
+        )
+    rows.sort(key=lambda r: (r["start_time"] is None, r["start_time"] or now))
+    _ANNOUNCED_CACHE["t"] = now_m
+    _ANNOUNCED_CACHE["rows"] = rows
+    return rows

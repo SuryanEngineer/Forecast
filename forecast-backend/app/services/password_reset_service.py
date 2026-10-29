@@ -2,8 +2,7 @@
 Forgot-password flow with emailed 6-digit codes (see auth_code_service for the code security properties).
 
 `request_reset` always appears to succeed whether or not the email has an account (no account-discovery oracle).
-`confirm_reset` checks the code, sets the new password, clears any login lockout, marks the email verified (the
-owner just proved they control it) and invalidates every previously issued login token.
+`confirm_reset` checks the code, sets the new password, clears any login lockout and invalidates every previously issued login token.
 
 (The older link/token flow -- PasswordResetToken -- is retired; its table is kept so old rows don't need a migration.)
 """
@@ -53,8 +52,6 @@ def confirm_reset(db: Session, email: str, code: str, new_password: str) -> bool
     user.password_changed_at = now
     user.failed_login_count = 0
     user.locked_until = None
-    if user.email_verified_at is None:
-        user.email_verified_at = now
     db.commit()
     email_service.send_security_notice(user.email, "Your password was changed",
                                        "The password on your Forecast account was just changed. All other devices were signed out.")

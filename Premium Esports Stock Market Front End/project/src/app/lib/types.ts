@@ -19,7 +19,6 @@ export interface AuthUser {
   role: string;
   tag?: string | null;
   tag_color?: string | null;
-  email_verified?: boolean;
   created_at?: string | null;
 }
 
@@ -30,7 +29,6 @@ export interface Profile {
   tag: string | null;
   tag_color: string | null;
   tag_colors: string[];
-  email_verified: boolean;
   created_at: string | null;
   name_change_available_at: string | null;
   name_change_cooldown_days: number;
@@ -173,6 +171,18 @@ export interface OrderResponse {
   created_at: string;
 }
 
+export interface BookLevel {
+  price: Money;
+  quantity: number;
+  orders: number;
+}
+
+export interface OrderBookResponse {
+  bids: BookLevel[];
+  asks: BookLevel[];
+  last_trade: Money | null;
+}
+
 export interface TradeResponse {
   id: string;
   player_id: string;
@@ -225,6 +235,18 @@ export interface CalendarTournamentResponse {
   is_osirion_tracked: boolean;
   last_synced_at: string | null;
   entrant_count: number;
+}
+
+// GET /tournaments/announced -- future events Osirion has announced that qualify but aren't tracked yet.
+export interface AnnouncedTournament {
+  event_id: string;
+  name: string;
+  tournament_type: CalendarTournamentResponse['tournament_type'];
+  region: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  total_dividend_pool: Money | null;
+  finals_confirmed: boolean;
 }
 
 // GET /tournaments/{id}/entrants -- players known to have qualified for a

@@ -245,8 +245,9 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Where prices come from',
         body: (
-          <p>A player’s price is the price of their most recent executed trade, exactly like a stock ticker. It is not
-          set by a model or by the platform.</p>
+          <p>A player’s price is the price of their most recent executed trade, kept inside the current order book: if
+          buyers are bidding above the last trade the price moves up to the highest bid, and if sellers are asking below it
+          the price moves down to the lowest ask. It is not set by a model or by the platform.</p>
         ),
       },
       {

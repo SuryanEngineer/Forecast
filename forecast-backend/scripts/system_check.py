@@ -8,7 +8,7 @@ touches your real Supabase/Postgres data, .env, or Redis) and prints PASS/FAIL f
     python3 scripts/system_check.py --keep     # keep the temp database file for inspection
 
 Covers: registration / validation / usernames, login + lockout, emailed reset codes (wrong code, reuse, token
-revocation), email verification + change, profile (name cooldown, tags, password change, delete), session heartbeats,
+revocation), email change, profile (name cooldown, tags, password change, delete), session heartbeats,
 trading (limit / quick / fees / ledger reconciliation / share conservation), TOURNAMENT -> DIVIDEND payouts (record
 date, conservation, no double pay, stuck-payout sweeper, fewer-holders rounding guard), treasury accrual, seasons
 (SP maths, ranks, finalize, history), lifetime stats identities, daily snapshots, leaderboards, analytics report, and a
@@ -65,9 +65,9 @@ from app.models.user import User  # noqa: E402
 from app.models.wallet import LedgerEntry, LedgerEntryType, Wallet  # noqa: E402
 from app.engine.dividend_calculator import compute_dividend_distribution  # noqa: E402
 from app.services import (  # noqa: E402
-    account_service, analytics_service, bot_trading_service, book_registry, economic_params_service, email_service,
+    account_service, analytics_service, book_price_service, bot_trading_service, book_registry, economic_params_service, email_service,
     house_account, leaderboard_service, maintenance_service, order_service, player_service, portfolio_service,
-    season_service, stats_service, tournament_service, treasury_service, wallet_service,
+    retention_service, season_service, stats_service, tournament_service, treasury_service, wallet_service,
 )
 
 # ---- tiny harness ------------------------------------------------------------------------------------------------
@@ -144,6 +144,25 @@ def check_pure_logic() -> None:
     check("SP never negative", season_service.points_for_return(-20.0) == 0)
     check("+10% return = 1000 SP = Gold III", season_service.points_for_return(10.0) == 1000 and season_service.rank_for_points(1000) == "Gold III")
     check("80% return = Unreal", season_service.rank_for_points(season_service.points_for_return(80.0)) == "Unreal")
+    # Order-book-aware listed price
+    D = Decimal
+    ep = book_price_service.effective_price
+    check("price stays at the last trade when it sits inside the spread", ep(D("10"), D("9.5"), D("10.5")) == D("10.00"))
+    check("a bid above the last trade lifts the listed price to the bid", ep(D("10"), D("11"), D("12")) == D("11.00"))
+    check("an ask below the last trade drops the listed price to the ask", ep(D("10"), D("8"), D("9")) == D("9.00"))
+    check("the book can move the price at most 25% from the last trade", ep(D("10"), D("30"), None) == D("12.50") and ep(D("10"), None, D("1")) == D("7.50"))
+    check("no orders -> the last trade", ep(D("10"), None, None) == D("10.00"))
+    # Skill-based fair value is anchored to ONE base price, not each player's own IPO price
+    fv = bot_trading_service._compute_fair_value
+    star, mid, low = fv(D("70"), D("900"), D("100")), fv(D("70"), D("100"), D("100")), fv(D("70"), D("5"), D("100"))
+    check("fair value: star > median pro (= base price) > weak player", star > mid == D("70.000000") > low and star <= D("210.01"), f"{star} {mid} {low}")
+    check("fair value of a player with no results is below the base price", fv(D("70"), None, D("100")) < D("70"))
+    # Quick-trade slippage is capped so one huge order cannot set an absurd price
+    from app.engine.matching_engine import OrderBook
+    from app.engine.quick_trade_pricing import MAX_SYNTHETIC_IMPACT, execute_quick_order
+    from app.engine.types import Side
+    res = execute_quick_order(OrderBook("p"), "o1", Side.BUY, D("100000"), D("1000"), fallback_reference_price=D("10"))
+    check("synthetic quick-buy price is capped at +25% of the reference", res.fills and res.fills[0].price == D("10") * (1 + MAX_SYNTHETIC_IMPACT), str(res.fills[0].price if res.fills else None))
     check("rank steps are ordered", [r for r, _ in season_service.RANKS][0] == "Bronze I" and [r for r, _ in season_service.RANKS][-1] == "Unreal")
     # Names / validation
     db = SessionLocal()
@@ -181,10 +200,10 @@ def check_auth_flows() -> None:
     token_a = r.json().get("access_token", "")
     check("duplicate email rejected (case-insensitive)", register("ALICE@forecastcheck.dev", "other_name").status_code == 409)
     check("duplicate username rejected (case-insensitive)", register("x@forecastcheck.dev", "ALICE_A").status_code == 400)
-    check("verification email was sent at signup", last_code("alice@forecastcheck.dev") is not None)
+    check("no verification email is sent at signup", last_code("alice@forecastcheck.dev") is None)
 
     me = client.get("/api/v1/auth/me", headers=auth(token_a)).json()
-    check("/auth/me returns profile fields", me.get("display_name") == "alice_a" and me.get("email_verified") is False, str(me))
+    check("/auth/me returns profile fields", me.get("display_name") == "alice_a" and "email_verified" not in me, str(me))
 
     w = client.get("/api/v1/wallet/me", headers=auth(token_a)).json()
     start = economic_params_service.DEFAULTS["wallet.starting_balance"][0]
@@ -202,13 +221,7 @@ def check_auth_flows() -> None:
     r = client.post("/api/v1/auth/login", json={"email": "lock@forecastcheck.dev", "password": PW})
     check(f"account locks after {settings.LOGIN_MAX_FAILED_ATTEMPTS} failures (even with the right password)", r.status_code == 429, r.text)
 
-    section("Email verification")
-    code = last_code("alice@forecastcheck.dev")
-    r = client.post("/api/v1/auth/email/verify", json={"code": "000000" if code != "000000" else "111111"}, headers=auth(token_a))
-    check("wrong verification code rejected", r.status_code == 400)
-    r = client.post("/api/v1/auth/email/verify", json={"code": code}, headers=auth(token_a))
-    check("correct verification code accepted", r.status_code == 200, r.text)
-    check("email now verified", client.get("/api/v1/auth/me", headers=auth(token_a)).json()["email_verified"] is True)
+    check("verification endpoints are gone", client.post("/api/v1/auth/email/verify", json={"code": "000000"}, headers=auth(token_a)).status_code in (404, 405))
 
     section("Forgot password (emailed code)")
     n_before = len(OUTBOX)
@@ -549,6 +562,58 @@ def check_analytics_and_delete() -> None:
 
 
 @guarded
+def check_book_price_and_retention(ctx: dict) -> None:
+    section("Order book -> listed price / retention / calendar")
+    if not ctx:
+        check("trading context available", False)
+        return
+    db = SessionLocal()
+    try:
+        book_registry.reset_book_cache()
+        player = player_service.create_player(db, gamertag="BookPro", total_shares_outstanding=1000, ipo_price=Decimal("10.0000"), power_rating=60)
+        db.commit()
+        pid = player.id
+        r = client.get(f"/api/v1/markets/{pid}")
+        check("an untraded player lists at its IPO price", r.status_code == 200 and Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+        o = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("12.00"), 12)  # $144 of resting demand above the price
+        db.commit()
+        r = client.get(f"/api/v1/markets/{pid}")
+        check("a bid above the last price lifts the listed price (capped at +25%)", Decimal(str(r.json()["last_price"])) == Decimal("12.00"), r.text)
+        listing = client.get("/api/v1/markets?search=BookPro").json()["items"]
+        check("the market list shows the same book-aware price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("12.00"), str(listing))
+        book = client.get(f"/api/v1/markets/{pid}/book").json()
+        check("order-book endpoint lists the resting bid", book["bids"] and Decimal(str(book["bids"][0]["price"])) == Decimal("12") and book["bids"][0]["quantity"] == 12, str(book))
+        tiny = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("13.00"), 1)  # $13: too small to move the price
+        db.commit()
+        r = client.get(f"/api/v1/markets/{pid}")
+        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("12.00"), r.text)
+        order_service.cancel_order(db, ctx["carl"], o.id)
+        order_service.cancel_order(db, ctx["carl"], tiny.id)
+        db.commit()
+        r = client.get(f"/api/v1/markets/{pid}")
+        check("cancelling the bids returns the price to the last trade", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+
+        # Retention: old bot-vs-bot trades go, human trades stay
+        from app.models.order import Trade
+        old = datetime.now(timezone.utc) - timedelta(days=30)
+        bot_t = Trade(id=uuid.uuid4(), player_id=pid, price=Decimal("10"), quantity=1, buyer_user_id=ctx["alice"], seller_user_id=ctx["bob"], buyer_is_bot=True, seller_is_bot=True, executed_at=old)
+        human_t = Trade(id=uuid.uuid4(), player_id=pid, price=Decimal("10"), quantity=1, buyer_user_id=ctx["alice"], seller_user_id=ctx["bob"], buyer_is_bot=False, seller_is_bot=True, executed_at=old)
+        db.add_all([bot_t, human_t])
+        db.commit()
+        out = retention_service.run_retention(db, force=True)
+        db.expire_all()
+        check("retention ran without error", isinstance(out, dict) and "skipped" not in out, str(out))
+        check("old bot-vs-bot trade pruned", db.get(Trade, bot_t.id) is None)
+        check("old trade involving a human kept", db.get(Trade, human_t.id) is not None)
+    finally:
+        db.close()
+
+    # Announced-but-untracked events endpoint is public and never errors, even with no Osirion key / network
+    r = client.get("/api/v1/tournaments/announced")
+    check("announced-events endpoint answers (list)", r.status_code == 200 and isinstance(r.json(), list), r.text[:200])
+
+
+@guarded
 def check_bots() -> None:
     section("Bots")
     import random
@@ -556,8 +621,12 @@ def check_bots() -> None:
     try:
         economic_params_service.set_param(db, "bots.population_size", Decimal("12"))
         db.commit()
+        bot_trading_service.reset_caches()
         res = bot_trading_service.run_bot_tick(db, random.Random(7))
         db.commit()
+        res2 = bot_trading_service.run_bot_tick(db, random.Random(8))  # second tick: cached players / history / bot state
+        db.commit()
+        check("second bot tick (cached path) ran", res2["population"] >= 12, str(res2))
         from app.models.bot import BotProfile
         n = db.query(BotProfile).count()
         check("bot tick ran and created the bot population", n >= 12, f"bots={n} result={res}")
@@ -583,6 +652,7 @@ def main() -> int:
     check_treasury()
     if ctx:
         check_seasons_stats(ctx)
+    check_book_price_and_retention(ctx)
     check_analytics_and_delete()
     check_bots()
 

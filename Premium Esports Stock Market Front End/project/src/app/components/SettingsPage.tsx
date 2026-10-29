@@ -129,24 +129,6 @@ export function SettingsPage() {
   }
 
   // --- email ---
-  const [verifyCode, setVerifyCode] = useState('');
-  const [verifyBusy, setVerifyBusy] = useState(false);
-  const [verifyFlash, setVerifyFlash] = useState<Flash>(null);
-  const [verifySent, setVerifySent] = useState(false);
-
-  async function sendVerification() {
-    setVerifyBusy(true); setVerifyFlash(null);
-    try { await api.post('/auth/email/send-verification'); setVerifySent(true); setVerifyFlash({ kind: 'ok', text: 'Code sent — check your inbox.' }); }
-    catch (e) { setVerifyFlash({ kind: 'err', text: errText(e) }); }
-    setVerifyBusy(false);
-  }
-  async function confirmVerification() {
-    setVerifyBusy(true); setVerifyFlash(null);
-    try { await api.post('/auth/email/verify', { code: verifyCode.trim() }); setVerifyCode(''); setVerifySent(false); await load(); await refreshUser(); setVerifyFlash({ kind: 'ok', text: 'Email verified.' }); }
-    catch (e) { setVerifyFlash({ kind: 'err', text: errText(e) }); }
-    setVerifyBusy(false);
-  }
-
   const [newEmail, setNewEmail] = useState('');
   const [emailPw, setEmailPw] = useState('');
   const [emailCode, setEmailCode] = useState('');
@@ -233,34 +215,10 @@ export function SettingsPage() {
         <FlashMsg flash={tagFlash} />
       </Card>
 
-      <Card title="Email" subtitle="Used to sign in and to recover your account. Codes and security notices are sent from a no-reply address.">
+      <Card title="Email" subtitle="Used to sign in. If you forget your password, a reset code is sent to this address.">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="font-mono text-foreground" style={{ fontSize: 14 }}>{profile.email}</p>
-          <span
-            className="px-2 py-0.5 rounded-full font-bold"
-            style={{ fontSize: 10, background: profile.email_verified ? 'rgba(16,217,160,0.12)' : 'rgba(251,191,36,0.14)', color: profile.email_verified ? 'var(--gain)' : '#fbbf24' }}
-          >
-            {profile.email_verified ? 'VERIFIED' : 'NOT VERIFIED'}
-          </span>
         </div>
-
-        {!profile.email_verified && (
-          <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--muted)' }}>
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Verify your email so you can always recover your account if you forget your password.</p>
-            <div className="flex gap-2 mt-2 flex-wrap">
-              {!verifySent ? (
-                <Btn onClick={sendVerification} busy={verifyBusy}>Send verification code</Btn>
-              ) : (
-                <>
-                  <input value={verifyCode} onChange={e => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" placeholder="6-digit code" className={INPUT_CLS + ' !w-40 font-mono'} style={INPUT_STYLE} />
-                  <Btn onClick={confirmVerification} busy={verifyBusy} disabled={verifyCode.length < 6}>Verify</Btn>
-                  <button onClick={sendVerification} className="text-muted-foreground" style={{ fontSize: 12 }}>Resend</button>
-                </>
-              )}
-            </div>
-            <FlashMsg flash={verifyFlash} />
-          </div>
-        )}
 
         <details className="mt-4">
           <summary className="cursor-pointer text-muted-foreground" style={{ fontSize: 13 }}>Change email</summary>

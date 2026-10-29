@@ -29,7 +29,6 @@ class UserResponse(BaseModel):
     role: str
     tag: str | None = None
     tag_color: str | None = None
-    email_verified: bool = False
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

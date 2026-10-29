@@ -108,7 +108,11 @@ services:
       - key: BOT_TRADING_ENABLED
         value: "true"
       - key: BOT_TICK_INTERVAL_SECONDS
-        value: "20"
+        value: "15"
+      - key: BOT_ACTIONS_PER_TICK
+        value: "4"
+      - key: BOT_MM_PLAYERS_PER_TICK
+        value: "3"
       - key: OSIRION_SYNC_ENABLED
         value: "true"
       - key: OSIRION_SYNC_INTERVAL_SECONDS

@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth';
 import {
   toNumber,
   type MarketSnapshot,
+  type OrderBookResponse,
   type PlayerTournamentHistoryResponse,
   type PositionResponse,
   type TournamentResponse,
@@ -146,6 +147,50 @@ function timeAgo(iso: string): string {
  * fabricated bids/asks ladder. Reaching full parity with the demo's
  * order-book UI would need new backend endpoints; see this task's final
  * report. */
+/** Resting buy / sell orders for this player, best prices nearest the middle. Asks (sellers) on top, bids (buyers)
+ * below. The listed price is the last trade pulled into the best bid / ask, so it always sits inside this spread. */
+function OrderBook({ book, onPick }: { book: OrderBookResponse | null; onPick: (price: number, side: 'buy' | 'sell') => void }) {
+  const asks = (book?.asks ?? []).slice(0, 5);
+  const bids = (book?.bids ?? []).slice(0, 5);
+  const maxQty = Math.max(1, ...asks.map(a => a.quantity), ...bids.map(b => b.quantity));
+  const row = (lvl: { price: string | number; quantity: number }, side: 'buy' | 'sell') => {
+    const price = toNumber(lvl.price);
+    const color = side === 'sell' ? '#ef4444' : '#22c55e';
+    return (
+      <button
+        key={`${side}-${price}`}
+        onClick={() => onPick(price, side === 'sell' ? 'buy' : 'sell')}
+        className="relative w-full flex items-center justify-between px-2 py-1 rounded-md overflow-hidden text-left"
+        style={{ fontSize: 12 }}
+        title={side === 'sell' ? 'Click to buy at this price' : 'Click to sell at this price'}
+      >
+        <span className="absolute inset-y-0 right-0" style={{ width: `${Math.max(6, (lvl.quantity / maxQty) * 100)}%`, background: color, opacity: 0.12 }} />
+        <span className="relative font-mono font-bold" style={{ color }}>${price.toFixed(2)}</span>
+        <span className="relative font-mono text-muted-foreground">{lvl.quantity} sh</span>
+      </button>
+    );
+  };
+  return (
+    <div className="rounded-xl border border-border overflow-hidden" style={{ background: 'var(--muted)' }}>
+      <div className="px-3 pt-2 pb-1 flex items-center justify-between">
+        <p className="text-muted-foreground font-semibold" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Order book</p>
+        <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>Click a price to trade against it</p>
+      </div>
+      {asks.length === 0 && bids.length === 0 ? (
+        <p className="text-muted-foreground text-center pb-3" style={{ fontSize: 12 }}>No resting orders right now.</p>
+      ) : (
+        <div className="px-1.5 pb-1.5 space-y-0.5">
+          {[...asks].reverse().map(a => row(a, 'sell'))}
+          <div className="px-2 py-0.5 text-center text-muted-foreground" style={{ fontSize: 10.5 }}>
+            {asks[0] && bids[0] ? `spread $${(toNumber(asks[0].price) - toNumber(bids[0].price)).toFixed(2)}` : '—'}
+          </div>
+          {bids.map(b => row(b, 'buy'))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecentTrades({ trades }: { trades: TradeResponse[] }) {
   if (trades.length === 0) {
     return (
@@ -178,6 +223,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [position, setPosition] = useState<PositionResponse | null>(null);
   const [recentTrades, setRecentTrades] = useState<TradeResponse[]>([]);
+  const [book, setBook] = useState<OrderBookResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [tradeMode, setTradeMode] = useState<'quick' | 'order'>('quick');
@@ -191,12 +237,14 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   async function load() {
     setLoading(true);
     try {
-      const [m, trades] = await Promise.all([
+      const [m, trades, bk] = await Promise.all([
         api.get<MarketSnapshot>(`/markets/${playerId}`),
         api.get<TradeResponse[]>(`/orders/trades/${playerId}?limit=8`).catch(() => []),
+        api.get<OrderBookResponse>(`/markets/${playerId}/book`).catch(() => null),
       ]);
       setMarket(m);
       setRecentTrades(trades);
+      setBook(bk);
       try {
         const p = await api.get<PositionResponse>(`/players/${playerId}/position`);
         setPosition(p);
@@ -232,6 +280,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const refreshTradesRef = useRef<() => void>(() => {});
   refreshTradesRef.current = () => {
     api.get<TradeResponse[]>(`/orders/trades/${playerId}?limit=8`).then(setRecentTrades).catch(() => {});
+    api.get<OrderBookResponse>(`/markets/${playerId}/book`).then(setBook).catch(() => {});
   };
   useEffect(() => {
     const id = setInterval(() => refreshTradesRef.current(), 8000);
@@ -388,6 +437,14 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
               <HelpButton topic="orders" />
             </div>
 
+            <OrderBook
+              book={book}
+              onPick={(price, side) => {
+                setTradeMode('order');
+                setOrderSide(side);
+                setLimitPrice(price.toFixed(2));
+              }}
+            />
             <RecentTrades trades={recentTrades} />
 
             <div className="flex rounded-xl overflow-hidden border border-border">

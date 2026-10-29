@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.models.player import Player, PriceSnapshot
 from app.models.order import Trade
+from app.services import book_price_service
 
 
 def _last_price(db: Session, player: Player) -> Decimal:
@@ -61,6 +62,8 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
     day_ago = now - timedelta(hours=24)
 
     last_price = _last_price(db, player)
+    # Listed price = last trade pulled into the best bid / best ask (see book_price_service).
+    last_price = book_price_service.apply_book(db, {player.id: last_price})[player.id]
     prev_close = _price_as_of(db, player.id, day_ago)
     if prev_close is None:
         # Never traded before the 24h window -- no meaningful "change" yet,
@@ -173,6 +176,9 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
     day_ago = now - timedelta(hours=24)
 
     last_prices = _bulk_latest_prices(db, player_ids)
+    # Players that never traded list at their IPO price; then the order book can pull the listed price either way.
+    last_prices = {p.id: last_prices.get(p.id, p.ipo_price) for p in players}
+    last_prices = book_price_service.apply_book(db, last_prices)
     prev_prices = _bulk_latest_prices(db, player_ids, before=day_ago)
     volumes = _bulk_volume_since(db, player_ids, day_ago)
 

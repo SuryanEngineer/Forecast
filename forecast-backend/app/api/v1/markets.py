@@ -17,10 +17,11 @@ from app.models.player import Player
 from app.schemas.market import (
     MarketSnapshotResponse,
     MarketSummaryResponse,
+    OrderBookResponse,
     PaginatedMarketSnapshotResponse,
     PriceHistoryPointResponse,
 )
-from app.services import market_data_service
+from app.services import book_price_service, market_data_service
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 
@@ -72,6 +73,18 @@ def get_market(player_id: uuid.UUID, db: Session = Depends(get_db)) -> MarketSna
     if player is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
     return market_data_service.get_market_snapshot(db, player)
+
+
+@router.get("/{player_id}/book", response_model=OrderBookResponse)
+def get_order_book(player_id: uuid.UUID, depth: int = Query(8, ge=1, le=25), db: Session = Depends(get_db)) -> OrderBookResponse:
+    """Resting buy / sell orders for one player, aggregated by price. The listed price is the last trade pulled into the
+    best bid / best ask (see book_price_service)."""
+    player = db.get(Player, player_id)
+    if player is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
+    book = book_price_service.book_levels(db, player_id, depth)
+    book["last_trade"] = market_data_service._last_price(db, player)
+    return OrderBookResponse(**book)
 
 
 @router.get("/{player_id}/price-history", response_model=list[PriceHistoryPointResponse])

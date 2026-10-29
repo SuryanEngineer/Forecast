@@ -34,7 +34,7 @@ def _bad(msg: str, code: int = status.HTTP_400_BAD_REQUEST) -> HTTPException:
 def _profile(user: User) -> ProfileResponse:
     return ProfileResponse(
         id=user.id, email=user.email, display_name=user.display_name, tag=user.tag, tag_color=user.tag_color,
-        tag_colors=account_service.TAG_COLORS, email_verified=user.email_verified_at is not None,
+        tag_colors=account_service.TAG_COLORS,
         created_at=user.created_at, name_change_available_at=account_service.name_change_available_at(user),
         name_change_cooldown_days=account_service.NAME_CHANGE_COOLDOWN_DAYS, last_login_at=user.last_login_at,
     )
@@ -115,7 +115,6 @@ def confirm_email_change(payload: CodeRequest, user: User = Depends(get_current_
         raise _bad("That email is already in use.")
     old = user.email
     user.email = row.target_email
-    user.email_verified_at = datetime.now(timezone.utc)
     db.commit()
     email_service.send_security_notice(old, "Your email was changed", f"The email on your Forecast account was changed to {user.email}.")
     return _profile(user)

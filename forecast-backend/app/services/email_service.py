@@ -147,15 +147,6 @@ def send_password_reset_code(to_email: str, code: str) -> bool:
     )
 
 
-def send_verify_email_code(to_email: str, code: str) -> bool:
-    minutes = settings.EMAIL_CODE_EXPIRE_MINUTES
-    return _code_email(
-        to_email, f"{code} is your Forecast verification code", "Verify your email",
-        f"Welcome to Forecast! Enter this code to verify your email address. It expires in {minutes} minutes.", code,
-        "Verifying lets you recover your account if you ever forget your password.",
-    )
-
-
 def send_change_email_code(to_email: str, code: str) -> bool:
     minutes = settings.EMAIL_CODE_EXPIRE_MINUTES
     return _code_email(

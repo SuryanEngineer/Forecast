@@ -14,7 +14,6 @@ import { IntroTour, introSeenKey } from './components/IntroTour';
 import { StatsPage } from './components/StatsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { LegalModal, type LegalDoc } from './components/LegalModal';
-import { VerifyEmailBanner } from './components/VerifyEmailBanner';
 import type { TournamentResponse } from './lib/types';
 
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
@@ -62,9 +61,6 @@ function AuthenticatedApp() {
       <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => openIntroAt(0)} onShowLegal={setLegalDoc} />
 
       <main className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
-        {user && user.email_verified === false && currentPage !== 'settings' && (
-          <VerifyEmailBanner onOpenSettings={() => setCurrentPage('settings')} />
-        )}
         {currentPage === 'dashboard' && (
           <Dashboard navigate={navigate} openPlayer={setPlayerModalId} goToMarketWithSearch={term => { setMarketSearch(term); setCurrentPage('markets'); }} />
         )}

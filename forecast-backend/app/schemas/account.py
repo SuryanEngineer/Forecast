@@ -13,7 +13,6 @@ class ProfileResponse(BaseModel):
     tag: str | None
     tag_color: str | None
     tag_colors: list[str]
-    email_verified: bool
     created_at: datetime | None
     name_change_available_at: datetime | None
     name_change_cooldown_days: int

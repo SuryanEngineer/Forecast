@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../lib/api';
 import { tournamentDisplayName } from '../lib/tournamentName';
-import { useTournamentCalendar, useTournamentsList } from '../lib/hooks';
+import { useAnnouncedTournaments,
+  useTournamentCalendar, useTournamentsList } from '../lib/hooks';
 import {
   toNumber,
+  type AnnouncedTournament,
   type CalendarTournamentResponse,
   type PaginatedPlacementResultResponse,
   type PlacementResultResponse,
@@ -309,17 +311,58 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
   );
 }
 
+/** An announced event that isn't a tracked tournament yet. It turns into a normal row (with live standings) on its own
+ * once its payout details are published. */
+function AnnouncedRow({ event }: { event: AnnouncedTournament }) {
+  const pool = event.total_dividend_pool !== null ? toNumber(event.total_dividend_pool) : null;
+  const startDate = event.start_time ? new Date(event.start_time) : null;
+  const dateLabel = startDate ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD';
+  const timeLabel = startDate ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
+  return (
+    <div className="w-full flex items-center gap-3 p-3.5 rounded-2xl border border-border text-left" style={{ background: 'var(--card)' }}>
+      <div className="flex flex-col items-center justify-center rounded-xl shrink-0" style={{ width: 60, height: 44, background: 'var(--muted)' }}>
+        <p className="font-mono font-bold" style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.2 }}>{dateLabel}</p>
+        {timeLabel && <p className="font-mono" style={{ fontSize: 9.5, color: 'var(--muted-foreground)', lineHeight: 1.2 }}>{timeLabel}</p>}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournamentDisplayName(event.name, event.region)}</p>
+          <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(0,200,255,0.12)', color: 'var(--primary)' }}>
+            Announced
+          </span>
+        </div>
+        <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11.5 }}>
+          {TIER_LABELS[event.tournament_type] ?? event.tournament_type}
+          {event.region ? ` · ${event.region}` : ''}
+          {!event.finals_confirmed ? ' · date may change (Finals not published yet)' : ''}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        {pool !== null && pool > 0 ? (
+          <>
+            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 10 }}>projected pool</p>
+          </>
+        ) : (
+          <p className="text-muted-foreground italic" style={{ fontSize: 11.5 }}>Pool TBD</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TournamentCalendar({ openTournament }: { openTournament: (t: TournamentResponse) => void }) {
   // The full calendar: upcoming/live/finalizing first (soonest first), then everything already completed (newest first).
   const { data: calendar, loading } = useTournamentCalendar(true);
+  const { data: announced } = useAnnouncedTournaments();
   const upcomingRows = calendar.filter(t => t.phase !== 'completed');
   const completedRows = calendar.filter(t => t.phase === 'completed').reverse();
 
   if (loading && calendar.length === 0) {
     return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>;
   }
-  if (calendar.length === 0) {
-    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments tracked yet — new ones are picked up automatically.</p>;
+  if (calendar.length === 0 && announced.length === 0) {
+    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments announced yet — new ones are picked up automatically.</p>;
   }
 
   return (
@@ -327,9 +370,10 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
       <p className="text-muted-foreground" style={{ fontSize: 12 }}>
         Updates automatically as tournaments are tracked and results come in.
       </p>
-      {upcomingRows.length === 0 && (
-        <p className="text-muted-foreground italic" style={{ fontSize: 12.5 }}>No upcoming tournaments tracked yet — new ones are picked up automatically.</p>
+      {upcomingRows.length === 0 && announced.length === 0 && (
+        <p className="text-muted-foreground italic" style={{ fontSize: 12.5 }}>No upcoming tournaments announced yet — new ones are picked up automatically.</p>
       )}
+      {announced.map(e => <AnnouncedRow key={e.event_id} event={e} />)}
       {[...upcomingRows, ...completedRows].map((t, i) => (
         <React.Fragment key={t.id}>
         {i === upcomingRows.length && completedRows.length > 0 && (
@@ -361,6 +405,7 @@ function TournamentCalendar({ openTournament }: { openTournament: (t: Tournament
 export function Tournaments({ openTournament }: Props) {
   const { data: tournaments, loading } = useTournamentsList();
   const { data: calendar } = useTournamentCalendar();
+  const { data: announced } = useAnnouncedTournaments();
   const [tab, setTab] = useState<'upcoming' | 'calendar' | 'results'>('upcoming');
 
   const finalized = tournaments.filter(t => t.status === 'finalized');
@@ -410,7 +455,7 @@ export function Tournaments({ openTournament }: Props) {
 
       <div className="flex rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
         {[
-          { key: 'upcoming' as const, label: `⏳ Upcoming (${upcomingFromCalendar.length})` },
+          { key: 'upcoming' as const, label: `⏳ Upcoming (${upcomingFromCalendar.length + announced.length})` },
           { key: 'calendar' as const, label: `📅 Calendar` },
           { key: 'results' as const, label: `🏁 Results (${finalized.length})` },
         ].map(t => (
@@ -453,7 +498,15 @@ export function Tournaments({ openTournament }: Props) {
       ) : tab === 'upcoming' ? (
         <div className="space-y-4">
           {featured && <FeaturedEvent tournament={featured} onOpen={() => openTournament(featured)} />}
-          {!featured && <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments scheduled.</p>}
+          {!featured && announced.length === 0 && <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments announced.</p>}
+          {announced.length > 0 && (
+            <div>
+              <p className="text-muted-foreground font-medium mb-3" style={{ fontSize: 14 }}>Announced</p>
+              <div className="space-y-3">
+                {announced.map(e => <AnnouncedRow key={e.event_id} event={e} />)}
+              </div>
+            </div>
+          )}
           {otherUpcoming.length > 0 && (
             <div>
               <p className="text-muted-foreground font-medium mb-3" style={{ fontSize: 14 }}>Also coming up</p>
