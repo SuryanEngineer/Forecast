@@ -598,13 +598,14 @@ def check_book_price_and_retention(ctx: dict) -> None:
         old = datetime.now(timezone.utc) - timedelta(days=30)
         bot_t = Trade(id=uuid.uuid4(), player_id=pid, price=Decimal("10"), quantity=1, buyer_user_id=ctx["alice"], seller_user_id=ctx["bob"], buyer_is_bot=True, seller_is_bot=True, executed_at=old)
         human_t = Trade(id=uuid.uuid4(), player_id=pid, price=Decimal("10"), quantity=1, buyer_user_id=ctx["alice"], seller_user_id=ctx["bob"], buyer_is_bot=False, seller_is_bot=True, executed_at=old)
+        bot_id, human_id = bot_t.id, human_t.id
         db.add_all([bot_t, human_t])
         db.commit()
         out = retention_service.run_retention(db, force=True)
         db.expire_all()
         check("retention ran without error", isinstance(out, dict) and "skipped" not in out, str(out))
-        check("old bot-vs-bot trade pruned", db.get(Trade, bot_t.id) is None)
-        check("old trade involving a human kept", db.get(Trade, human_t.id) is not None)
+        check("old bot-vs-bot trade pruned", db.get(Trade, bot_id) is None)
+        check("old trade involving a human kept", db.get(Trade, human_id) is not None)
     finally:
         db.close()
 
