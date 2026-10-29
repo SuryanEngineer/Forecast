@@ -333,7 +333,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
             <HelpButton topic="market" size={17} />
           </div>
           <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>
-          Buy shares of your favorite Fortnite pros. When they do well, you earn money!
+          Predict who'll perform: buy undervalued players, sell overvalued ones, and earn dividends when your picks place well.
         </p>
         </div>
         <button

@@ -195,7 +195,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <>
             <p>Every season you start at <strong>0 Seasonal Points (SP)</strong>. Your SP tracks how much your portfolio has grown
-            relative to what it was worth when the season began: <strong>+1% return = +50 SP</strong>. If your portfolio loses money
+            relative to what it was worth when the season began: <strong>+1% return = +100 SP</strong>. If your portfolio loses money
             your SP — and your rank — drops back down (SP never goes below 0).</p>
             <p>Ranks: Bronze I–III, Gold I–III, Diamond I–III, then Unreal. When the season ends your final rank is saved to your
             profile and everyone starts the next season fresh.</p>

@@ -177,7 +177,7 @@ export function useSeasonalLeaderboard() {
   return usePolledFetch<SeasonalLeaderboard>('/leaderboard/seasonal?limit=100', EMPTY_SEASONAL, 30_000);
 }
 
-const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_percent: 50 };
+const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_percent: 100 };
 
 export function useSeasonInfo() {
   return usePolledFetch<SeasonInfo>('/seasons/current', EMPTY_SEASON_INFO, 60_000);

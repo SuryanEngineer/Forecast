@@ -125,7 +125,7 @@ const SLIDES: Slide[] = [
   {
     emoji: '🎮',
     title: 'Welcome to Forecast',
-    body: 'A fantasy stock market for competitive Fortnite. Buy shares in real pro players and grow your portfolio as their value rises.',
+    body: 'A fantasy stock market for competitive Fortnite. Predict how pro players will perform, buy the undervalued ones, sell the overvalued ones, and grow your portfolio.',
     visual: <TickerSnip />,
   },
   {

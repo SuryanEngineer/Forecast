@@ -142,7 +142,7 @@ def check_pure_logic() -> None:
     check("holders owning only 10/1000 shares receive exactly 10 x per-share (no over-pay)", pays2[0][1] == Decimal("10.00"), str(pays2))
     # Season maths
     check("SP never negative", season_service.points_for_return(-20.0) == 0)
-    check("+10% return = 500 SP = Gold I", season_service.points_for_return(10.0) == 500 and season_service.rank_for_points(500) == "Gold I")
+    check("+10% return = 1000 SP = Gold III", season_service.points_for_return(10.0) == 1000 and season_service.rank_for_points(1000) == "Gold III")
     check("80% return = Unreal", season_service.rank_for_points(season_service.points_for_return(80.0)) == "Unreal")
     check("rank steps are ordered", [r for r, _ in season_service.RANKS][0] == "Bronze I" and [r for r, _ in season_service.RANKS][-1] == "Unreal")
     # Names / validation

@@ -217,7 +217,7 @@ function SeasonalBoard({ openTeam }: { openTeam: (userId: string) => void }) {
               <p className="text-muted-foreground" style={{ fontSize: 12 }}>Current season</p>
               <p className="font-bold text-foreground" style={{ fontSize: 20 }}>{season.name}</p>
               <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
-                {season.finalized ? 'Season complete' : daysLeft(season.ends_at)} &middot; points reset every season &middot; +1% return = +50 SP
+                {season.finalized ? 'Season complete' : daysLeft(season.ends_at)} &middot; points reset every season &middot; +1% return = +100 SP
               </p>
             </div>
             {mine && (

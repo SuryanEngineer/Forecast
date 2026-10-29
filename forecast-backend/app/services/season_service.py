@@ -28,7 +28,7 @@ from app.models.account import Season, SeasonEntry
 from app.models.user import User
 from app.services import portfolio_service
 
-POINTS_PER_PERCENT = 50  # +1% return = +50 SP
+POINTS_PER_PERCENT = 100  # +1% return = +100 SP
 
 # (name, min SP) ascending. Bronze/Gold/Diamond have I-III; Unreal is a single tier.
 RANKS: list[tuple[str, int]] = [
