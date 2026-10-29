@@ -29,8 +29,11 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+import time
 
 sys.path.insert(0, ".")
+
+from sqlalchemy.exc import OperationalError  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.services import bot_trading_service  # noqa: E402
@@ -54,7 +57,26 @@ def main() -> None:
     total_errors = 0
     try:
         for i in range(1, args.ticks + 1):
-            result = bot_trading_service.run_bot_tick(db, rng)
+            # A dropped database connection (free-tier Postgres does this now and then) must not end the run:
+            # roll back, reconnect, forget cached bot state and retry the tick a few times.
+            result = None
+            for attempt in range(1, 6):
+                try:
+                    result = bot_trading_service.run_bot_tick(db, rng)
+                    break
+                except OperationalError as exc:
+                    print(f"tick {i}: connection dropped ({type(exc).__name__}), reconnecting (attempt {attempt}/5)...")
+                    try:
+                        db.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    db.close()
+                    db = SessionLocal()
+                    bot_trading_service.reset_caches()
+                    time.sleep(3 * attempt)
+            if result is None:
+                print(f"tick {i}: giving up after 5 attempts -- stopping. Everything placed so far is saved.")
+                break
             total_actions += result["actions"]
             total_errors += result["errors"]
             if i % 10 == 0 or i == args.ticks:

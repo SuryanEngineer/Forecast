@@ -38,7 +38,8 @@ else:
     # pool_pre_ping avoids "server closed the connection unexpectedly" errors
     # from free-tier Postgres providers (Supabase/Neon) that idle-timeout
     # connections after a few minutes.
-    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+    # pool_recycle retires connections before the provider's idle/lifetime cut-off does.
+    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=240, future=True)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

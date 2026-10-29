@@ -20,6 +20,8 @@ class MarketSnapshotResponse(BaseModel):
     change_pct: Decimal
     volume_24h: int
     market_cap: Decimal
+    # Total dividend pools this player's results have produced so far (completed payouts) -- the "Dividends" sort.
+    dividends_total: Decimal = Decimal("0")
 
 
 class PaginatedMarketSnapshotResponse(BaseModel):

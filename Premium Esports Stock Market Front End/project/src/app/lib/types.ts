@@ -115,6 +115,7 @@ export interface MarketSnapshot {
   change_pct: Money;
   volume_24h: number;
   market_cap: Money;
+  dividends_total?: Money;
 }
 
 // GET /markets -- paginated. The real roster is tens of thousands of
@@ -122,7 +123,7 @@ export interface MarketSnapshot {
 // across every tracked tournament, not a small curated list), so this
 // always comes back one page at a time -- see the backend's
 // app/api/v1/markets.py docstring.
-export type MarketSortKey = 'market_cap' | 'price' | 'price_asc' | 'price_desc' | 'volume' | 'hot' | 'gainers' | 'losers';
+export type MarketSortKey = 'market_cap' | 'price' | 'price_asc' | 'price_desc' | 'volume' | 'dividends' | 'hot' | 'gainers' | 'losers';
 
 export interface PaginatedMarketSnapshotResponse {
   items: MarketSnapshot[];

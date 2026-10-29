@@ -84,7 +84,7 @@ function useLiveTradeFeed(markets: MarketSnapshot[]) {
 
 const SORTS = [
   { key: 'price_desc', label: 'Price ↓', hint: 'Highest price first' },
-  { key: 'price_asc', label: 'Price ↑', hint: 'Lowest price first' },
+  { key: 'dividends', label: 'Dividends ↓', hint: 'Most dividends earned first' },
 ] as const;
 type SortKey = typeof SORTS[number]['key'];
 

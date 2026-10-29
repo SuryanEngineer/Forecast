@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.player import Player, PriceSnapshot
+from app.models.dividend import DividendPayout, DividendPayoutStatus
 from app.models.order import Trade
 from app.services import book_price_service
 
@@ -137,6 +138,19 @@ def _bulk_volume_since(db: Session, player_ids: list[uuid.UUID], since: datetime
     return {player_id: int(total or 0) for player_id, total in rows}
 
 
+def _bulk_dividends_total(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, Decimal]:
+    """Each player's total completed dividend pool, in one grouped query."""
+    if not player_ids:
+        return {}
+    rows = (
+        db.query(DividendPayout.player_id, func.coalesce(func.sum(DividendPayout.total_pool_amount), 0))
+        .filter(DividendPayout.player_id.in_(player_ids), DividendPayout.status == DividendPayoutStatus.COMPLETED)
+        .group_by(DividendPayout.player_id)
+        .all()
+    )
+    return {pid: Decimal(str(total or 0)) for pid, total in rows}
+
+
 def list_market_snapshots(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
     """Batch-computed equivalent of calling get_market_snapshot() once per
     player. That naive per-player loop meant THREE separate DB
@@ -181,6 +195,7 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
     last_prices = book_price_service.apply_book(db, last_prices)
     prev_prices = _bulk_latest_prices(db, player_ids, before=day_ago)
     volumes = _bulk_volume_since(db, player_ids, day_ago)
+    dividends = _bulk_dividends_total(db, player_ids)
 
     snapshots: list[dict] = []
     for player in players:
@@ -208,6 +223,7 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
                 "change_pct": change_pct,
                 "volume_24h": volumes.get(player.id, 0),
                 "market_cap": last_price * player.total_shares_outstanding,
+                "dividends_total": dividends.get(player.id, Decimal("0")),
             }
         )
     return snapshots
@@ -219,6 +235,7 @@ _SORT_KEYS = {
     "price_desc": lambda s: s["last_price"],
     "price_asc": lambda s: s["last_price"],  # sorted ascending: see list_market_snapshots_page
     "volume": lambda s: s["volume_24h"],
+    "dividends": lambda s: s.get("dividends_total", 0),
     "hot": lambda s: abs(s["change_pct"]),
     "gainers": lambda s: s["change_pct"],
     "losers": lambda s: -s["change_pct"],

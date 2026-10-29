@@ -124,7 +124,7 @@ ORDER_MAX_AGE = timedelta(hours=6)
 HISTORY_RECENCY_DECAY = 0.85
 HISTORY_MAX_RESULTS_PER_PLAYER = 20
 PERFORMANCE_ELASTICITY = 0.5
-PERFORMANCE_MULT_MIN = 0.4
+PERFORMANCE_MULT_MIN = 0.06
 PERFORMANCE_MULT_MAX = 6.0
 
 
@@ -242,14 +242,14 @@ def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> 
     return _career_stats(db, player_ids)[0]
 
 
-UNPROVEN_MULT = 0.75  # a player with no usable results is worth a bit less than the typical pro
+UNPROVEN_MULT = 0.3  # a player with no usable results is worth a bit less than the typical pro
 
 
 def _compute_fair_value(base_price: Decimal, own_ev: Decimal | None, roster_median_ev: Decimal | None) -> Decimal:
     """Skill-based fair value, anchored to ONE roster-wide base price (the median IPO price), NOT to each player's own
     IPO price. Every Osirion-created player starts at the same default IPO price whatever their skill, so scaling that
     price by skill is what separates the stars from the rest: a player earning as much as the median pro is worth the
-    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.4, 6.0] (a 3.0 cap used to flatten every top earner to the same value)."""
+    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.06, 6.0] (weak players are nearly worthless: nobody would hold them) (a 3.0 cap used to flatten every top earner to the same value)."""
     if own_ev is None or roster_median_ev is None or roster_median_ev <= 0:
         return base_price * Decimal(str(UNPROVEN_MULT))
     ratio = float(own_ev / roster_median_ev)

@@ -25,7 +25,7 @@ from app.services import book_price_service, market_data_service
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 
-_VALID_SORTS = {"market_cap", "price", "price_asc", "price_desc", "volume", "hot", "gainers", "losers"}
+_VALID_SORTS = {"market_cap", "price", "price_asc", "price_desc", "volume", "dividends", "hot", "gainers", "losers"}
 
 
 @router.get("", response_model=PaginatedMarketSnapshotResponse)
