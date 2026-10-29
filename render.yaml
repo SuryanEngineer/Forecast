@@ -78,8 +78,10 @@ services:
       # server-side (Render dashboard -> Logs) until you set this to
       # "resend" and add RESEND_API_KEY -- see the deployment guide's
       # "Turning on real password-reset emails" section. ---
+      # Managed in the Render dashboard (not here) so a Blueprint re-sync never resets it: "console" (default; codes only
+      # appear in the logs), "smtp" (Gmail etc. -- needs a paid Render plan) or "resend". See EMAIL_SETUP.md.
       - key: EMAIL_PROVIDER
-        value: "console"   # change to "resend" once RESEND_API_KEY + your domain are set -- see EMAIL_SETUP.md
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       # Sender shown in inboxes, e.g.  Forecast <no-reply@yourdomain.com>
