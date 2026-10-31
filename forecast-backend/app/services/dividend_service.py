@@ -26,7 +26,7 @@ class PoolContext:
 
     def __init__(self, db: Session, tournament: Tournament) -> None:
         self.placement_curve = economic_params_service.get_placement_curve(db)
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
         if fixed_pool is not None:
             fixed_pool = fixed_pool * economic_params_service.get_region_multiplier(db, tournament.region)
         self.effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
@@ -65,7 +65,7 @@ def create_payout_for_placement(
     # OTHER) keep the original behavior of using the admin-entered
     # Tournament.prize_pool. Either way, an exact per-player `prize_won`
     # entered by an admin always takes precedence over both.
-    fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+    fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
     if fixed_pool is not None:
         # Region scale factor: an EU/NAC Cash Cup pays the full fixed pool;
         # a smaller region's Cash Cup pays a scaled-down amount of that same

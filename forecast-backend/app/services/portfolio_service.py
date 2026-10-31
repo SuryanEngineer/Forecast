@@ -34,7 +34,8 @@ def last_prices(db: Session) -> dict[uuid.UUID, Decimal]:
 
 
 def eligible_user_ids(db: Session, include_bots: bool = True) -> list[uuid.UUID]:
-    q = db.query(User.id).filter(User.email != HOUSE_ACCOUNT_EMAIL, User.is_active.is_(True))
+    # Smoke-test accounts (alice-123@test.local ...) are never real investors: out of every ranking and total.
+    q = db.query(User.id).filter(User.email != HOUSE_ACCOUNT_EMAIL, User.is_active.is_(True), ~User.email.like("%@test.local"))
     if not include_bots:
         q = q.filter(User.id.notin_(select(BotProfile.user_id)))
     return [uid for (uid,) in q.all()]

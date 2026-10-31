@@ -1439,7 +1439,7 @@ def list_announced_events(db: Session, force: bool = False) -> list[dict]:
             ):
                 continue
         region = window.regions[0] if len(window.regions) == 1 else None
-        pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type)
+        pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type, region)
         if pool is not None:
             pool = pool * economic_params_service.get_region_multiplier(db, region)
         rows.append(

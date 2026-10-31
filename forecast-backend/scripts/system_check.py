@@ -180,6 +180,19 @@ def check_pure_logic() -> None:
     _total = sum(min(5000.0, max(1.0, i / _y)) * s for i, s in zip(_inc, _sh))
     check("launch calibration: the solved yield makes the market's total value hit the chosen target", abs(_total - 5_000_000.0) < 1.0 and 0.01 < _y < 1.0, f"y={_y:.4f} total={_total:,.0f}")
     check("launch calibration: a bigger market value means a lower yield", mp.solve_target_yield(_inc, _sh, 8_000_000.0) < _y)
+    from decimal import Decimal as _D
+    check("calm market: the reference may not move more than the cap from its anchor", mp.limit_drift(_D("130"), _D("100"), _D("0.02")) == _D("102.00") and mp.limit_drift(_D("50"), _D("100"), _D("0.02")) == _D("98.00") and mp.limit_drift(_D("101"), _D("100"), _D("0.02")) == _D("101"))
+    from app.services import economic_params_service as _ep
+    check("majors: a cross-region (LAN) major is Global-sized, a single-region major is FNCS-sized", _ep.is_lan_region(None) and _ep.is_lan_region("ONSITE") and not _ep.is_lan_region("NAC"))
+    from app.models.tournament import TournamentType as _TT
+    from app.services import tournament_classification_service as _tc
+    _rules = sorted(_tc.DEFAULT_RULES, key=lambda r: r[2])
+    def _cls(name):
+        for pat, typ, _pri, _d in _rules:
+            if pat in name.lower():
+                return typ
+        return "none"
+    check("Last Chance is classified as a qualifier, ahead of the Global rules", _cls("FNCS Global Championship Last Chance - Round 1") == _TT.FNCS_QUALIFIER and _cls("Fortnite Global Championship") == _TT.GLOBAL_CHAMPIONSHIP)
     check("listed price = midpoint, House quotes at the reference (bids below it don't count)", mp.listed_price(D("100"), D("90"), D("110")) == D("100.00") and mp.listed_price(D("100"), D("104"), None) == D("102.00"))
     check("listed price pull is capped at 6%", mp.listed_price(D("100"), D("500"), None) == D("106.00"))
     liq = mp.liquidation_value(100, D("10"), [(D("50"), 40), (D("9"), 30)], D("1000"), D("0.15"), D("0.25"))

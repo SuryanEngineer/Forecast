@@ -130,6 +130,15 @@ def reference_after_trade(
     return max(MIN_PRICE, clamp_to_band(moved, fair, low, high))
 
 
+def limit_drift(new: Decimal, anchor: Decimal, max_move: Decimal) -> Decimal:
+    """Keep `new` within +/- max_move (a fraction) of `anchor`. Used to stop a quiet market drifting fast: trades may
+    still happen at any price, but the REFERENCE only follows them this far per window."""
+    if anchor <= 0 or max_move < 0:
+        return new
+    lo, hi = anchor * (D("1") - max_move), anchor * (D("1") + max_move)
+    return max(lo, min(hi, new))
+
+
 # --- listed price ------------------------------------------------------------------------------------------------------
 
 

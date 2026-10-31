@@ -98,7 +98,7 @@ def get_tournament_calendar(
 
     rows: list[CalendarTournamentResponse] = []
     for tournament in tournaments:
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type)
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
         if fixed_pool is not None:
             region_multiplier = economic_params_service.get_region_multiplier(db, tournament.region)
             total_pool: Decimal | None = fixed_pool * region_multiplier

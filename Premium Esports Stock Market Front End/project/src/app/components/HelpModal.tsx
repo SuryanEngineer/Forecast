@@ -508,11 +508,11 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Where the money comes from',
         body: (
           <div className="space-y-1.5">
-            <p>Cash Cup, FNCS, and Global Championship events each pay from a fixed dividend pool, scaled by region. Other
-            event types use the prize pool recorded for that specific tournament.</p>
-            <Fact label="Cash Cup pool" value="$300,000" />
-            <Fact label="FNCS Qualifier / Finals pool" value="$1,500,000" />
-            <Fact label="Global Championship pool" value="$3,000,000" />
+            <p>Every event pays from a fixed dividend pool, scaled by region. Majors pay the FNCS pool when played online and the
+            Global pool when played at a LAN. Qualifier-style events such as Last Chance pay a smaller, Cash Cup sized pool.</p>
+            <Fact label="Cash Cup / qualifier pool" value="$300,000" />
+            <Fact label="FNCS Finals / online Major pool" value="$1,500,000" />
+            <Fact label="Global Championship / LAN Major pool" value="$3,000,000" />
           </div>
         ),
       },
@@ -571,8 +571,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Event types',
         body: (
-          <p>Cash Cups are the most frequent events, FNCS Qualifiers and Finals occur less often, and the Global
-          Championship is the rarest. Larger events carry larger dividend pools, so they have the greatest impact on your
+          <p>Cash Cups are the most frequent events, FNCS Finals and Majors occur less often, and the Global
+          Championship and LAN Majors are the rarest. Larger events carry larger dividend pools, so they have the greatest impact on your
           portfolio. See the Dividends guide for exact figures.</p>
         ),
       },

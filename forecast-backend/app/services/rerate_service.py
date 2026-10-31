@@ -63,6 +63,7 @@ def rerate_players(db: Session, player_ids: list[uuid.UUID], tournament_ids: lis
         new = market_policy.clamp_to_band(Decimal(ref) * Decimal(str(round(factor, 6))), after[pid], low, high)
         new = max(Decimal("0.01"), new).quantize(Decimal("0.0001"))
         reference_service.set_ref(db, pid, new)
+        reference_service.drop_anchor(pid)
         db.add(PriceSnapshot(id=uuid.uuid4(), player_id=pid, price=new, volume=0))
         written += 1
     db.flush()

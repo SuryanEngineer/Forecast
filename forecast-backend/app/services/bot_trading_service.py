@@ -165,7 +165,7 @@ def _tournament_pool_amounts(db: Session, tournament_ids: list[uuid.UUID]) -> di
         .filter(Tournament.id.in_(tournament_ids))
         .all()
     ):
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type)
+        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type, region)
         if fixed_pool is not None:
             pools[t_id] = fixed_pool * economic_params_service.get_region_multiplier(db, region)
         elif prize_pool is not None:

@@ -26,6 +26,33 @@ _CACHE: dict[uuid.UUID, Decimal] = {}
 _STATE = {"loaded_at": 0.0}
 
 
+# Calm-market anchors: {player: (monotonic time the window opened, reference price at that moment)}. Process-local on
+# purpose (the lease holder is the only writer); a restart just opens fresh windows.
+ANCHOR_WINDOW_SECONDS = 3600.0
+_ANCHORS: dict[uuid.UUID, tuple[float, Decimal]] = {}
+
+
+def anchor_price(player_id: uuid.UUID, current: Decimal) -> Decimal:
+    """The reference price at the start of this stock's current one-hour window (opens a new window when the last one
+    is over). Only the order flow calls this, once per fill."""
+    now = time.monotonic()
+    entry = _ANCHORS.get(player_id)
+    if entry is None or now - entry[0] >= ANCHOR_WINDOW_SECONDS:
+        _ANCHORS[player_id] = (now, Decimal(current))
+        return Decimal(current)
+    return entry[1]
+
+
+def drop_anchor(player_id: uuid.UUID) -> None:
+    """Forget a stock's calm-market window (a result re-rate moved its reference on purpose; the next trade opens a
+    fresh window from the new level instead of dragging it back)."""
+    _ANCHORS.pop(player_id, None)
+
+
+def reset_anchors() -> None:
+    _ANCHORS.clear()
+
+
 def _authoritative() -> bool:
     from app.services import lease_service
 
@@ -35,6 +62,7 @@ def _authoritative() -> bool:
 def reset() -> None:
     """Forget the cache (tests, and scripts that rewrite prices behind the server's back)."""
     _CACHE.clear()
+    _ANCHORS.clear()
     _STATE["loaded_at"] = 0.0
 
 

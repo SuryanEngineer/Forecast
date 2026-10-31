@@ -41,6 +41,12 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "Skin/crossover-themed cups (e.g. a character-branded 'Cup') are promotional, not competitive -- never auto-tracked.",
     ),
     (
+        "last chance", TournamentType.FNCS_QUALIFIER, 15,
+        "Global Championship Last Chance is a qualifier-style event (a stepping stone to the Global Championship, "
+        "not the championship itself), so it pays the smaller qualifier pool. Checked before the 'fncs global' / "
+        "'global championship' rules, whose words also appear in its title.",
+    ),
+    (
         "reload cash cup", TournamentType.CASH_CUP, 20,
         "Reload Cash Cup Finals lobby -- Cash Cup tier.",
     ),

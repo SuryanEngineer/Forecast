@@ -15,10 +15,12 @@ successfully), so a failed settlement never leaves a half-written trade.
 """
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_DOWN, Decimal
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.engine import market_policy
@@ -95,11 +97,44 @@ def _reference_price(db: Session, player: Player) -> Decimal:
     return reference_service.get_ref(db, player.id, fallback=player.ipo_price)
 
 
+_EVENT_CACHE: dict[str, float] = {"checked": 0.0, "active": 0.0}
+
+
+def _event_window_active(db: Session) -> bool:
+    """True while any tournament is about to start (within 2h), is running / started within the last 12h, or finished
+    within the last 3h -- the times prices are allowed to move quickly. One tiny query, cached for a minute."""
+    now_m = time.monotonic()
+    if now_m - _EVENT_CACHE["checked"] < 60.0 and _EVENT_CACHE["checked"]:
+        return bool(_EVENT_CACHE["active"])
+    from app.models.tournament import Tournament, TournamentStatus
+
+    now = datetime.now(timezone.utc)
+    hit = (
+        db.query(Tournament.id)
+        .filter(
+            or_(
+                and_(Tournament.start_time >= now - timedelta(hours=12), Tournament.start_time <= now + timedelta(hours=2)),
+                and_(Tournament.status == TournamentStatus.FINALIZED, Tournament.updated_at >= now - timedelta(hours=3)),
+            )
+        )
+        .first()
+        is not None
+    )
+    _EVENT_CACHE["checked"] = now_m
+    _EVENT_CACHE["active"] = 1.0 if hit else 0.0
+    return hit
+
+
 def _update_reference(db: Session, player: Player, ctx: _MarketContext, fill_price: Decimal, qty: int) -> None:
     current = reference_service.get_ref(db, player.id, fallback=player.ipo_price)
     new = market_policy.reference_after_trade(
         current, fill_price, Decimal(qty), ctx.damping_depth, ctx.fair, ctx.low, ctx.high
     )
+    # Calm market: outside tournament windows the reference follows trades only a little per hour.
+    cap = economic_params_service.get_param(
+        db, "market.event_hourly_move" if _event_window_active(db) else "market.calm_hourly_move"
+    )
+    new = market_policy.limit_drift(new, reference_service.anchor_price(player.id, current), cap)
     if new.quantize(Decimal("0.0001")) != Decimal(current).quantize(Decimal("0.0001")):
         reference_service.set_ref(db, player.id, new)
 

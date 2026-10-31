@@ -59,6 +59,16 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         Decimal("100"),
         "Floor, in shares, on the size at which a trade fully resets the reference price.",
     ),
+    "market.calm_hourly_move": (
+        Decimal("0.02"),
+        "Outside tournament windows, a stock's reference price may move at most this fraction per hour (trades can still "
+        "happen at any price inside the band; the reference just follows slowly). Keeps a quiet market calm.",
+    ),
+    "market.event_hourly_move": (
+        Decimal("0.12"),
+        "The same limit while a tournament is about to start, running, or has just finished (prices are allowed to "
+        "move around events).",
+    ),
     "market.target_yield": (
         Decimal("0.10"),
         "Yearly dividend yield used to turn a stock's expected dividends into its fair price (fair = dividends per share / "
@@ -109,6 +119,11 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         Decimal("1500000"),
         "Fixed synthetic dividend pool paid out for an FNCS qualifier/finals tournament. Matches the "
         "simulation's locked-in economics (3 FNCS/chapter x $1.5M = $4.5M).",
+    ),
+    "dividend.qualifier_pool": (
+        Decimal("300000"),
+        "Fixed synthetic dividend pool paid out for a qualifier-style event (e.g. Global Championship Last Chance): "
+        "Cash Cup sized, because it is a stepping stone to a bigger event rather than the event itself.",
     ),
     "dividend.global_pool": (
         Decimal("3000000"),
@@ -179,25 +194,37 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
 # Tournament tiers that use a fixed synthetic dividend pool instead of a
 # real-world prize pool, and which DEFAULTS key holds that pool's dollar
 # amount. Keyed by app.models.tournament.TournamentType value. Tournament
-# types not listed here (MAJOR, OTHER) fall back to the original behavior:
+# types not listed here (OTHER) fall back to the original behavior:
 # an admin-entered `Tournament.prize_pool` split by the placement curve, or
 # an exact `PlacementResult.prize_won` per player if that's known.
+# MAJOR is handled separately in get_fixed_tournament_pool (it depends on whether the major is online or a LAN).
 FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE: dict[str, str] = {
     "cash_cup": "dividend.cash_cup_pool",
-    "fncs_qualifier": "dividend.fncs_pool",
+    "fncs_qualifier": "dividend.qualifier_pool",
     "fncs_finals": "dividend.fncs_pool",
     "global_championship": "dividend.global_pool",
 }
 
+# A MAJOR with one of these regions (or none -- Osirion leaves a cross-region event's region blank) is an onsite LAN
+# and pays the Global-sized pool; a major run inside one region (NAC, EU, ...) is an online event and pays the FNCS pool.
+_LAN_REGION_KEYS = {"", "MULTI", "ONSITE", "LAN", "GLOBAL", "INTL", "INTERNATIONAL", "WORLD"}
 
-def get_fixed_tournament_pool(db: Session, tournament_type: str) -> Decimal | None:
+
+def is_lan_region(region: str | None) -> bool:
+    return (region or "").strip().upper() in _LAN_REGION_KEYS
+
+
+def get_fixed_tournament_pool(db: Session, tournament_type: str, region: str | None = None) -> Decimal | None:
     """Returns the fixed synthetic pool amount for this tournament type
     (per the locked-in economy design), or None if this tournament type
     should use its own admin-entered `prize_pool` instead (see
-    FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE above)."""
-    param_key = FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE.get(
-        tournament_type.value if hasattr(tournament_type, "value") else tournament_type
-    )
+    FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE above).
+
+    `region` only matters for MAJOR: an online (single-region) major pays the FNCS pool, a LAN major the Global pool."""
+    type_value = tournament_type.value if hasattr(tournament_type, "value") else tournament_type
+    if type_value == "major":
+        return get_param(db, "dividend.global_pool" if is_lan_region(region) else "dividend.fncs_pool")
+    param_key = FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE.get(type_value)
     if param_key is None:
         return None
     return get_param(db, param_key)
@@ -282,7 +309,7 @@ def get_region_multiplier(db: Session, region: str | None) -> Decimal:
     penalized for missing data. A region string that IS present but not
     recognized in the table falls back to DEFAULT_REGION_KEY's row
     instead."""
-    if not region:
+    if is_lan_region(region):
         return Decimal("1.0")
     multipliers = get_region_multipliers(db)
     normalized = region.strip().upper()
