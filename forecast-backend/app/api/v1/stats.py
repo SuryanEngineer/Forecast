@@ -33,44 +33,8 @@ def current_season(db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.get("/leaderboard/seasonal")
-def seasonal_leaderboard(
-    limit: int = Query(100, ge=1, le=500),
-    season_id: uuid.UUID | None = None,
-    db: Session = Depends(get_db),
-    me: User | None = Depends(get_optional_user),
-) -> dict:
-    """Season leaderboard (live for the active season). Returns the top `limit` plus the caller's own row if outside it."""
-    if season_id is not None:
-        season = db.get(Season, season_id)
-        if season is None:
-            raise HTTPException(status_code=404, detail="Season not found")
-    else:
-        season = season_service.get_active_season(db)
-    if season is None:
-        return {"season": None, "entries": [], "me": None}
-    if season.finalized_at is not None:
-        from app.models.account import SeasonEntry
-        rows = []
-        q = db.query(SeasonEntry, User).join(User, User.id == SeasonEntry.user_id).filter(SeasonEntry.season_id == season.id)
-        for e, u in q.order_by(SeasonEntry.final_position.asc()).all():
-            rows.append({"user_id": e.user_id, "display_name": u.display_name, "tag": u.tag, "tag_color": u.tag_color,
-                         "start_value": e.start_value, "current_value": e.final_value,
-                         "return_pct": float((e.final_value - e.start_value) / e.start_value * 100) if e.start_value and e.final_value is not None else 0.0,
-                         "season_points": e.final_points, "rank_tier": e.final_rank, "position": e.final_position})
-    else:
-        rows = season_service.season_standings(db, season)
-        db.commit()
-    mine = next((r for r in rows if me is not None and r["user_id"] == me.id), None)
-    return {
-        "season": {"id": season.id, "name": season.name, "kind": season.kind, "starts_at": season.starts_at,
-                   "ends_at": season.ends_at, "ends_tbd": season.ends_at is None, "finalized": season.finalized_at is not None},
-        "entries": rows[:limit],
-        "me": mine if mine is not None and mine["position"] > limit else None,
-        "total": len(rows),
-    }
-
-
+# (The seasonal-points leaderboard was removed: one leaderboard, most money wins. Season rows stay only as calendar
+# markers on charts.)
 @router.get("/seasons")
 def list_seasons(db: Session = Depends(get_db)) -> list[dict]:
     return [

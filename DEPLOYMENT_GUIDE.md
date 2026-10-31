@@ -526,6 +526,10 @@ python3 scripts/simulate_price_history.py --reset-prices             # do it
 * **Portfolio value / net worth** = what quick-selling the whole position would pay right now (real bids capped at the reference, then the House with slippage). One tiny trade can no longer move anyone's net worth; big positions are worth slightly less per share.
 * **Protections:** limit prices outside the band are refused; an order that would trade against your own resting order is refused; a quick order the House cannot take ("The House can't buy that many … right now") gets a clear message instead of a database error. Admin knobs: `market.band_low`, `market.band_high`, `market.reference_damping_fraction`, `market.reference_damping_min` (Admin → parameters).
 
+### One leaderboard, real users only
+
+The Seasonal Points ladder was removed: there is a single leaderboard of **real users only** (bots and the House are never listed), ranked by net worth, whoever has the most money wins. Fortnite season rows remain only as dashed markers on charts. The tutorial and help pages say openly that bot traders (algorithms based on recent and historical performance) are part of the market, and show the market's projected growth rate, computed live from `GET /markets/benchmark` (projected yearly dividends ÷ market value) as the number to beat.
+
 ### One server runs the market
 
 The order books live in memory, so exactly one backend instance may match orders. A row in the new `market_lease` table names the holder; the server renews it every 15 s and releases it on shutdown, so deploys hand over in seconds. Any other instance still serves reads but order changes return "the market is switching servers for a moment"; bots, dividends, tournament finalizing and Osirion sync only run on the holder. Scripts that change prices/orders (`kickstart_market.py`, `simulate_price_history.py`) refuse to run while a server holds the lease. `MARKET_LEASE_ENABLED=false` turns it off (single-process debugging only). So it is now safe (not just "don't") to have Render briefly run two instances during a deploy.

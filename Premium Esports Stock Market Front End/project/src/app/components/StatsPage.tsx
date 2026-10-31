@@ -1,7 +1,6 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { useMyStats, useSeasonInfo, useSeasonList } from '../lib/hooks';
+import { useMyStats, useSeasonList } from '../lib/hooks';
 import { shortSeasonName } from '../lib/seasons';
-import { RankBadge, rankColor } from './RankBadge';
 
 const money0 = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 const signed = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -30,7 +29,6 @@ function fmtMinutes(m: number): string {
 
 export function StatsPage() {
   const { data: stats, loading, error } = useMyStats();
-  const { data: info } = useSeasonInfo();
   const { data: seasonList } = useSeasonList();
 
   if (!stats) {
@@ -42,7 +40,6 @@ export function StatsPage() {
     );
   }
 
-  const s = stats.season;
   const chart = stats.history.map(h => ({ day: h.day.slice(5), value: h.net_worth }));
   // Season starts that fall on a day this chart has data for (nothing earlier than the chart's first day is drawn).
   const dayLabel = new Map(stats.history.map(h => [h.day, h.day.slice(5)]));
@@ -57,38 +54,6 @@ export function StatsPage() {
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>
           Lifetime performance &middot; member since {fmtDate(stats.member_since)}
         </p>
-      </div>
-
-      {/* Season / rank */}
-      <div className="rounded-2xl border p-5" style={{ background: 'linear-gradient(135deg, rgba(155,111,255,0.08), rgba(0,200,255,0.05)), var(--card)', borderColor: 'rgba(155,111,255,0.25)' }}>
-        {s ? (
-          <>
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <p className="text-muted-foreground" style={{ fontSize: 12 }}>{s.season_name}</p>
-                <div className="flex items-center gap-3 mt-1">
-                  <RankBadge rank={s.rank} size="lg" />
-                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 24 }}>{s.season_points.toLocaleString()} SP</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="font-mono font-bold" style={{ fontSize: 18, color: tone(s.return_pct) }}>{pct(s.return_pct)} this season</p>
-                <p className="text-muted-foreground" style={{ fontSize: 12 }}>Season rank #{s.position} &middot; started at {money0(Number(s.start_value))}</p>
-              </div>
-            </div>
-            <div className="mt-4">
-              <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                <div className="h-full rounded-full" style={{ width: `${Math.round(s.progress * 100)}%`, background: rankColor(s.rank) }} />
-              </div>
-              <p className="text-muted-foreground mt-1.5" style={{ fontSize: 11 }}>
-                {s.next_rank ? `${s.points_to_next.toLocaleString()} SP to ${s.next_rank}` : 'Top rank reached'}
-                {' '}&middot; +1% return = +{info.points_per_percent} SP &middot; points reset each season
-              </p>
-            </div>
-          </>
-        ) : (
-          <p className="text-muted-foreground" style={{ fontSize: 13 }}>No season is active right now. Your all-time stats below keep counting.</p>
-        )}
       </div>
 
       {/* Headline numbers */}
@@ -164,29 +129,6 @@ export function StatsPage() {
           sub={stats.worst_holding ? `${signed(stats.worst_holding.unrealized)} (${pct(stats.worst_holding.pct)}) unrealized` : 'No holdings'}
           color={stats.worst_holding && stats.worst_holding.unrealized < 0 ? 'var(--loss)' : undefined}
         />
-      </div>
-
-      {/* Season history */}
-      <div className="rounded-2xl border border-border p-5" style={{ background: 'var(--card)' }}>
-        <p className="font-semibold text-foreground mb-3" style={{ fontSize: 15 }}>Season history</p>
-        {stats.season_history.length === 0 ? (
-          <p className="text-muted-foreground" style={{ fontSize: 13 }}>Finished seasons will show up here with your final rank.</p>
-        ) : (
-          <div className="space-y-2">
-            {stats.season_history.map(h => (
-              <div key={h.season_id} className="flex items-center justify-between px-4 py-3 rounded-xl" style={{ background: 'var(--muted)' }}>
-                <div>
-                  <p className="font-semibold text-foreground" style={{ fontSize: 13 }}>{h.name}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 11 }}>Finished #{h.final_position ?? '—'}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <p className="font-mono text-foreground" style={{ fontSize: 13 }}>{(h.final_points ?? 0).toLocaleString()} SP</p>
-                  {h.final_rank && <RankBadge rank={h.final_rank} />}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.6 }}>

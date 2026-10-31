@@ -12,7 +12,6 @@ import type {
   PositionResponse,
   SeasonInfo,
   SeasonSummary,
-  SeasonalLeaderboard,
   UserStats,
   TournamentResponse,
 } from './types';
@@ -101,6 +100,19 @@ export function useMarketSummary() {
   return usePolledFetch<MarketSummaryResponse>('/markets/summary', EMPTY_MARKET_SUMMARY, 30_000);
 }
 
+export interface MarketBenchmark {
+  projected_dividends_per_year: number;
+  market_value: number;
+  dividend_growth_rate: number;
+  target_yield: number;
+  stocks: number;
+}
+
+// The market's projected yearly growth from dividends (see the backend's fair_price_service.benchmark).
+export function useBenchmark() {
+  return usePolledFetch<MarketBenchmark | null>('/markets/benchmark', null, 10 * 60_000);
+}
+
 // Looks up a specific, bounded set of players by id -- for callers that
 // need particular players (a user's own portfolio holdings, a
 // tournament's entrants/placed competitors), NOT a ranked page of the
@@ -180,13 +192,6 @@ export function useAnnouncedTournaments() {
 
 export function useLeaderboard() {
   return usePolledFetch<LeaderboardEntry[]>('/leaderboard', [], 30_000);
-}
-
-const EMPTY_SEASONAL: SeasonalLeaderboard = { season: null, entries: [], me: null };
-
-// Seasonal Points leaderboard for the active season (resets every season) -- GET /leaderboard/seasonal.
-export function useSeasonalLeaderboard() {
-  return usePolledFetch<SeasonalLeaderboard>('/leaderboard/seasonal?limit=100', EMPTY_SEASONAL, 30_000);
 }
 
 const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_percent: 100 };

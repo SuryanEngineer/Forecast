@@ -1,8 +1,6 @@
 import type { ComponentType } from 'react';
 import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useSeasonInfo } from '../lib/hooks';
-import { seasonCountdown, shortSeasonName } from '../lib/seasons';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
 
@@ -18,7 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Home', icon: Home },
   { id: 'markets', label: 'Market', icon: TrendingUp },
   { id: 'portfolio', label: 'My Team', icon: Briefcase },
-  { id: 'leaderboards', label: 'Rankings', icon: Trophy },
+  { id: 'leaderboards', label: 'Leaderboard', icon: Trophy },
   { id: 'stats', label: 'My Stats', icon: BarChart3 },
   { id: 'tournaments', label: 'Events', icon: Zap },
 ];
@@ -40,10 +38,6 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
   const { user, wallet, logout } = useAuth();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
-  const { data: seasonInfo } = useSeasonInfo();
-  const season = seasonInfo.season;
-  const nextSeason = seasonInfo.next_season ?? null;
-  const startsIn = nextSeason ? Math.max(0, Math.ceil((new Date(nextSeason.starts_at).getTime() - Date.now()) / 86_400_000)) : 0;
 
   return (
     <aside
@@ -97,31 +91,6 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
         >
           <HelpCircle className="w-5 h-5 shrink-0" />
           <span className="flex-1">How it works</span>
-        </button>
-      </div>
-
-      {/* Current Fortnite season */}
-      <div className="px-4 pb-2">
-        <button
-          onClick={() => navigate('leaderboards')}
-          title="Current Fortnite season: view the ranked ladder"
-          className="w-full text-left rounded-xl border p-3 transition-colors hover:bg-white/5"
-          style={{ background: 'rgba(155,111,255,0.07)', borderColor: 'rgba(155,111,255,0.25)' }}
-        >
-          <p className="text-muted-foreground" style={{ fontSize: 10 }}>Fortnite season</p>
-          {season ? (
-            <>
-              <p className="font-semibold text-foreground mt-0.5 leading-tight" style={{ fontSize: 13 }}>{season.name}</p>
-              <p className="text-muted-foreground mt-0.5" style={{ fontSize: 10.5 }}>
-                {seasonCountdown(season)}
-                {nextSeason && ` · next: ${shortSeasonName(nextSeason.name)} in ${startsIn}d`}
-              </p>
-            </>
-          ) : (
-            <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
-              {nextSeason ? `${shortSeasonName(nextSeason.name)} starts in ${startsIn}d` : 'Between seasons'}
-            </p>
-          )}
         </button>
       </div>
 

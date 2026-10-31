@@ -479,10 +479,9 @@ def check_seasons_stats(ctx: dict) -> None:
         check("losing money drops SP back to 0 (never negative)", rows[ctx["carl"]]["season_points"] == 0 and rows[ctx["carl"]]["return_pct"] < 0)
 
         db.commit()
-        r = client.get("/api/v1/leaderboard/seasonal")
-        check("GET /leaderboard/seasonal works", r.status_code == 200 and r.json()["season"]["name"] == "Check Season" and len(r.json()["entries"]) >= 3, r.text[:200])
+        check("the seasonal leaderboard endpoint is gone (one leaderboard only)", client.get("/api/v1/leaderboard/seasonal").status_code == 404)
         r = client.get("/api/v1/leaderboard")
-        check("GET /leaderboard (all-time) works", r.status_code == 200 and len(r.json()) >= 3)
+        check("GET /leaderboard works", r.status_code == 200 and len(r.json()) >= 3)
         board = leaderboard_service.compute_leaderboard(db, 50)
         check("all-time board sorted by net worth", all(board[i]["portfolio_value"] >= board[i + 1]["portfolio_value"] for i in range(len(board) - 1)))
         check("House account is excluded from leaderboards", all(b["display_name"] != "House Liquidity Account" for b in board))
@@ -681,7 +680,8 @@ def check_bots() -> None:
         from app.services import portfolio_service
         portfolio_service.clear_cache()  # net worths are memoised for a few seconds; earlier checks filled the cache
         board = leaderboard_service.compute_leaderboard(db, 100)
-        check("leaderboard includes bots", len(board) > 12)
+        bot_names = set(names)
+        check("leaderboard lists real users only (no bots, no House)", all(b["display_name"] not in bot_names for b in board) and all(b["display_name"] != "House Liquidity Account" for b in board))
     finally:
         db.close()
 

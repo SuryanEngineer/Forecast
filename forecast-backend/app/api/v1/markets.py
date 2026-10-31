@@ -67,6 +67,14 @@ def get_markets_summary(db: Session = Depends(get_db)) -> MarketSummaryResponse:
     return MarketSummaryResponse(**market_data_service.get_market_summary(db))
 
 
+@router.get("/benchmark")
+def get_benchmark(db: Session = Depends(get_db)) -> dict:
+    """The market's projected growth rate from dividends (what an average share earns per year at today's prices)."""
+    from app.services import fair_price_service
+
+    return fair_price_service.benchmark(db)
+
+
 @router.get("/{player_id}", response_model=MarketSnapshotResponse)
 def get_market(player_id: uuid.UUID, db: Session = Depends(get_db)) -> MarketSnapshotResponse:
     player = db.get(Player, player_id)

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowUpRight, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { BenchmarkText } from './Benchmark';
 
 interface Props {
   onClose: () => void;
@@ -137,7 +138,7 @@ const SLIDES: Slide[] = [
   {
     emoji: '🎯',
     title: 'Two ways to trade',
-    body: 'Place a limit order at your own price and it rests on the order book until it fills, or use Quick Buy/Sell to trade instantly at a small premium.',
+    body: 'Place a limit order at your own price and it rests on the order book until it fills, or use Quick Buy/Sell to trade instantly at the current Buy / Sell price (the gap between them is the cost of trading instantly).',
     visual: <OrdersSnip />,
   },
   {
@@ -147,9 +148,21 @@ const SLIDES: Slide[] = [
     visual: <DividendSnip />,
   },
   {
+    emoji: '🤖',
+    title: 'You are trading against bots too',
+    body: 'Not everyone here is a person. Automated bot traders buy and sell around the clock, so the market always has someone on the other side. They make decisions with algorithms built on recent form and long-term track record: what a player has earned in tournaments over the past year, how they have placed lately, upcoming events, and missed qualifiers. They are not on the leaderboard. They are the market, and your job is to out-think it.',
+    visual: <TickerSnip />,
+  },
+  {
+    emoji: '🚀',
+    title: 'Beat the market',
+    body: <BenchmarkText />,
+    visual: <PortfolioSnip />,
+  },
+  {
     emoji: '💼',
     title: 'Build your team',
-    body: "Track your holdings, see how you rank on the leaderboard, and check out anyone else's team too.",
+    body: "Track your holdings, see where you rank on the leaderboard (real investors only, most money wins), and check out anyone else's team too.",
     visual: <PortfolioSnip />,
   },
 ];

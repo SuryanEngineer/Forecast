@@ -24,7 +24,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.player import Player
-from app.services import bot_trading_service as bots
+from app.services import bot_trading_service as bots, economic_params_service
 
 SHRINK_K = 6.0
 FAIR_CACHE_SECONDS = 600
@@ -68,6 +68,30 @@ def fair_prices(db: Session, force: bool = False) -> dict[uuid.UUID, Decimal]:
     fair = compute_fair(db)
     _CACHE.update(t=now, fair=fair)
     return fair
+
+
+def benchmark(db: Session) -> dict:
+    """The market's benchmark growth rate: projected dividends over the next 12 months, per dollar of market value.
+    Dividend pools are the only new money the tournaments pour into the game (new players also bring starting cash), so
+    a share bought at the going price earns about this much per year from dividends alone; to beat the market you have to
+    earn more than this rate."""
+    from app.services import reference_service
+
+    fair = fair_prices(db)
+    rows = db.query(Player.id, Player.total_shares_outstanding).filter(Player.is_active.is_(True), Player.id.in_(list(fair.keys()))).all() if fair else []
+    refs = reference_service.get_refs(db, [pid for pid, _ in rows])
+    fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
+    fee = fee / 100.0 if fee > 1 else fee
+    dividends = sum(float(fair[pid]) * bots.TARGET_YIELD * shares for pid, shares in rows) * (1.0 - fee)
+    market_value = sum(float(refs.get(pid, fair[pid])) * shares for pid, shares in rows)
+    rate = dividends / market_value if market_value > 0 else 0.0
+    return {
+        "projected_dividends_per_year": round(dividends, 2),
+        "market_value": round(market_value, 2),
+        "dividend_growth_rate": round(rate, 4),
+        "target_yield": bots.TARGET_YIELD,
+        "stocks": len(rows),
+    }
 
 
 def fair_for(db: Session, player_id: uuid.UUID) -> Decimal | None:

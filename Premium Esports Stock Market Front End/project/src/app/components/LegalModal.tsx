@@ -29,7 +29,7 @@ function Terms() {
         <p>Usernames and tags must be appropriate for a general audience. Names that are offensive, hateful, sexual, harassing, or that impersonate other people or staff will result in account deletion without notice. Don't attempt to disrupt the service, scrape it aggressively, or access other users' accounts.</p>
       </Section>
       <Section title="4. Game rules and changes">
-        <p>Prices, dividends, fees, seasons, ranks, and points are game mechanics that we may tune, correct, or reset at any time to keep the game fair, including correcting errors in tournament data. Seasonal points and ranks reset every season by design.</p>
+        <p>Prices, dividends, and fees are game mechanics that we may tune, correct, or reset at any time to keep the game fair, including correcting errors in tournament data. Automated bot traders take part in the market to provide liquidity; they are not ranked on the leaderboard.</p>
       </Section>
       <Section title="5. Availability and liability">
         <p>The service is provided "as is" without warranties. We don't guarantee uninterrupted or error-free operation, and to the fullest extent permitted by law we're not liable for any loss arising from your use of Forecast, which involves only virtual items.</p>

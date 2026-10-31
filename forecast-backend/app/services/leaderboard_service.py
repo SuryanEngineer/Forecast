@@ -1,14 +1,8 @@
 """
-Leaderboard: ranks users (never the House account; bot traders -- see
-app/services/bot_trading_service.py -- are included while INCLUDE_BOTS is on, so the
-market looks populated at launch) by total portfolio
-value = wallet cash + held shares valued at each player's current
-last-traded price (see app/services/market_data_service.py for what
-"last price" means). Recomputed on every request rather than
-cached/materialized -- fine at prototype scale (roadmap's "correct and
-testable, not yet production-hardened" phase); a materialized snapshot
-refreshed on a schedule would be the follow-up once the user count makes
-recomputing this on every page load too slow.
+Leaderboard: ranks REAL users only (never the House account, never the bot traders -- they are market participants,
+not competitors, and the site says so) by net worth = wallet cash + what selling every held share would pay right now
+(see portfolio_service) + treasury. One board, never resets: whoever has the most money wins. Recomputed on request
+(memoised for a few seconds).
 """
 from __future__ import annotations
 
@@ -17,12 +11,11 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.services import portfolio_service
 
-# Flip to False to rank only real users once the real player base is big enough.
-INCLUDE_BOTS = True
+INCLUDE_BOTS = False  # bots trade to make the market, they do not compete on the leaderboard
 
 
 def compute_leaderboard(db: Session, limit: int = 100) -> list[dict]:
-    """All-time (never resets) leaderboard by total net worth = cash + shares at last price + treasury."""
+    """The leaderboard by net worth, real users only."""
     worths = portfolio_service.compute_net_worths_cached(db, include_bots=INCLUDE_BOTS)
     users = {
         u.id: u for u in db.query(User).filter(User.id.in_(list(worths.keys()))).all()

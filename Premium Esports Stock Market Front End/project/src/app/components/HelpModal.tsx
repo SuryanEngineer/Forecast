@@ -14,6 +14,7 @@
 // rewritten to match this app's real backend rather than translated
 // verbatim from the demo. If those backend defaults ever change, this
 // copy should be updated alongside them.
+import { BenchmarkText } from './Benchmark';
 import { useState, type ReactNode } from 'react';
 import { BadgeCheck, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -187,31 +188,24 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   },
   rankings: {
     emoji: '📊',
-    title: 'How Rankings Work',
-    intro: 'There are two leaderboards: a Seasonal ladder that resets every Fortnite season, and an All-Time board that never resets.',
+    title: 'How the Leaderboard Works',
+    intro: 'One leaderboard, real investors only: whoever has the most money is on top.',
     sections: [
       {
-        heading: 'Seasonal Points & ranks',
-        body: (
-          <>
-            <p>Every season you start at <strong>0 Seasonal Points (SP)</strong>. Your SP tracks how much your portfolio has grown
-            relative to what it was worth when the season began: <strong>+1% return = +100 SP</strong>. If your portfolio loses money
-            your SP — and your rank — drops back down (SP never goes below 0).</p>
-            <p>Ranks: Bronze I–III, Gold I–III, Diamond I–III, then Unreal. When the season ends your final rank is saved to your
-            profile and everyone starts the next season fresh.</p>
-          </>
-        ),
-      },
-      {
-        heading: 'All-Time board',
+        heading: 'Net worth',
         body: (
           <p><strong>Net worth = cash + what selling every share you hold would pay right now</strong> (real bids first, then
-          the House at its size-dependent price) plus any treasury holdings. It never resets.</p>
+          the House at its size-dependent price) plus any treasury holdings. It never resets, so everyone is simply racing to build the most money.</p>
         ),
       },
       {
         heading: 'View any investor’s team',
         body: <p>Select any row on the leaderboard to see that investor’s holdings and portfolio value.</p>,
+      },
+      {
+        heading: 'Bots are not on the board',
+        body: <p>The automated bot traders that keep the market liquid never appear on the leaderboard: they are the market, not
+        competitors. Everyone you see ranked is a real person.</p>,
       },
     ],
   },
@@ -251,6 +245,17 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           House). The listed price is the midpoint. The House always quotes around the market’s running price, which moves
           with trades in proportion to their size and stays within a band around what the player’s dividends are worth, so a
           single tiny trade at a silly price cannot move anything.</p>
+        ),
+      },
+      {
+        heading: 'Who else is trading? Bots.',
+        body: (
+          <p>Besides real investors, automated <strong>bot traders</strong> trade around the clock so there is always someone to
+          buy from or sell to. They stimulate the market by posting bids and asks and trading, and they decide based on recent and
+          historical performance: what a player has earned in tournaments over the past year, how they have been playing lately,
+          upcoming events (only holders at the start are paid) and missed qualifying events. They never see anything you can’t.
+          They are not on the leaderboard. Treat them as the market to beat: spot a player they are undervaluing before the
+          results show it, and outperform them. <BenchmarkText /></p>
         ),
       },
       {

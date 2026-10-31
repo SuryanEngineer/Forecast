@@ -138,15 +138,6 @@ def user_stats(db: Session, user: User) -> dict:
 
     sess = db.query(func.count(UserSession.id), func.coalesce(func.sum(UserSession.active_seconds), 0)).filter(UserSession.user_id == uid).one()
 
-    season = season_service.get_active_season(db)
-    season_info = None
-    if season is not None:
-        for r in season_service.season_standings(db, season):
-            if r["user_id"] == uid:
-                season_info = {**r, **season_service.rank_progress(r["season_points"]), "season_name": season.name,
-                               "ends_at": season.ends_at, "season_id": season.id}
-                break
-
     return {
         "net_worth": _f(net_worth), "cash": _f(w["cash"]), "holdings_value": _f(w["holdings"]), "treasury_value": _f(w["treasury"]),
         "contributed_capital": _f(contributed),
@@ -157,6 +148,5 @@ def user_stats(db: Session, user: User) -> dict:
         "biggest_trade": biggest_info, "best_day": best_day, "worst_day": worst_day,
         "best_holding": best_holding, "worst_holding": worst_holding,
         "member_since": user.created_at, "sessions": int(sess[0] or 0), "minutes_on_site": round(int(sess[1] or 0) / 60),
-        "season": season_info, "season_history": season_service.user_season_history(db, uid),
         "history": [{"day": s.day, "net_worth": _f(s.net_worth)} for s in snaps[-120:]],
     }
