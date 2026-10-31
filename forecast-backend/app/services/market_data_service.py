@@ -163,14 +163,15 @@ _LIST_CACHE: dict = {}
 
 
 def list_market_snapshots(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
-    key = (active_only, (search or "").strip().lower())
+    if search:  # free-text searches are narrow and rare: never cached (keeps memory flat)
+        return _list_market_snapshots_uncached(db, active_only, search)
+    key = active_only
     now = time.monotonic()
     hit = _LIST_CACHE.get(key)
     if hit is not None and now - hit[0] < MARKET_LIST_TTL:
         return list(hit[1])
-    if len(_LIST_CACHE) > 200:  # searches are free text: never let the cache grow without bound
-        _LIST_CACHE.clear()
-    data = _list_market_snapshots_uncached(db, active_only, search)
+    data = _list_market_snapshots_uncached(db, active_only, None)
+    _LIST_CACHE.clear()
     _LIST_CACHE[key] = (now, data)
     return list(data)
 
