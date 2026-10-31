@@ -503,9 +503,30 @@ python3 scripts/simulate_price_history.py             # write it (add --step-day
 
 It makes no trades. Each player's past price follows the same skill-based fair value the bots use, recomputed as of each date from the results that existed then, with small daily noise, a small run-up before and dip after each tournament they play, and a small fading drop when they miss a qualifying event in their own region. The path is bent to land on their first real trade price. Rows are marked `volume = 0`, so re-running replaces the old simulated rows and never touches real trades. Player charts show a dot for each tournament played; hover for the placement.
 
-### Fair price = yearly dividends ÷ 10%
+### Launch procedure (price level from the cash in the game)
 
-The bots' idea of a fair price is now `projected yearly dividends per share ÷ 10%` (projection = what the player's results paid over the last 12 months, scaled up if we have less than a year of data; floor $1, cap $5,000). A star who earns 100× a journeyman is worth about 100×; every stock offers a similar yield, so nothing is a bargain just because a formula squashed it. `python3 scripts/economy_check.py` prints how money, shares, prices and dividends line up.
+The overall price LEVEL is a choice, so it is set from the money in the game: **market value = cash × multiple** (we chose 1.5 on $305M = 255 bots + 50 players at $1M, so about $457M, around $51 a share across 9M shares). Each stock's slice of that is its share of expected dividends. The yearly-dividend divisor ("target yield") is solved from it and stored as the platform parameter `market.target_yield`; the Guide reads it live. Prices are then free to move (the band is wide: 0.25x to 4x fair).
+
+In order, from `forecast-backend` (PowerShell):
+
+```powershell
+# 1. after the deploy finished: widen the band and raise the bot population (these only change stored settings)
+python3 scripts/set_economy_params.py --confirm --set market.band_low=0.25 --set market.band_high=4 --set bots.population_size=255
+# 2. back up Supabase, then in Render SUSPEND the backend and wait ~1 minute
+# 3. preview (writes nothing): shows the solved yield, resulting market value, price spread and each real user's before/after
+python3 scripts/simulate_price_history.py --reset-prices --market-multiple 1.5 --market-cash 305000000 --dry-run
+# 4. do it
+python3 scripts/simulate_price_history.py --reset-prices --market-multiple 1.5 --market-cash 305000000 --yes
+# 5. in Render RESUME the backend; the bot tick creates the missing bots on its own
+# 6. check the economy
+python3 scripts/economy_check.py
+```
+
+Bots are created with a random bankroll around the starting balance (0.3x to 5x, average about 1.16x), so 255 bots hold roughly $296M, not exactly $255M; pass the cash you actually expect to `--market-cash`.
+
+### Fair price = yearly dividends ÷ target yield
+
+The bots' idea of a fair price is now `projected yearly dividends per share ÷ target yield` (stored in `market.target_yield`, 10% until the launch reset sets it; projection = what the player's results paid over the last 12 months, scaled up if we have less than a year of data; floor $1, cap $5,000). A star who earns 100× a journeyman is worth about 100×; every stock offers a similar yield, so nothing is a bargain just because a formula squashed it. `python3 scripts/economy_check.py` prints how money, shares, prices and dividends line up.
 
 When this formula changes, existing prices are far from fair and bots only move prices a few percent at a time. Do a one-time reprice (it **cancels every open order, deletes all price history and rebuilds it**; your trades and balances are untouched):
 

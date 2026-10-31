@@ -105,6 +105,8 @@ export interface MarketBenchmark {
   market_value: number;
   dividend_growth_rate: number;
   target_yield: number;
+  band_low?: number;
+  band_high?: number;
   stocks: number;
 }
 

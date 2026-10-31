@@ -35,6 +35,43 @@ MIN_PRICE = D("0.01")
 CENT = D("0.01")
 
 
+# --- launch calibration --------------------------------------------------------------------------------------------
+
+
+def solve_target_yield(
+    income_per_share: Sequence[float],
+    shares: Sequence[int],
+    market_value: float,
+    fair_min: float = 1.0,
+    fair_max: float = 5000.0,
+) -> float:
+    """The yield y at which every stock priced at fair = income/y (clamped to [fair_min, fair_max]) adds up to `market_value`.
+
+    This is how the launch price LEVEL is chosen: pick the total value the market should start at (e.g. 1.5x the cash
+    players will hold) and the yield falls out of it; each stock's share of that value is its share of expected dividends.
+    The total is non-increasing in y, so a bisection finds it. Returns the closest reachable yield if the target is out of range.
+    """
+    inc = [float(x) for x in income_per_share]
+    sh = [float(s) for s in shares]
+    target = float(market_value)
+
+    def total(y: float) -> float:
+        return sum(min(fair_max, max(fair_min, i / y)) * s for i, s in zip(inc, sh))
+
+    lo, hi = 0.001, 5.0
+    if total(lo) <= target:
+        return lo
+    if total(hi) >= target:
+        return hi
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if total(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
 # --- fair-value band -----------------------------------------------------------------------------------------------
 
 

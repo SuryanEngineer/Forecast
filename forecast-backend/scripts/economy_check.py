@@ -67,10 +67,12 @@ def spearman(xs: list[float], ys: list[float]) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target-yield", type=float, default=0.08, help="Yearly dividend yield a fairly priced stock should offer (default 8%%).")
+    ap.add_argument("--target-yield", type=float, default=None, help="Yearly dividend yield a fairly priced stock should offer (default: the stored market.target_yield).")
     args = ap.parse_args()
     db = SessionLocal()
     try:
+        if args.target_yield is None:
+            args.target_yield = float(economic_params_service.get_param(db, "market.target_yield"))
         house_id = db.query(User.id).filter(User.email == HOUSE_ACCOUNT_EMAIL).scalar()
         bot_ids = {uid for (uid,) in db.query(BotProfile.user_id).all()}
         users = {uid for (uid,) in db.query(User.id).filter(User.is_active.is_(True)).all()}

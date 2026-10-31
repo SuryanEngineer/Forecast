@@ -39,8 +39,21 @@ def shrunk_income(own: float, n: int, prior: float, k: float = SHRINK_K) -> floa
     return w * own + (1.0 - w) * prior
 
 
-def compute_fair(db: Session, exclude_tournament_ids: list[uuid.UUID] | None = None, at: datetime | None = None) -> dict[uuid.UUID, Decimal]:
-    """Fair price for every ACTIVE player right now (or `at`), optionally ignoring some tournaments."""
+def refresh_target_yield(db: Session) -> float:
+    """Loads the stored target yield (platform parameter market.target_yield) into the live pricing formula. Called before
+    any fair price is computed, so changing the parameter (scripts/simulate_price_history.py --market-multiple) is all it takes."""
+    try:
+        y = float(economic_params_service.get_param(db, "market.target_yield"))
+    except Exception:  # noqa: BLE001 -- never let a missing/odd parameter break pricing
+        return bots.TARGET_YIELD
+    if y > 0:
+        bots.TARGET_YIELD = y
+    return bots.TARGET_YIELD
+
+
+def income_per_share(db: Session, exclude_tournament_ids: list[uuid.UUID] | None = None, at: datetime | None = None) -> tuple[dict[uuid.UUID, float], dict[uuid.UUID, int]]:
+    """({player: fluke-shrunk projected yearly dividends per share}, {player: shares}) for every ACTIVE player that has a
+    results history. Fair price is this divided by the target yield."""
     players = db.query(Player.id, Player.total_shares_outstanding).filter(Player.is_active.is_(True)).all()
     ids = [pid for pid, _ in players]
     shares = {pid: max(1, n) for pid, n in players}
@@ -57,7 +70,23 @@ def compute_fair(db: Session, exclude_tournament_ids: list[uuid.UUID] | None = N
     earners = [own[pid] for pid in ids if count[pid] > 0 and own[pid] > 0]
     prior = statistics.median(earners) if earners else 0.0
     # Only stocks with a results history have a fair price; a brand-new IPO with no results yet has none (no band).
-    return {pid: bots._fair_from_income(shrunk_income(own[pid], count[pid], prior)) for pid in ids if events.get(pid)}
+    return {pid: shrunk_income(own[pid], count[pid], prior) for pid in ids if events.get(pid)}, shares
+
+
+def compute_fair(db: Session, exclude_tournament_ids: list[uuid.UUID] | None = None, at: datetime | None = None) -> dict[uuid.UUID, Decimal]:
+    """Fair price for every ACTIVE player right now (or `at`), optionally ignoring some tournaments."""
+    refresh_target_yield(db)
+    inc, _shares = income_per_share(db, exclude_tournament_ids, at)
+    return {pid: bots._fair_from_income(v) for pid, v in inc.items()}
+
+
+def solve_target_yield(db: Session, market_value: float) -> float:
+    """The target yield at which today's fair prices add up to `market_value` (see market_policy.solve_target_yield)."""
+    from app.engine import market_policy
+
+    inc, shares = income_per_share(db)
+    pids = list(inc)
+    return market_policy.solve_target_yield([inc[p] for p in pids], [shares[p] for p in pids], market_value, bots.FAIR_MIN, bots.FAIR_MAX)
 
 
 def fair_prices(db: Session, force: bool = False) -> dict[uuid.UUID, Decimal]:
@@ -78,6 +107,7 @@ def benchmark(db: Session) -> dict:
     from app.services import reference_service
 
     fair = fair_prices(db)
+    refresh_target_yield(db)
     rows = db.query(Player.id, Player.total_shares_outstanding).filter(Player.is_active.is_(True), Player.id.in_(list(fair.keys()))).all() if fair else []
     refs = reference_service.get_refs(db, [pid for pid, _ in rows])
     fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
@@ -90,6 +120,8 @@ def benchmark(db: Session) -> dict:
         "market_value": round(market_value, 2),
         "dividend_growth_rate": round(rate, 4),
         "target_yield": bots.TARGET_YIELD,
+        "band_low": float(economic_params_service.get_param(db, "market.band_low")),
+        "band_high": float(economic_params_service.get_param(db, "market.band_high")),
         "stocks": len(rows),
     }
 

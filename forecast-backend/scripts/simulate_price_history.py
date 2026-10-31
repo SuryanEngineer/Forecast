@@ -73,7 +73,17 @@ def main() -> None:
                     help="ONE-TIME REPRICE: cancel every open order, delete ALL price history (real trades included) for "
                          "the roster, and rebuild it so every stock ends at its dividend-based fair price. Restart the "
                          "backend right after (it keeps order books in memory).")
+    ap.add_argument("--yes", action="store_true", help="Required together with --reset-prices to actually write it.")
+    ap.add_argument("--market-multiple", type=float, default=None,
+                    help="LAUNCH PRICE LEVEL (with --reset-prices): start the market at this multiple of the cash players hold "
+                         "(e.g. 1.5). The target yield is solved from it and stored as the platform parameter market.target_yield; "
+                         "each stock's share of the total is its share of expected dividends.")
+    ap.add_argument("--market-cash", type=float, default=None,
+                    help="The cash to take the multiple of, in dollars (e.g. 305000000 for 255 bots + 50 players at $1M). "
+                         "Default: the cash actually in all non-House wallets right now.")
     args = ap.parse_args()
+    if args.market_multiple and not args.reset_prices:
+        ap.error("--market-multiple changes every price, so it only works together with --reset-prices")
 
     rng = random.Random(args.seed)
     now = datetime.now(timezone.utc)
@@ -118,6 +128,37 @@ def main() -> None:
             print("No usable tournament results yet -- nothing to simulate from.")
             return
 
+        # ---- price LEVEL: yield from the chosen market value ------------------------------------------------------
+        from app.services import fair_price_service
+
+        if args.market_multiple:
+            from app.models.user import User
+            from app.models.wallet import Wallet
+            from app.services.house_account import HOUSE_ACCOUNT_EMAIL
+
+            if args.market_cash:
+                cash = float(args.market_cash)
+                cash_note = "given"
+            else:
+                house_id = db.query(User.id).filter(User.email == HOUSE_ACCOUNT_EMAIL).scalar()
+                q = db.query(func.coalesce(func.sum(Wallet.cash_balance), 0))
+                if house_id is not None:
+                    q = q.filter(Wallet.user_id != house_id)
+                cash = float(q.scalar() or 0)
+                cash_note = "all non-House wallets right now"
+            target_mv = cash * args.market_multiple
+            y = fair_price_service.solve_target_yield(db, target_mv)
+            # Store it now (flushed, not committed): every later fair-price call in this script reads the parameter.
+            economic_params_service.set_param(db, "market.target_yield", Decimal(str(round(y, 6))))
+            db.flush()
+            fair_price_service.refresh_target_yield(db)
+            total_shares_priced = sum(shares_of.values())
+            print(f"\nLAUNCH LEVEL: cash {cash:,.0f} ({cash_note}) x {args.market_multiple} = market value {target_mv:,.0f}"
+                  f" -> target yield {y * 100:.2f}% (average ~${target_mv / max(1, total_shares_priced):,.2f} a share over {total_shares_priced:,} shares)")
+        else:
+            fair_price_service.refresh_target_yield(db)
+            print(f"\nUsing the stored target yield {bots.TARGET_YIELD * 100:.2f}%.")
+
         def fair_asof(pid: uuid.UUID, at: datetime) -> float:
             """The live bots' fair price (yearly dividends per share / target yield) using only results finished by `at`."""
             ev = [(d, v) for (d, _s, v) in results.get(pid, ())]
@@ -144,7 +185,6 @@ def main() -> None:
 
         # ---- simulate ----------------------------------------------------------------------------------------------
         from app.engine import market_policy
-        from app.services import fair_price_service
 
         fair_live = fair_price_service.compute_fair(db)
         band_low = economic_params_service.get_param(db, "market.band_low")
@@ -242,6 +282,10 @@ def main() -> None:
             print("  tournaments of the qualifying types, by (type, region):",
                   dict(Counter((t.value, missed_event_service.region_key(r)) for t, r in db.query(Tournament.tournament_type, Tournament.region).filter(Tournament.tournament_type.in_(list(missed_event_service.MISSED_PENALTY)), Tournament.start_time >= t_start).all()).most_common(10)))
         ends = sorted(prices[-1][1] for _, prices in per_player_pts)
+        if ends and args.reset_prices:
+            sh_by_name = {p.gamertag: shares_of[p.id] for p in players}
+            mv_end = sum(prices[-1][1] * sh_by_name[tag] for tag, prices in per_player_pts)
+            print(f"  resulting market value (every share x its new price): {mv_end:,.0f}")
         if ends:
             print("  end prices: p10 ${:.2f}  p25 ${:.2f}  median ${:.2f}  p75 ${:.2f}  p90 ${:.2f}  max ${:.2f}".format(
                 ends[int(.1 * len(ends))], ends[int(.25 * len(ends))], ends[len(ends) // 2], ends[int(.75 * len(ends))], ends[int(.9 * len(ends))], ends[-1]))

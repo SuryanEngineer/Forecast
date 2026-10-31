@@ -59,6 +59,12 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         Decimal("100"),
         "Floor, in shares, on the size at which a trade fully resets the reference price.",
     ),
+    "market.target_yield": (
+        Decimal("0.10"),
+        "Yearly dividend yield used to turn a stock's expected dividends into its fair price (fair = dividends per share / "
+        "this). It sets the price LEVEL of the whole market: chosen at launch so total market value is a multiple of the "
+        "cash players hold (scripts/simulate_price_history.py --market-multiple), not a ceiling on prices.",
+    ),
     "dividend.platform_fee_pct": (
         Decimal("0.0"),
         "Fraction of each dividend pool kept by the platform before distribution to shareholders. "

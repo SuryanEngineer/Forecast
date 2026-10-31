@@ -15,6 +15,23 @@ export function useBenchmarkPct(): { pct: string; dividends: string | null; valu
   };
 }
 
+const trim = (n: number) => String(Number(n.toFixed(2)));
+
+/** The market's live rules, read from the server so the Guide never quotes a stale number: the yield behind fair price
+ * and the band prices must stay inside. Falls back to the original defaults if the server can't be reached. */
+export function useMarketRules(): { yieldPct: string; low: string; high: string } {
+  const { data } = useBenchmark();
+  return {
+    yieldPct: `${trim((data?.target_yield ?? 0.1) * 100)}%`,
+    low: `${trim(data?.band_low ?? 0.5)}×`,
+    high: `${trim(data?.band_high ?? 2)}×`,
+  };
+}
+
+export function TargetYield() { return <>{useMarketRules().yieldPct}</>; }
+export function BandLow() { return <>{useMarketRules().low}</>; }
+export function BandHigh() { return <>{useMarketRules().high}</>; }
+
 export function BenchmarkText() {
   const { pct, dividends, value } = useBenchmarkPct();
   return (

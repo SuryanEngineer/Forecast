@@ -175,6 +175,11 @@ def check_pure_logic() -> None:
     check("band clamps a price to 0.5x-2x of fair", mp.clamp_to_band(D("500"), D("100")) == D("200.0") and mp.clamp_to_band(D("1"), D("100")) == D("50.0"))
     check("a 1-share trade at a silly price barely moves the reference price", D("100") < mp.reference_after_trade(D("100"), D("2000"), D("1"), D("200"), D("100")) < D("110"))
     check("a big trade resets the reference (inside the band)", mp.reference_after_trade(D("100"), D("150"), D("400"), D("200"), D("100")) == D("150") and mp.reference_after_trade(D("100"), D("9000"), D("400"), D("200"), D("100")) == D("200.0"))
+    _inc, _sh = [0.5, 3.0, 12.0, 40.0, 200.0], [10_000] * 5
+    _y = mp.solve_target_yield(_inc, _sh, 5_000_000.0)
+    _total = sum(min(5000.0, max(1.0, i / _y)) * s for i, s in zip(_inc, _sh))
+    check("launch calibration: the solved yield makes the market's total value hit the chosen target", abs(_total - 5_000_000.0) < 1.0 and 0.01 < _y < 1.0, f"y={_y:.4f} total={_total:,.0f}")
+    check("launch calibration: a bigger market value means a lower yield", mp.solve_target_yield(_inc, _sh, 8_000_000.0) < _y)
     check("listed price = midpoint, House quotes at the reference (bids below it don't count)", mp.listed_price(D("100"), D("90"), D("110")) == D("100.00") and mp.listed_price(D("100"), D("104"), None) == D("102.00"))
     check("listed price pull is capped at 6%", mp.listed_price(D("100"), D("500"), None) == D("106.00"))
     liq = mp.liquidation_value(100, D("10"), [(D("50"), 40), (D("9"), 30)], D("1000"), D("0.15"), D("0.25"))

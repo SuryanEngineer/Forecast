@@ -14,7 +14,7 @@
 // rewritten to match this app's real backend rather than translated
 // verbatim from the demo. If those backend defaults ever change, this
 // copy should be updated alongside them.
-import { BenchmarkText } from './Benchmark';
+import { BenchmarkText, TargetYield, BandLow, BandHigh } from './Benchmark';
 import { useEffect, useState, type ReactNode } from 'react';
 import { BadgeCheck, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -41,7 +41,7 @@ interface HelpTopic {
   sections: HelpSection[];
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'var(--muted)' }}>
       <span className="text-muted-foreground" style={{ fontSize: 12 }}>{label}</span>
@@ -186,16 +186,18 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   pricing: {
     emoji: '🧮',
     title: 'How Prices Are Set',
-    intro: 'Prices are made by trading, but they are anchored to what a player actually earns, so a stock cannot drift to nonsense.',
+    intro: 'Prices are set by what investors and bots are willing to pay. Dividends give every stock a starting reference, but the crowd decides where it trades.',
     sections: [
       {
-        heading: 'The anchor: fair price',
+        heading: 'The reference: fair price',
         body: (
           <div className="space-y-1.5">
             <p>Each player has a <strong>fair price</strong> based on the dividends they earned over the last 12 months:
-            projected yearly dividends per share divided by 10%. In plain terms, fair price is the price at which an
-            average-performing holder would earn about 10% a year from dividends alone.</p>
-            <Fact label="Dividend yield used for fair price" value="10%" />
+            projected yearly dividends per share divided by a target yield. It decides how stocks compare with each other (a
+            player who earns ten times the dividends starts at ten times the price) and where the market opens. It is a
+            reference point, not a promise: if investors expect a player to get better, or just want him more, the price can
+            rise well above it.</p>
+            <Fact label="Target yield behind fair price" value={<TargetYield />} />
           </div>
         ),
       },
@@ -209,10 +211,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'The band',
         body: (
           <div className="space-y-1.5">
-            <p>Trading can move a price away from fair, but only within a band: limit orders outside it are refused, and the
-            running price never leaves it.</p>
-            <Fact label="Lowest allowed" value="0.5× fair price" />
-            <Fact label="Highest allowed" value="2× fair price" />
+            <p>Trading can move a price a long way from fair, but not without limit: limit orders outside a wide band are
+            refused (this also protects against typos), and the running price never leaves it.</p>
+            <Fact label="Lowest allowed" value={<><BandLow /> fair price</>} />
+            <Fact label="Highest allowed" value={<><BandHigh /> fair price</>} />
           </div>
         ),
       },
@@ -383,8 +385,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Pricing and people',
         body: (
           <div>
-            <Term name="Fair price">What a player’s dividends are worth: projected yearly dividends per share divided by 10%.</Term>
-            <Term name="Band">The range of 0.5× to 2× fair price that prices must stay inside.</Term>
+            <Term name="Fair price">A reference for what a player’s dividends are worth: projected yearly dividends per share divided by the target yield (<TargetYield />).</Term>
+            <Term name="Band">The wide range, <BandLow /> to <BandHigh /> fair price, that prices must stay inside.</Term>
             <Term name="Bot">An automated trader that supplies liquidity using public data. Never ranked.</Term>
             <Term name="Placement">A player’s official finishing position in a real tournament.</Term>
             <Term name="Verified">A listing confirmed as the genuine pro on our hand-checked list.</Term>
@@ -427,7 +429,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Team whenever you like.</QA>
             <QA q="How long does a limit order stay open?">Until it fills or you cancel it, unless you chose a time limit (1 hour, 1 day, or 1 week) when placing it. Timed orders cancel themselves within about 20 seconds of expiring and release your cash or shares.</QA>
             <QA q="It says the House can’t buy or sell that many.">The exchange’s own liquidity has limits. Try a smaller size or use a limit order.</QA>
-            <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price (0.5× to 2×). See How Prices Are Set.</QA>
+            <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price (<BandLow /> to <BandHigh />). See How Prices Are Set.</QA>
             <QA q="Why can’t I trade with myself?">Orders that would match your own are blocked, so nobody can move a price by trading with themselves.</QA>
           </div>
         ),
@@ -633,8 +635,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <p>The <strong>Buy price</strong> is what one share costs right now (the cheapest seller, or the House if nobody is
           selling cheaper) and the <strong>Sell price</strong> is what one share fetches right now (the best bidder, or the
           House). The listed price is the midpoint. The House always quotes around the market’s running price, which moves
-          with trades in proportion to their size and stays within a band around what the player’s dividends are worth, so a
-          single tiny trade at a silly price cannot move anything.</p>
+          with trades in proportion to their size, so a single tiny trade at a silly price cannot move anything but sustained
+          buying or selling can move it a long way. It stays inside a wide band around the player’s fair price (see How Prices Are Set).</p>
         ),
       },
       {
