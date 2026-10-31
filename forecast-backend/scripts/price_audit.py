@@ -9,7 +9,7 @@ model thinks they are worth, so you can tell whether a mispricing is the MODEL (
     python3 scripts/price_audit.py --top 60
 
 Columns: events = tournaments played, avg_pool = model's expected pool-share per event (recency-weighted),
-career = sum over events of pool x payout-curve fraction, fair = skill-based fair value, model = fair adjusted for
+career = sum over events of pool x payout-curve fraction, fair = dividend-based fair price, model = fair adjusted for
 outlook (form / upcoming event / qualifiers), price = listed price, gap = price / model.
 Writes nothing.
 """
@@ -53,7 +53,7 @@ def main() -> None:
             events[pid] += 1
 
         ranked = sorted(career, key=lambda p: career[p], reverse=True)[: args.top]
-        print(f"base price (median IPO) = {snap.base_price}\n")
+        print("fair = yearly dividends per share / 10% target yield\n")
         print(f"{'player':<22}{'events':>7}{'avg_pool':>11}{'career':>12}{'fair':>9}{'model':>9}{'price':>9}{'gap':>7}")
         for pid in ranked:
             fair, model, price = float(snap.fair_value[pid]), float(snap.model_value[pid]), float(snap.price[pid])

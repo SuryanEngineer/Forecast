@@ -503,6 +503,19 @@ python3 scripts/simulate_price_history.py             # write it (add --step-day
 
 It makes no trades. Each player's past price follows the same skill-based fair value the bots use, recomputed as of each date from the results that existed then, with small daily noise, a small run-up before and dip after each tournament they play, and a small fading drop when they miss a qualifying event in their own region. The path is bent to land on their first real trade price. Rows are marked `volume = 0`, so re-running replaces the old simulated rows and never touches real trades. Player charts show a dot for each tournament played; hover for the placement.
 
+### Fair price = yearly dividends ÷ 10%
+
+The bots' idea of a fair price is now `projected yearly dividends per share ÷ 10%` (projection = what the player's results paid over the last 12 months, scaled up if we have less than a year of data; floor $1, cap $5,000). A star who earns 100× a journeyman is worth about 100×; every stock offers a similar yield, so nothing is a bargain just because a formula squashed it. `python3 scripts/economy_check.py` prints how money, shares, prices and dividends line up.
+
+When this formula changes, existing prices are far from fair and bots only move prices a few percent at a time. Do a one-time reprice (it **cancels every open order, deletes all price history and rebuilds it**; your trades and balances are untouched):
+
+```powershell
+python3 scripts/simulate_price_history.py --reset-prices --dry-run   # preview the new price spread
+python3 scripts/simulate_price_history.py --reset-prices             # do it
+```
+
+Then **restart the backend on Render** straight away (it keeps order books and bot memory in RAM).
+
 ## Bot pace, prices and database limits
 
 **How prices work now.** The listed price is the last trade, pulled up to the best resting bid if buyers are bidding above it, or down to the best resting ask if sellers are asking below it (never more than 6% away from the last trade, and only orders worth at least $100 count, so a 1-share order cannot move a price). Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.

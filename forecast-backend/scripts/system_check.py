@@ -152,11 +152,17 @@ def check_pure_logic() -> None:
     check("an ask below the last trade drops the listed price to the ask", ep(D("10"), D("8"), D("9.6")) == D("9.60"))
     check("the book can move the price at most 6% from the last trade", ep(D("10"), D("30"), None) == D("10.60") and ep(D("10"), None, D("1")) == D("9.40"))
     check("no orders -> the last trade", ep(D("10"), None, None) == D("10.00"))
-    # Skill-based fair value is anchored to ONE base price, not each player's own IPO price
-    fv = bot_trading_service._compute_fair_value
-    star, mid, low = fv(D("70"), D("900"), D("100")), fv(D("70"), D("100"), D("100")), fv(D("70"), D("5"), D("100"))
-    check("fair value: star > median pro (= base price) > weak player", star > mid == D("70.000000") > low and star <= D("210.01"), f"{star} {mid} {low}")
-    check("fair value of a player with no results is below the base price", fv(D("70"), None, D("100")) < D("70"))
+    # Fair price = projected yearly dividends per share / target yield (10%), so price follows earnings one-for-one
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    ff = bot_trading_service._fair_from_income
+    check("fair price: $10/share a year at a 10% yield = $100", ff(10.0) == D("100.0000"), str(ff(10.0)))
+    check("fair price follows earnings one-for-one (10x the dividends = 10x the price)", ff(30.0) == 10 * ff(3.0))
+    check("a stock that pays nothing is worth the floor, not zero", ff(0.0) == D(str(bot_trading_service.FAIR_MIN)) == ff(None))
+    check("fair price is capped", ff(10_000_000.0) == D(str(bot_trading_service.FAIR_MAX)))
+    _now = _dt.now(_tz.utc)
+    inc = bot_trading_service.income_at
+    check("income: last 12 months of results, old ones drop out", inc([(_now - _td(days=10), 500.0), (_now - _td(days=400), 9000.0)], _now, _now - _td(days=500)) == 500.0)
+    check("income: short history is scaled up to a year (but never by more than 365/90)", abs(inc([(_now - _td(days=5), 100.0)], _now, _now - _td(days=20)) - 100.0 * 365 / 90) < 1e-6)
     # Quick-trade slippage is capped so one huge order cannot set an absurd price
     from app.engine.matching_engine import OrderBook
     from app.engine.quick_trade_pricing import MAX_SYNTHETIC_IMPACT, execute_quick_order

@@ -125,9 +125,14 @@ ORDER_MAX_AGE = timedelta(hours=6)
 # Fair-value construction (unchanged in spirit from the original: see module docstring).
 HISTORY_RECENCY_DECAY = 0.85
 HISTORY_MAX_RESULTS_PER_PLAYER = 20
-PERFORMANCE_ELASTICITY = 0.5
-PERFORMANCE_MULT_MIN = 0.06
-PERFORMANCE_MULT_MAX = 6.0
+# Fair price = what the stock is expected to pay per year / TARGET_YIELD (see _fair_from_income).
+TARGET_YIELD = 0.10          # a fairly priced stock pays about 10% a year in dividends (cash in the treasury pays ~1%)
+FAIR_MIN = 1.00              # nobody holds a stock that pays nothing, but it is never literally free
+FAIR_MAX = 5000.0
+INCOME_WINDOW_DAYS = 365     # dividends are projected from the last 12 months of results
+MIN_OBSERVED_DAYS = 90       # ...scaled up to a full year when we have seen fewer days than that
+FLOAT_CAP = 0.20             # no bot holds more than 20% of one stock's shares
+ORDER_FLOAT_CAP = 0.05       # no single bot order is bigger than 5% of one stock's shares
 
 
 def _band(px: float, v: float, floor: float = BAND_MIN) -> float:
@@ -250,20 +255,56 @@ def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> 
     return _career_stats(db, player_ids)[0]
 
 
-UNPROVEN_MULT = 0.3  # a player with no usable results is worth a bit less than the typical pro
+def _result_income(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.UUID, list[tuple[datetime, float]]], datetime | None]:
+    """Every result's dividend value (the tournament's pool x the payout-curve fraction for that placement, in dollars)
+    as {player_id: [(finished_at, dollars)]}, plus the earliest tournament time seen anywhere (how far back our data
+    reaches). Pure data: no 'as of' logic -- see income_at."""
+    events: dict[uuid.UUID, list[tuple[datetime, float]]] = defaultdict(list)
+    if not player_ids:
+        return events, None
+    rows = (
+        db.query(PlacementResult.player_id, PlacementResult.tournament_id, PlacementResult.placement, Tournament.start_time, Tournament.end_time)
+        .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+        .filter(PlacementResult.player_id.in_(player_ids), Tournament.start_time.isnot(None))
+        .all()
+    )
+    tids = {r[1] for r in rows}
+    if not tids:
+        return events, None
+    field = {tid: n for tid, n in db.query(PlacementResult.tournament_id, func.count(PlacementResult.id)).filter(PlacementResult.tournament_id.in_(tids)).group_by(PlacementResult.tournament_id).all()}
+    pools = _tournament_pool_amounts(db, list(tids))
+    curve = economic_params_service.get_placement_curve(db)
+    first_seen: datetime | None = None
+    for pid, tid, placement, start, end in rows:
+        start = _aware(start)
+        done = _aware(end) if end is not None else start + timedelta(days=1)
+        value = float(pools.get(tid, Decimal("0")) * placement_payout_fraction(placement, max(1, field.get(tid, 1)), curve))
+        events[pid].append((done, value))
+        if first_seen is None or start < first_seen:
+            first_seen = start
+    return events, first_seen
 
 
-def _compute_fair_value(base_price: Decimal, own_ev: Decimal | None, roster_median_ev: Decimal | None) -> Decimal:
-    """Skill-based fair value, anchored to ONE roster-wide base price (the median IPO price), NOT to each player's own
-    IPO price. Every Osirion-created player starts at the same default IPO price whatever their skill, so scaling that
-    price by skill is what separates the stars from the rest: a player earning as much as the median pro is worth the
-    base price, and the multiplier follows sqrt(earnings ratio), clamped to [0.06, 6.0] (weak players are nearly worthless: nobody would hold them) (a 3.0 cap used to flatten every top earner to the same value)."""
-    if own_ev is None or roster_median_ev is None or roster_median_ev <= 0:
-        return base_price * Decimal(str(UNPROVEN_MULT))
-    ratio = float(own_ev / roster_median_ev)
-    multiplier = ratio**PERFORMANCE_ELASTICITY if ratio > 0 else 0.0
-    multiplier = _clamp(multiplier, PERFORMANCE_MULT_MIN, PERFORMANCE_MULT_MAX)
-    return base_price * Decimal(str(round(multiplier, 6)))
+def income_at(events: list[tuple[datetime, float]], at: datetime, first_seen: datetime | None) -> float:
+    """Projected dividends for the next 12 months, in dollars for the whole stock: what the player's results paid over
+    the 12 months up to `at`. When our data covers fewer than 12 months, the total is scaled up to a full year (never
+    by more than 365 / MIN_OBSERVED_DAYS, so a few early results cannot explode a price)."""
+    cutoff = at - timedelta(days=INCOME_WINDOW_DAYS)
+    total = sum(v for (t, v) in events if cutoff < t <= at)
+    if total <= 0 or first_seen is None:
+        return 0.0
+    observed = _clamp((at - first_seen).total_seconds() / 86400.0, MIN_OBSERVED_DAYS, INCOME_WINDOW_DAYS)
+    return total * INCOME_WINDOW_DAYS / observed
+
+
+def _fair_from_income(income_per_share: float | None) -> Decimal:
+    """Fair price = expected dividends per share over the next year / TARGET_YIELD. A stock that pays $10 a share a year
+    is worth $100 at a 10% yield; one that pays nothing is worth FAIR_MIN. Price therefore follows earnings one-for-one
+    (a star who earns 100x a journeyman is worth ~100x), which keeps the yield on every stock in the same ballpark and
+    leaves no stock that is a bargain just because the formula squashed it."""
+    if income_per_share is None or income_per_share <= 0:
+        return Decimal(str(FAIR_MIN))
+    return Decimal(str(round(_clamp(income_per_share / TARGET_YIELD, FAIR_MIN, FAIR_MAX), 4)))
 
 
 def _realized_dividends_per_share(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[float]]:
@@ -483,9 +524,12 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             pct_change[pid] = Decimal("0")
 
     expected_value, form, career_fraction, career_strength = _slow("career", player_ids, lambda: _career_stats(db, player_ids))
-    ev_values = sorted(expected_value.values())
-    roster_median_ev = ev_values[len(ev_values) // 2] if ev_values else None
-    fair_value = {p.id: _compute_fair_value(base_price, expected_value.get(p.id), roster_median_ev) for p in players}
+    income_events, income_first_seen = _slow("income", player_ids, lambda: _result_income(db, player_ids))
+    now_for_income = datetime.now(timezone.utc)
+    fair_value = {
+        p.id: _fair_from_income(income_at(income_events.get(p.id, []), now_for_income, income_first_seen) / max(1, p.total_shares_outstanding))
+        for p in players
+    }
 
     # Expected dividend yield per share (net of fee), blended with what was actually paid out.
     fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
@@ -965,7 +1009,12 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
     def position_room(pid: uuid.UUID, px: float) -> float:
         pos = holdings.get(pid)
         have_value = px * pos.quantity if pos is not None else 0.0
-        return max(0.0, cap * portfolio - have_value)
+        # Cheap shares: a value cap alone could ask for more than the whole float, so also cap by share count.
+        float_room = FLOAT_CAP * snapshot.shares_outstanding.get(pid, 10_000) * px
+        return max(0.0, min(cap * portfolio, float_room) - have_value)
+
+    def order_qty_cap(pid: uuid.UUID) -> int:
+        return max(1, int(ORDER_FLOAT_CAP * snapshot.shares_outstanding.get(pid, 10_000)))
 
     # ---- 1) Take: the price has crossed this bot's value by more than its required margin.
     handled: set = set()
@@ -987,7 +1036,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
             if buy_edge > 0 and cash / portfolio > MIN_CASH_FRACTION:
                 spend = min(0.5 * cash * cash_fraction_cap * size_mult * dampener * (0.6 + conviction), position_room(pid, px))
                 limit = min(v * (1.0 - m * 0.5), px * (1.0 + _band(px, v)))
-                qty = int(spend // max(limit, 0.01))
+                qty = min(int(spend // max(limit, 0.01)), order_qty_cap(pid))
                 if _submit(db, bot_user.id, pid, OrderSide.BUY, qty, None if instant else limit):
                     cash -= qty * limit
                     acted = True
@@ -1051,7 +1100,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
                     acted = True
             if need_bid:
                 spend = min(cash * cash_fraction_cap * 0.5 * size_mult * rng.uniform(0.4, 1.0), position_room(pid, px))
-                qty = int(spend // max(bid, 0.01))
+                qty = min(int(spend // max(bid, 0.01)), order_qty_cap(pid))
                 if _submit(db, bot_user.id, pid, OrderSide.BUY, qty, bid):
                     cash -= qty * bid
                     acted = True

@@ -4,8 +4,9 @@ Writes a believable 2026 price history for every active player, so charts do not
 
 No trades are made. Each player's price path is a model, built from the same pieces the live bots use:
 
-  * Fair value AS OF each date: the skill-based fair value (bot_trading_service._compute_fair_value) recomputed from only
-    the tournament results that had finished by then, so a player's line steps up or down as results come in.
+  * Fair value AS OF each date: the bots' fair price (yearly dividends per share / 10% target yield,
+    bot_trading_service._fair_from_income) recomputed from only the results that had finished by then, so a player's
+    line steps up or down as results come in. Before a player has results it starts from a reputation prior.
   * Daily noise (about 1%) that pulls back toward fair value, plus a quicker catch-up in the few days after a result.
   * Dividend timing for players in the field: a small run-up before a tournament starts and a small dip just after
     (the dividend is locked in at the start).
@@ -21,6 +22,7 @@ Usage (from forecast-backend):
     python3 scripts/simulate_price_history.py --dry-run          # print a summary, write nothing
     python3 scripts/simulate_price_history.py                    # write the history
     python3 scripts/simulate_price_history.py --step-days 2      # fewer points = smaller database (default 1 per day)
+    python3 scripts/simulate_price_history.py --reset-prices     # one-time reprice after the fair-value formula changed
     python3 scripts/simulate_price_history.py --seed 7 --start 2026-01-01
 """
 from __future__ import annotations
@@ -67,6 +69,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--dry-run", action="store_true", help="Compute and summarise, write nothing.")
     ap.add_argument("--player", default=None, help="Only this gamertag (for a quick look).")
+    ap.add_argument("--reset-prices", action="store_true",
+                    help="ONE-TIME REPRICE: cancel every open order, delete ALL price history (real trades included) for "
+                         "the roster, and rebuild it so every stock ends at its dividend-based fair price. Restart the "
+                         "backend right after (it keeps order books in memory).")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -81,8 +87,8 @@ def main() -> None:
             print("No matching active players.")
             return
         pids = [p.id for p in players]
-        base_price = sorted(p.ipo_price for p in players)[len(players) // 2]
-        print(f"{len(players)} players, base price ${base_price}")
+        shares_of = {p.id: max(1, p.total_shares_outstanding) for p in players}
+        print(f"{len(players)} players")
 
         # ---- results -------------------------------------------------------------------------------------------
         rows = (
@@ -107,20 +113,19 @@ def main() -> None:
         for lst in results.values():
             lst.sort()
 
-        def ev_asof(pid: uuid.UUID, at: datetime) -> float | None:
-            done = [v for (d, _s, v) in results.get(pid, ()) if d <= at][-bots.HISTORY_MAX_RESULTS_PER_PLAYER:]
-            if not done:
-                return None
-            done.reverse()  # newest first
-            w = [bots.HISTORY_RECENCY_DECAY ** i for i in range(len(done))]
-            return sum(v * wi for v, wi in zip(done, w)) / sum(w)
-
-        # Roster-wide median EV (today's), used as a fixed scale so early-2026 values are comparable.
-        today_ev = sorted(e for e in (ev_asof(pid, now) for pid in pids) if e is not None)
-        median_ev = Decimal(str(today_ev[len(today_ev) // 2])) if today_ev else None
-        if median_ev is None or median_ev <= 0:
+        first_seen = min((s for lst in results.values() for (_d, s, _v) in lst), default=None)
+        if first_seen is None:
             print("No usable tournament results yet -- nothing to simulate from.")
             return
+
+        def fair_asof(pid: uuid.UUID, at: datetime) -> float:
+            """The live bots' fair price (yearly dividends per share / target yield) using only results finished by `at`."""
+            ev = [(d, v) for (d, _s, v) in results.get(pid, ())]
+            return float(bots._fair_from_income(bots.income_at(ev, at, first_seen) / shares_of[pid]))
+
+        final_fair_all = {p.id: fair_asof(p.id, now) for p in players}
+        sorted_final = sorted(final_fair_all.values())
+        median_final = sorted_final[len(sorted_final) // 2]
 
         # Checkpoints where fair value can change: every result's finish time in range, plus the start.
         checkpoints = sorted({t_start} | {d for lst in results.values() for (d, _s, _v) in lst if t_start < d <= now})
@@ -130,7 +135,7 @@ def main() -> None:
             missed[pid].append((when, pen))
 
         # ---- real-trade bridge points ----------------------------------------------------------------------------
-        first_real_t = {pid: _aware(t) for pid, t in db.query(PriceSnapshot.player_id, func.min(PriceSnapshot.recorded_at)).filter(PriceSnapshot.volume > 0, PriceSnapshot.player_id.in_(pids)).group_by(PriceSnapshot.player_id).all()}
+        first_real_t = {} if args.reset_prices else {pid: _aware(t) for pid, t in db.query(PriceSnapshot.player_id, func.min(PriceSnapshot.recorded_at)).filter(PriceSnapshot.volume > 0, PriceSnapshot.player_id.in_(pids)).group_by(PriceSnapshot.player_id).all()}
         first_real_p: dict[uuid.UUID, float] = {}
         for pid, t in first_real_t.items():
             px = db.query(PriceSnapshot.price).filter(PriceSnapshot.player_id == pid, PriceSnapshot.volume > 0, PriceSnapshot.recorded_at == t).limit(1).scalar()
@@ -145,22 +150,18 @@ def main() -> None:
             end_ts = first_real_t.get(p.id, now)
             if end_ts <= t_start + timedelta(days=2):
                 continue  # real trading already covers (almost) all of the window
-            # Before a player has results the market still has a reputation to go on, so start from a prior halfway
-            # (in log terms) between the base price and where the player ends up, and let results take over:
-            # weight on results = n / (n + 2) after n finished events.
-            final_ev = ev_asof(p.id, now)
-            final_fair = float(bots._compute_fair_value(base_price, Decimal(str(final_ev)) if final_ev is not None else None, median_ev))
-            prior_log = 0.5 * math.log(final_fair) + 0.5 * math.log(float(base_price))
+            # Before a player has results the market still has a reputation to go on, so start from a prior that leans
+            # (in log terms) 60% toward where the player ends up and 40% toward the typical player, and let results
+            # take over: weight on results = n / (n + 2) after n finished events.
+            prior_log = 0.6 * math.log(final_fair_all[p.id]) + 0.4 * math.log(median_final)
             fair_at = []  # [(checkpoint_time, log fair)]
             for c in checkpoints:
-                e = ev_asof(p.id, c)
-                n = min(bots.HISTORY_MAX_RESULTS_PER_PLAYER, sum(1 for (d, _s, _v) in results.get(p.id, ()) if d <= c))
-                if e is None or n == 0:
+                n = sum(1 for (d, _s, _v) in results.get(p.id, ()) if d <= c)
+                if n == 0:
                     fair_at.append((c, prior_log))
                     continue
-                res_log = math.log(float(bots._compute_fair_value(base_price, Decimal(str(e)), median_ev)))
                 w = n / (n + 2.0)
-                fair_at.append((c, w * res_log + (1.0 - w) * prior_log))
+                fair_at.append((c, w * math.log(fair_asof(p.id, c)) + (1.0 - w) * prior_log))
             my_events = results.get(p.id, [])
 
             def target(t: datetime) -> tuple[float, float]:
@@ -229,6 +230,10 @@ def main() -> None:
             print("  (no missed events found) player regions:", dict(Counter(missed_event_service.region_key(r) for r in filled.values()).most_common(8)))
             print("  tournaments of the qualifying types, by (type, region):",
                   dict(Counter((t.value, missed_event_service.region_key(r)) for t, r in db.query(Tournament.tournament_type, Tournament.region).filter(Tournament.tournament_type.in_(list(missed_event_service.MISSED_PENALTY)), Tournament.start_time >= t_start).all()).most_common(10)))
+        ends = sorted(prices[-1][1] for _, prices in per_player_pts)
+        if ends:
+            print("  end prices: p10 ${:.2f}  p25 ${:.2f}  median ${:.2f}  p75 ${:.2f}  p90 ${:.2f}  max ${:.2f}".format(
+                ends[int(.1 * len(ends))], ends[int(.25 * len(ends))], ends[len(ends) // 2], ends[int(.75 * len(ends))], ends[int(.9 * len(ends))], ends[-1]))
         for tag, prices in sorted(per_player_pts, key=lambda r: -r[1][-1][1])[:6]:
             lo, hi = min(px for _, px in prices), max(px for _, px in prices)
             print(f"  {tag:<22} start ${prices[0][1]:>8.2f}  end ${prices[-1][1]:>8.2f}  range ${lo:.2f}-${hi:.2f}")
@@ -236,8 +241,27 @@ def main() -> None:
             print("Dry run: nothing written.")
             return
 
-        deleted = db.query(PriceSnapshot).filter(PriceSnapshot.volume == 0, PriceSnapshot.player_id.in_(pids)).delete(synchronize_session=False)
-        print(f"Removed {deleted:,} older synthetic points.")
+        if args.reset_prices:
+            from app.models.order import Order, OrderStatus
+            from app.services import order_service
+            from app.services.exceptions import ServiceError
+            open_orders = db.query(Order.id, Order.user_id).filter(Order.player_id.in_(pids), Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED])).all()
+            cancelled = 0
+            for n, (oid, uid) in enumerate(open_orders, 1):
+                try:
+                    order_service.cancel_order(db, uid, oid)
+                    cancelled += 1
+                except ServiceError:
+                    pass
+                if n % 500 == 0:
+                    db.commit()
+            db.commit()
+            print(f"Cancelled {cancelled:,} open orders (holds released).")
+            deleted = db.query(PriceSnapshot).filter(PriceSnapshot.player_id.in_(pids)).delete(synchronize_session=False)
+            print(f"Removed ALL {deleted:,} old price points.")
+        else:
+            deleted = db.query(PriceSnapshot).filter(PriceSnapshot.volume == 0, PriceSnapshot.player_id.in_(pids)).delete(synchronize_session=False)
+            print(f"Removed {deleted:,} older synthetic points.")
         for i in range(0, len(new_rows), 5000):
             db.bulk_insert_mappings(PriceSnapshot, new_rows[i:i + 5000])
             db.commit()
