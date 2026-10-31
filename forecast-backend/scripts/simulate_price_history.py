@@ -91,6 +91,9 @@ def main() -> None:
                     help="ONE-TIME REPRICE: cancel every open order, delete ALL price history (real trades included) for "
                          "the roster, and rebuild it so every stock ends at its dividend-based fair price. Restart the "
                          "backend right after (it keeps order books in memory).")
+    ap.add_argument("--cancel-orders", action="store_true",
+                    help="With --reset-prices: cancel every open order (slow, one by one) instead of the default, which keeps them and "
+                         "rescales each order's limit price by (new price / old price) of its stock.")
     ap.add_argument("--yes", action="store_true", help="Required together with --reset-prices to actually write it.")
     ap.add_argument("--market-multiple", type=float, default=None,
                     help="LAUNCH PRICE LEVEL (with --reset-prices): start the market at this multiple of the cash players hold "
@@ -389,6 +392,77 @@ def main() -> None:
             print(f"\nImpact on {len(per_user)} real users who hold shares (shares value before -> after the reprice; cash is unchanged):")
             for uid, (before, after) in sorted(per_user.items(), key=lambda kv: -kv[1][0]):
                 print(f"  {str(names.get(uid, uid))[:24]:<24} ${before:>12,.0f} -> ${after:>12,.0f}   ({(after / before - 1) * 100 if before else 0:+.0f}%)")
+
+        def reprice_open_orders(apply: bool) -> None:
+            """Keep every open limit order, moved by the same percentage as its stock's price: new limit = old limit x
+            (new reference / old reference), kept inside the stock's fair-value band. A buy order's cash hold is resized to
+            match; if the wallet cannot cover the bigger hold the order is cancelled instead. Sell orders keep their shares."""
+            from app.models.order import Order, OrderKind, OrderSide, OrderStatus
+            from app.models.wallet import Wallet
+
+            new_ref = {name_to_id_all[tag]: Decimal(str(round(prices[-1][1], 4))) for tag, prices in per_player_pts}
+            old_ref = {pid: (ref if ref is not None else None) for pid, ref in db.query(Player.id, Player.reference_price).filter(Player.id.in_(pids)).all()}
+            last_old = {pid: Decimal(str(v)) for pid, v in portfolio_service_last_prices().items()}
+            fee = economic_params_service.get_param(db, "fees.transaction_fee_pct")
+            orders = (
+                db.query(Order)
+                .filter(Order.player_id.in_(pids), Order.order_kind == OrderKind.LIMIT,
+                        Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]))
+                .order_by(Order.player_id)
+                .all()
+            )
+            wallets = {w.user_id: w for w in db.query(Wallet).filter(Wallet.user_id.in_({o.user_id for o in orders})).all()} if orders else {}
+            kept = cancelled_n = skipped = 0
+            ratios = []
+            for n, o in enumerate(orders, 1):
+                base = old_ref.get(o.player_id) or last_old.get(o.player_id)
+                tgt = new_ref.get(o.player_id)
+                if not base or not tgt or base <= 0 or o.limit_price is None:
+                    skipped += 1
+                    continue
+                ratio = tgt / Decimal(base)
+                ratios.append(float(ratio))
+                new_price = (Decimal(o.limit_price) * ratio)
+                fair = fair_live.get(o.player_id)
+                if fair is not None:
+                    lo_px, hi_px = market_policy.band_limits(fair, band_low, band_high)
+                    new_price = min(max(new_price, lo_px), hi_px)
+                new_price = max(new_price, Decimal("0.01")).quantize(Decimal("0.01"))
+                remaining = o.quantity - o.filled_quantity
+                if o.side == OrderSide.BUY and remaining > 0:
+                    delta = (new_price - Decimal(o.limit_price)) * remaining * (Decimal("1") + fee)
+                    w = wallets.get(o.user_id)
+                    if w is None or (delta > 0 and w.cash_balance - w.held_balance < delta):
+                        if apply and w is not None:
+                            w.held_balance = max(Decimal("0"), w.held_balance - Decimal(o.limit_price) * remaining * (Decimal("1") + fee))
+                        if apply:
+                            o.status = OrderStatus.CANCELLED
+                            o.cancelled_at = now
+                        cancelled_n += 1
+                        continue
+                    if apply:
+                        w.held_balance = max(Decimal("0"), w.held_balance + delta)
+                if apply:
+                    o.limit_price = new_price
+                kept += 1
+                if apply and n % 500 == 0:
+                    db.commit()
+                    print(f"  {n:,}/{len(orders):,} orders repriced", flush=True)
+            med = sorted(ratios)[len(ratios) // 2] if ratios else 1.0
+            verb = "Repriced" if apply else "Would reprice"
+            print(f"\n{verb} {kept:,} open orders (median change x{med:.2f}; each moved by its stock's price change); "
+                  f"{cancelled_n:,} cancelled because the wallet could not cover the larger buy hold; {skipped:,} left unchanged (no price to compare).")
+            if apply:
+                db.commit()
+
+        name_to_id_all = {p.gamertag: p.id for p in players}
+
+        def portfolio_service_last_prices():
+            from app.services import portfolio_service as _ps
+            return _ps.last_prices(db)
+
+        if args.reset_prices:
+            reprice_open_orders(apply=False) if args.dry_run else None
         if args.dry_run:
             print("Dry run: nothing written.")
             return
@@ -400,32 +474,36 @@ def main() -> None:
         lease_service.script_guard_or_exit(db, "simulate_price_history")
 
         if args.reset_prices:
-            from app.models.order import Order, OrderStatus
-            from app.services import order_service
-            from app.services.exceptions import ServiceError
-            open_orders = (
-                db.query(Order.id, Order.user_id)
-                .filter(Order.player_id.in_(pids), Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]))
-                .order_by(Order.player_id)  # one stock's order book is loaded once and reused for all its orders
-                .all()
-            )
-            print(f"Cancelling {len(open_orders):,} open orders one by one (releases each hold; this is the slow part -- progress below). "
-                  "Safe to stop and re-run: finished batches are already saved.")
-            import time as _time
-            t0 = _time.time()
-            cancelled = 0
-            for n, (oid, uid) in enumerate(open_orders, 1):
-                try:
-                    order_service.cancel_order(db, uid, oid)
-                    cancelled += 1
-                except ServiceError:
-                    pass
-                if n % 100 == 0:
-                    db.commit()
-                    rate = n / max(_time.time() - t0, 1e-6)
-                    print(f"  {n:,}/{len(open_orders):,} cancelled  (~{(len(open_orders) - n) / max(rate, 1e-6) / 60:.1f} min left)", flush=True)
-            db.commit()
-            print(f"Cancelled {cancelled:,} open orders (holds released).")
+            if not args.cancel_orders:
+                reprice_open_orders(apply=True)
+            else:
+                from app.models.order import Order, OrderStatus
+                from app.services import order_service
+                from app.services.exceptions import ServiceError
+                open_orders = (
+                    db.query(Order.id, Order.user_id)
+                    .filter(Order.player_id.in_(pids), Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]))
+                    .order_by(Order.player_id)  # one stock's order book is loaded once and reused for all its orders
+                    .all()
+                )
+                print(f"Cancelling {len(open_orders):,} open orders one by one (releases each hold; this is the slow part -- progress below). "
+                      "Safe to stop and re-run: finished batches are already saved.")
+                import time as _time
+                t0 = _time.time()
+                cancelled = 0
+                for n, (oid, uid) in enumerate(open_orders, 1):
+                    try:
+                        order_service.cancel_order(db, uid, oid)
+                        cancelled += 1
+                    except ServiceError:
+                        pass
+                    if n % 100 == 0:
+                        db.commit()
+                        rate = n / max(_time.time() - t0, 1e-6)
+                        print(f"  {n:,}/{len(open_orders):,} cancelled  (~{(len(open_orders) - n) / max(rate, 1e-6) / 60:.1f} min left)", flush=True)
+                db.commit()
+                print(f"Cancelled {cancelled:,} open orders (holds released).")
+
             deleted = db.query(PriceSnapshot).filter(PriceSnapshot.player_id.in_(pids)).delete(synchronize_session=False)
             print(f"Removed ALL {deleted:,} old price points.")
         else:
