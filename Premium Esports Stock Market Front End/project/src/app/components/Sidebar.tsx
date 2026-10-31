@@ -3,6 +3,7 @@ import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3
 import { useAuth } from '../lib/auth';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
+import { useOpenOrderCount } from './OpenOrders';
 
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'player';
 
@@ -38,6 +39,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
   const { user, wallet, logout } = useAuth();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
+  const openOrders = useOpenOrderCount();
 
   return (
     <aside
@@ -77,6 +79,15 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
             >
               <Icon className="w-5 h-5 shrink-0" />
               <span className="flex-1">{item.label}</span>
+              {item.id === 'portfolio' && openOrders > 0 && (
+                <span
+                  title={`${openOrders} open order${openOrders > 1 ? 's' : ''}. Select to review and cancel.`}
+                  className="rounded-full font-mono font-bold px-1.5"
+                  style={{ fontSize: 10.5, minWidth: 18, textAlign: 'center', background: '#fbbf24', color: '#20160a' }}
+                >
+                  {openOrders}
+                </span>
+              )}
             </button>
           );
         })}
@@ -90,7 +101,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
           style={{ color: 'var(--muted-foreground)', fontSize: 14 }}
         >
           <HelpCircle className="w-5 h-5 shrink-0" />
-          <span className="flex-1">How it works</span>
+          <span className="flex-1">Guide</span>
         </button>
       </div>
 

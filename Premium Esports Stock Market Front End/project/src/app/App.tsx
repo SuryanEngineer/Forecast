@@ -11,6 +11,7 @@ import { PlayerModal } from './components/PlayerModal';
 import { TeamModal } from './components/TeamModal';
 import { TournamentDetailModal } from './components/TournamentDetailModal';
 import { IntroTour, introSeenKey } from './components/IntroTour';
+import { HelpCenter } from './components/HelpModal';
 import { StatsPage } from './components/StatsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { LegalModal, type LegalDoc } from './components/LegalModal';
@@ -42,6 +43,7 @@ function AuthenticatedApp() {
   const introKey = introSeenKey(user!.id);
   const [showIntro, setShowIntro] = useState(() => justRegistered);
   const [introStep, setIntroStep] = useState(0);
+  const [showGuide, setShowGuide] = useState(false);
 
   function openIntroAt(step: number) {
     setIntroStep(step);
@@ -58,7 +60,7 @@ function AuthenticatedApp() {
       className="dark h-screen overflow-hidden flex font-sans"
       style={{ background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
     >
-      <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => openIntroAt(0)} onShowLegal={setLegalDoc} />
+      <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => setShowGuide(true)} onShowLegal={setLegalDoc} />
 
       <main className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
         {currentPage === 'dashboard' && (
@@ -102,6 +104,14 @@ function AuthenticatedApp() {
           initialStep={introStep}
           storageKey={introKey}
           onClose={() => { setShowIntro(false); setIntroStep(0); }}
+          onNavigate={page => setCurrentPage(page as Page)}
+          onOpenGuide={() => { setShowIntro(false); setIntroStep(0); setShowGuide(true); }}
+        />
+      )}
+      {showGuide && (
+        <HelpCenter
+          onClose={() => setShowGuide(false)}
+          onReplayTour={() => { setShowGuide(false); openIntroAt(0); }}
         />
       )}
     </div>

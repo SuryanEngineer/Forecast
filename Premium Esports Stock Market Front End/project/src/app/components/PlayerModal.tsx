@@ -18,6 +18,15 @@ import { placementBadgeStyle } from '../lib/placement';
 import { tournamentDisplayName } from '../lib/tournamentName';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
+import { OpenOrders, notifyOrdersChanged } from './OpenOrders';
+
+// Optional time limit for a limit order: one tap, "until cancelled" is the default.
+const EXPIRY_OPTIONS: { label: string; minutes: number | null }[] = [
+  { label: 'Until I cancel', minutes: null },
+  { label: '1 hour', minutes: 60 },
+  { label: '1 day', minutes: 24 * 60 },
+  { label: '1 week', minutes: 7 * 24 * 60 },
+];
 import { PriceChart } from './PriceChart';
 
 interface Props {
@@ -223,6 +232,8 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const [limitPrice, setLimitPrice] = useState('');
   const [orderShares, setOrderShares] = useState('1');
+  // null = good until cancelled (the default). One tap picks a time limit.
+  const [expiryMinutes, setExpiryMinutes] = useState<number | null>(null);
   const [quickQty, setQuickQty] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -327,8 +338,16 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
     setSubmitting(true);
     setMessage(null);
     try {
-      await api.post('/orders/limit', { player_id: playerId, side: orderSide, price: priceVal, quantity: shares });
-      setMessage({ kind: 'success', text: `Limit ${orderSide} order placed for ${shares} share${shares !== 1 ? 's' : ''} at $${priceVal.toFixed(2)}.` });
+      await api.post('/orders/limit', {
+        player_id: playerId, side: orderSide, price: priceVal, quantity: shares,
+        ...(expiryMinutes !== null ? { expires_in_minutes: expiryMinutes } : {}),
+      });
+      setMessage({
+        kind: 'success',
+        text: `Limit ${orderSide} order placed for ${shares} share${shares !== 1 ? 's' : ''} at $${priceVal.toFixed(2)}. ` +
+          (expiryMinutes === null ? 'It stays open until it fills or you cancel it (see Open orders above).' : 'It cancels itself if it has not filled by then (see Open orders above).'),
+      });
+      notifyOrdersChanged();
       setLimitPrice('');
       setOrderShares('1');
       await Promise.all([load(), refreshWallet()]);
@@ -444,6 +463,8 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                 starts will not earn you that tournament's payout, and selling after it starts will not lose it.
               </p>
             </div>
+
+            <OpenOrders playerId={playerId} />
 
             <OrderBook
               book={book}
@@ -587,6 +608,34 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16 }}
                   />
+                </div>
+
+                <div>
+                  <label className="text-muted-foreground block mb-1.5" style={{ fontSize: 12 }}>
+                    Keep it open <span style={{ opacity: 0.7 }}>(optional)</span>
+                  </label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {EXPIRY_OPTIONS.map(o => (
+                      <button
+                        key={o.label}
+                        onClick={() => setExpiryMinutes(o.minutes)}
+                        className="py-2 rounded-lg font-semibold transition-colors"
+                        style={{
+                          fontSize: 12,
+                          background: expiryMinutes === o.minutes ? 'rgba(155,111,255,0.18)' : 'var(--muted)',
+                          color: expiryMinutes === o.minutes ? 'var(--accent)' : 'var(--muted-foreground)',
+                          border: `1px solid ${expiryMinutes === o.minutes ? 'var(--accent)' : 'transparent'}`,
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-muted-foreground mt-1" style={{ fontSize: 11 }}>
+                    {expiryMinutes === null
+                      ? 'Stays open until it fills or you cancel it.'
+                      : `Cancels itself at ${new Date(Date.now() + expiryMinutes * 60_000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} if it has not filled.`}
+                  </p>
                 </div>
 
                 <button

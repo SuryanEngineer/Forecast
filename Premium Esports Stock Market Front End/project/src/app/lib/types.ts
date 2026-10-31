@@ -151,6 +151,7 @@ export interface OrderResponse {
   status: 'open' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected';
   is_bot: boolean;
   created_at: string;
+  expires_at?: string | null;
 }
 
 export interface BookLevel {

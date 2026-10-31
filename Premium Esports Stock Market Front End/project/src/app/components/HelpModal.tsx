@@ -15,11 +15,19 @@
 // verbatim from the demo. If those backend defaults ever change, this
 // copy should be updated alongside them.
 import { BenchmarkText } from './Benchmark';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { BadgeCheck, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-export type HelpTopicId = 'orders' | 'dividends' | 'tournaments' | 'rankings' | 'portfolio' | 'market' | 'verified';
+export type HelpTopicId =
+  | 'start' | 'pages' | 'market' | 'orders' | 'pricing' | 'dividends' | 'tournaments' | 'portfolio' | 'rankings'
+  | 'bots' | 'tips' | 'costs' | 'glossary' | 'faq' | 'verified';
+
+// The order topics appear in the Guide's topic bar: a sensible learning path, newcomer first, reference last.
+export const HELP_TOPIC_ORDER: HelpTopicId[] = [
+  'start', 'pages', 'market', 'orders', 'pricing', 'dividends', 'tournaments', 'portfolio', 'rankings',
+  'bots', 'tips', 'costs', 'glossary', 'faq', 'verified',
+];
 
 interface HelpSection {
   heading: string;
@@ -55,7 +63,387 @@ function List({ items }: { items: ReactNode[] }) {
   );
 }
 
+function Term({ name, children }: { name: string; children: ReactNode }) {
+  return (
+    <div className="py-1.5" style={{ borderBottom: '1px solid var(--border)' }}>
+      <p className="text-foreground font-semibold" style={{ fontSize: 13 }}>{name}</p>
+      <p className="text-muted-foreground" style={{ fontSize: 12.5, lineHeight: 1.55 }}>{children}</p>
+    </div>
+  );
+}
+
+function QA({ q, children }: { q: string; children: ReactNode }) {
+  return (
+    <div className="py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+      <p className="text-foreground font-semibold" style={{ fontSize: 13 }}>{q}</p>
+      <div className="text-muted-foreground mt-0.5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>{children}</div>
+    </div>
+  );
+}
+
 export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
+  start: {
+    emoji: '🚀',
+    title: 'Getting Started',
+    intro: 'Forecast is a fantasy stock market for competitive Fortnite. Every pro is a stock, tournament results pay the people who own them, and whoever ends up with the most money wins.',
+    sections: [
+      {
+        heading: 'The goal',
+        body: (
+          <p>Grow your <strong>net worth</strong> (cash plus the value of your players) faster than everyone else, and faster
+          than the market itself. It is all fantasy money: nothing to deposit, nothing to withdraw. The leaderboard shows real
+          players only, so the race is simply who has the most.</p>
+        ),
+      },
+      {
+        heading: 'How money is made',
+        body: (
+          <List
+            items={[
+              <><strong>Dividends.</strong> When a player you own finishes well in a tournament, cash lands in your balance. Only people holding shares when the event <em>starts</em> are paid.</>,
+              <><strong>Price changes.</strong> If you buy a player before the market recognizes how good they are, their price rises and your shares are worth more. The reverse is also true.</>,
+            ]}
+          />
+        ),
+      },
+      {
+        heading: 'Your first five minutes',
+        body: (
+          <List
+            items={[
+              'Open Events and find a tournament that has not started yet. Bigger events pay bigger dividends.',
+              'Open Market and look at the players. Select one to see their price, tournament history, and dividends earned.',
+              'Buy a few shares of players you believe in, ahead of the event. Spread across several players rather than putting everything on one.',
+              'Watch the event on its live standings page, collect your dividend when it finalizes, then decide to hold, sell, or reinvest.',
+              'Check the Leaderboard and My Stats to see how you are doing against everyone else and against the market.',
+            ]}
+          />
+        ),
+      },
+      {
+        heading: 'What can go wrong',
+        body: (
+          <p>Prices can fall, players have bad events, and trading costs a little every time (see Fees &amp; Costs). Nothing is
+          guaranteed, which is the point: reading the field better than other investors, and the bots, is the skill.</p>
+        ),
+      },
+    ],
+  },
+  pages: {
+    emoji: '🧭',
+    title: 'A Tour of Every Page',
+    intro: 'What lives where, so nothing is a mystery.',
+    sections: [
+      {
+        heading: 'Home',
+        body: <p>Your portfolio value and 24-hour change, the top-priced players, your three biggest holdings, any live tournament
+        with its standings, and the next events coming up.</p>,
+      },
+      {
+        heading: 'Market',
+        body: <p>Every player you can trade. Search by name or team, sort by price (↓ or ↑), and select a player to open their page.
+        Two optional side panels show market-wide totals (Market Overview) and a stream of recent trades (Live Activity).</p>,
+      },
+      {
+        heading: 'A player’s page',
+        body: (
+          <List
+            items={[
+              'Price chart over different ranges, with tournament and season markers so you can see what moved it.',
+              'The Buy price, Sell price, and order book (resting buy and sell orders).',
+              'The trade panel: quick buy/sell or a limit order at your own price.',
+              'Their tournament history, with links into the exact placement, and the dividends they have paid.',
+              'The recent trades in them, and a note on how dividends work.',
+            ]}
+          />
+        ),
+      },
+      {
+        heading: 'My Team',
+        body: <p>Everything you own: each holding’s value and gain or loss, a chart of your portfolio over time, your open limit
+        orders (cancel any here), and an activity log of every buy, sell, dividend, and fee, filterable by type.</p>,
+      },
+      {
+        heading: 'Leaderboard',
+        body: <p>Real investors ranked by net worth. Select anyone to browse their holdings. Bots are never listed.</p>,
+      },
+      {
+        heading: 'My Stats',
+        body: <p>Your net worth over time, your best and worst days, your best holding, and lifetime totals. Day figures compare
+        end-of-day (UTC) net worth to the day before.</p>,
+      },
+      {
+        heading: 'Events',
+        body: <p>The tournament calendar, live standings while an event is running, and results afterward: team standings, each
+        team’s payout, and game-by-game breakdowns. Event times show in your local time.</p>,
+      },
+      {
+        heading: 'Settings',
+        body: <p>Your profile, a cosmetic tag shown next to your name (pick its color), password, and email.</p>,
+      },
+    ],
+  },
+  pricing: {
+    emoji: '🧮',
+    title: 'How Prices Are Set',
+    intro: 'Prices are made by trading, but they are anchored to what a player actually earns, so a stock cannot drift to nonsense.',
+    sections: [
+      {
+        heading: 'The anchor: fair price',
+        body: (
+          <div className="space-y-1.5">
+            <p>Each player has a <strong>fair price</strong> based on the dividends they earned over the last 12 months:
+            projected yearly dividends per share divided by 10%. In plain terms, fair price is the price at which an
+            average-performing holder would earn about 10% a year from dividends alone.</p>
+            <Fact label="Dividend yield used for fair price" value="10%" />
+          </div>
+        ),
+      },
+      {
+        heading: 'One lucky result does not set the price',
+        body: <p>A player with only one or two results is priced partly like a typical player, because a single big finish may be a
+        fluke. As their record grows, their own results count for more. Established stars are barely affected. A player with no
+        results yet has no fair price and is not limited by the band below.</p>,
+      },
+      {
+        heading: 'The band',
+        body: (
+          <div className="space-y-1.5">
+            <p>Trading can move a price away from fair, but only within a band: limit orders outside it are refused, and the
+            running price never leaves it.</p>
+            <Fact label="Lowest allowed" value="0.5× fair price" />
+            <Fact label="Highest allowed" value="2× fair price" />
+          </div>
+        ),
+      },
+      {
+        heading: 'How trades move the price',
+        body: <p>Each trade nudges the running price toward the trade’s price, in proportion to its size, so a tiny trade at a silly
+        price moves almost nothing and a large trade moves it more. The listed price then sits between the best bid and the best
+        ask, never far from that running price.</p>,
+      },
+      {
+        heading: 'When results come in',
+        body: <p>When a tournament finalizes, the player’s fair price is recomputed with the new result and their price moves toward
+        it. Strong finishes lift it, weak ones lower it, and the change is smoothed instead of instant.</p>,
+      },
+    ],
+  },
+  bots: {
+    emoji: '🤖',
+    title: 'The Bots',
+    intro: 'Not everyone trading here is a person, and we would rather you know exactly how that works.',
+    sections: [
+      {
+        heading: 'What they are',
+        body: <p>Bot traders are automated accounts that buy, sell, and post orders around the clock so there is always someone to
+        trade with. They are the market’s background liquidity.</p>,
+      },
+      {
+        heading: 'How they decide',
+        body: (
+          <>
+            <p>Each bot estimates what a player is worth from public data, with its own spin so they do not all agree:</p>
+            <List
+              items={[
+                'What the player earned in tournaments over the past 12 months (their dividend record).',
+                'How they have placed recently, which separates hot streaks from slumps.',
+                'Upcoming events, since only holders at the start are paid, and missed qualifiers.',
+                'Qualifier results and how those have historically translated into finals results.',
+              ]}
+            />
+            <p className="mt-1.5">They then buy what looks cheap and sell what looks expensive, mostly with limit orders and
+            sometimes quick trades, and they sell when a player keeps placing poorly.</p>
+          </>
+        ),
+      },
+      {
+        heading: 'What they are not',
+        body: (
+          <List
+            items={[
+              'They are not on the leaderboard and never compete for rank.',
+              'They have no secret information: nothing they know is hidden from you, and they use the same order book, fees, and limits.',
+              'They are not always right. Their view is built from past results, so you can win by anticipating what the record does not show yet.',
+            ]}
+          />
+        ),
+      },
+      {
+        heading: 'Beating them',
+        body: <p><BenchmarkText /></p>,
+      },
+    ],
+  },
+  tips: {
+    emoji: '🧠',
+    title: 'Playing Smart',
+    intro: 'Nobody can promise you a winning strategy, but these ideas follow directly from how the market works.',
+    sections: [
+      {
+        heading: 'Buy before the start',
+        body: <p>The dividend goes to holders when an event starts. Buying early also means you are in before the crowd, though
+        prices often build ahead of big events, so a late buy is a pricier one.</p>,
+      },
+      {
+        heading: 'Compare price to income',
+        body: <p>On a player’s page, look at how much they have paid in dividends against what a share costs. A player whose
+        results keep beating what their price implies is the kind of stock the bots may be undervaluing.</p>,
+      },
+      {
+        heading: 'Remember bigger events pay more',
+        body: <p>Cash Cups are frequent but modest, FNCS events pay five times as much, and the Global Championship pays ten times
+        a Cash Cup. Players who show up and place deep in the big ones are worth more.</p>,
+      },
+      {
+        heading: 'Do not churn',
+        body: <p>Every instant trade pays the gap and a 0.25% fee. Limit orders skip the gap and, if they rest, the fee. Buying and
+        immediately selling always loses a little.</p>,
+      },
+      {
+        heading: 'Spread your bets',
+        body: <p>A bad weekend for one player is a small dent if you own several. Mix big names with rising players, and
+        consider both regions.</p>,
+      },
+      {
+        heading: 'Past results are a guide, not a promise',
+        body: <p>Form changes, teams split, and qualifiers eliminate people. Check the Events calendar for who is entered before you buy.</p>,
+      },
+    ],
+  },
+  costs: {
+    emoji: '🧾',
+    title: 'Fees & Costs',
+    intro: 'Everything it costs to trade, in one place.',
+    sections: [
+      {
+        heading: 'The full list',
+        body: (
+          <div className="space-y-1.5">
+            <Fact label="Transaction fee (taker only)" value="0.25%" />
+            <Fact label="Fee if your limit order rests and is filled" value="None" />
+            <Fact label="Minimum share price" value="$0.01" />
+            <Fact label="Platform cut of dividends" value="None right now" />
+          </div>
+        ),
+      },
+      {
+        heading: 'The gap between Buy and Sell',
+        body: <p>Buying at the Buy price and selling at the Sell price means an instant round trip loses the gap. It is small for
+        small orders and larger for big ones.</p>,
+      },
+      {
+        heading: 'Large orders',
+        body: <p>The exchange’s own liquidity gets more expensive the more you ask of it, and it will say so if an order is too
+        large to fill right now. A limit order lets you wait for another trader instead.</p>,
+      },
+      {
+        heading: 'Why your value dips after buying',
+        body: <p>Your holdings are valued at what selling all of them would pay. Right after you buy you have paid the Buy price and
+        the fee, so the number starts slightly below what you spent. Dividends and price moves are what grow it from there.</p>,
+      },
+    ],
+  },
+  glossary: {
+    emoji: '📚',
+    title: 'Glossary',
+    intro: 'Every term used in the game, in plain language.',
+    sections: [
+      {
+        heading: 'Trading',
+        body: (
+          <div>
+            <Term name="Share">One unit of ownership in a player. Owning shares entitles you to that player’s dividends.</Term>
+            <Term name="Buy price / Sell price">What one share costs right now, and what it fetches right now.</Term>
+            <Term name="Listed price">The midpoint between the Buy and Sell prices, shown as the player’s price.</Term>
+            <Term name="Order book">The list of resting buy and sell orders for a player, ranked by price.</Term>
+            <Term name="Limit order">An order at your chosen price that waits on the book until it fills or you cancel it.</Term>
+            <Term name="Quick trade">An instant order that takes the best available price now.</Term>
+            <Term name="Maker / Taker">The maker is the resting order that gets hit; the taker is the order that hits it. Only the taker pays the fee.</Term>
+            <Term name="The House">The exchange’s own account, which fills quick trades when the order book has nothing better. It is not one of the bots.</Term>
+            <Term name="Liquidity">How easily you can trade without moving the price. Thin markets move more.</Term>
+          </div>
+        ),
+      },
+      {
+        heading: 'Money',
+        body: (
+          <div>
+            <Term name="Dividend">Cash paid to shareholders when a player places in a tournament.</Term>
+            <Term name="Pool">The total dividend money for one tournament, set by its type.</Term>
+            <Term name="Per-share payout">A player’s dividend divided by their total shares. You receive this times your shares.</Term>
+            <Term name="Record date">The moment a tournament starts. Whoever holds shares then gets paid.</Term>
+            <Term name="Cost basis">What you paid for shares you hold. Gain or loss compares today’s value to it.</Term>
+            <Term name="Net worth">Cash plus what selling everything you own would pay right now. This ranks the leaderboard.</Term>
+            <Term name="Market return">The growth the market gets from dividends alone. Beat it and you are outperforming.</Term>
+          </div>
+        ),
+      },
+      {
+        heading: 'Pricing and people',
+        body: (
+          <div>
+            <Term name="Fair price">What a player’s dividends are worth: projected yearly dividends per share divided by 10%.</Term>
+            <Term name="Band">The range of 0.5× to 2× fair price that prices must stay inside.</Term>
+            <Term name="Bot">An automated trader that supplies liquidity using public data. Never ranked.</Term>
+            <Term name="Placement">A player’s official finishing position in a real tournament.</Term>
+            <Term name="Verified">A listing confirmed as the genuine pro on our hand-checked list.</Term>
+          </div>
+        ),
+      },
+    ],
+  },
+  faq: {
+    emoji: '❓',
+    title: 'Common Questions',
+    intro: 'The things people ask in their first week.',
+    sections: [
+      {
+        heading: 'Basics',
+        body: (
+          <div>
+            <QA q="Is this real money?">No. Everything is fantasy cash, there is nothing to deposit or withdraw, and no real prizes are paid out of it.</QA>
+            <QA q="How do I win?">Finish with the most money. The leaderboard counts only real players, ranked by net worth.</QA>
+            <QA q="Where do tournament results come from?">Live competitive data, synced automatically. Standings update during play and become permanent once an event finalizes.</QA>
+          </div>
+        ),
+      },
+      {
+        heading: 'Dividends',
+        body: (
+          <div>
+            <QA q="I bought after the tournament started. Will I be paid?">No. Only holders at the start are paid for that event. You will be paid for the next one.</QA>
+            <QA q="I sold after it started. Do I still get paid?">Yes. You held shares at the start, so that dividend is yours.</QA>
+            <QA q="When does the cash arrive?">Once the event’s results are final and its dividends are distributed. Open the event to see its payouts.</QA>
+          </div>
+        ),
+      },
+      {
+        heading: 'Prices and orders',
+        body: (
+          <div>
+            <QA q="Why is the Buy price higher than the listed price?">The listed price is the midpoint. You buy at the higher Buy price and sell at the lower Sell price, so the listed price is neither.</QA>
+            <QA q="Why did my portfolio dip right after I bought?">You paid the Buy price plus the 0.25% fee, while your value counts what selling all your shares would pay. See Fees &amp; Costs.</QA>
+            <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Team whenever you like.</QA>
+            <QA q="How long does a limit order stay open?">Until it fills or you cancel it, unless you chose a time limit (1 hour, 1 day, or 1 week) when placing it. Timed orders cancel themselves within about 20 seconds of expiring and release your cash or shares.</QA>
+            <QA q="It says the House can’t buy or sell that many.">The exchange’s own liquidity has limits. Try a smaller size or use a limit order.</QA>
+            <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price (0.5× to 2×). See How Prices Are Set.</QA>
+            <QA q="Why can’t I trade with myself?">Orders that would match your own are blocked, so nobody can move a price by trading with themselves.</QA>
+          </div>
+        ),
+      },
+      {
+        heading: 'Players and bots',
+        body: (
+          <div>
+            <QA q="Two players have nearly the same name. Which one?">Choose the one with the verified badge. See Verified Pros.</QA>
+            <QA q="Are bots cheating?">No. They use the same public data, order book, and fees as you, and are not on the leaderboard. See The Bots.</QA>
+            <QA q="What does my tag do?">It is cosmetic: a short label with a color shown next to your name. Set it in Settings.</QA>
+          </div>
+        ),
+      },
+    ],
+  },
   orders: {
     emoji: '🎯',
     title: 'How Trading Works',
@@ -70,7 +458,9 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             up. At the same price, the order placed first is filled first.</p>
             <List
               items={[
-                'You can cancel an open or partially filled limit order at any time before it completes.',
+                'You can cancel an open or partially filled limit order at any time before it completes. Open orders are listed in amber on My Team (with Cancel and Cancel all), on that player’s page, as a banner on Home, and as a count on the My Team link, so you never lose track of one.',
+                'An open order locks up the cash (buy) or shares (sell) it needs until it fills or you cancel it.',
+                'Optional time limit: when you place a limit order you can tap “Keep it open” for 1 hour, 1 day, or 1 week and it cancels itself if it has not filled by then, freeing the cash or shares. Leave it on “Until I cancel” and it stays open until it fills or you cancel it.',
                 'A limit order is not guaranteed to fill. If the market never reaches your price, it will remain open.',
                 'The trader whose resting order is matched (the “maker”) pays no transaction fee.',
               ]}
@@ -323,8 +713,18 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   },
 };
 
-function HelpModal({ topicId, onClose }: { topicId: HelpTopicId; onClose: () => void }) {
-  const topic = HELP_TOPICS[topicId];
+/** The Guide. Opens on one topic (an ⓘ button's own topic, or Getting Started), but every topic is one tap away in the bar
+ * under the header, so any ⓘ doubles as a doorway into the whole manual. `onReplayTour` adds a "Replay the quick tour" link. */
+function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; onClose: () => void; onReplayTour?: () => void }) {
+  const [current, setCurrent] = useState<HelpTopicId>(topicId);
+  const topic = HELP_TOPICS[current];
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center p-4"
@@ -333,25 +733,50 @@ function HelpModal({ topicId, onClose }: { topicId: HelpTopicId; onClose: () => 
     >
       <motion.div
         className="w-full rounded-2xl border border-border flex flex-col"
-        style={{ background: 'var(--card)', maxWidth: 520, maxHeight: '85vh' }}
+        style={{ background: 'var(--card)', maxWidth: 620, maxHeight: '88vh' }}
         initial={{ opacity: 0, scale: 0.95, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
-        <div className="px-6 pt-5 pb-4 flex items-start justify-between shrink-0 border-b border-border">
+        <div className="px-6 pt-5 pb-3 flex items-start justify-between shrink-0">
           <div className="flex items-center gap-3">
             <span style={{ fontSize: 28 }}>{topic.emoji}</span>
             <div>
               <h2 className="text-foreground font-bold" style={{ fontSize: 18 }}>{topic.title}</h2>
-              <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12.5, lineHeight: 1.5, maxWidth: 380 }}>{topic.intro}</p>
+              <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12.5, lineHeight: 1.5, maxWidth: 460 }}>{topic.intro}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors shrink-0">
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg hover:bg-white/10 transition-colors shrink-0">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
 
-        <div className="px-6 py-5 overflow-y-auto space-y-5">
+        {/* topic bar */}
+        <div className="px-6 pb-3 shrink-0 border-b border-border">
+          <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+            {HELP_TOPIC_ORDER.map(id => {
+              const t = HELP_TOPICS[id];
+              const active = id === current;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setCurrent(id)}
+                  className="px-2.5 py-1 rounded-full font-semibold whitespace-nowrap transition-colors shrink-0"
+                  style={{
+                    fontSize: 11.5,
+                    background: active ? 'rgba(0,200,255,0.18)' : 'transparent',
+                    color: active ? 'var(--primary)' : 'var(--muted-foreground)',
+                    border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                  }}
+                >
+                  {t.emoji} {t.title.replace(/^(How |A |The |Understanding |Reading )/, '')}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div key={current} className="px-6 py-5 overflow-y-auto space-y-5">
           {topic.sections.map((section, i) => (
             <div key={i}>
               <p className="font-bold uppercase tracking-wide" style={{ fontSize: 10.5, color: 'var(--primary)' }}>{section.heading}</p>
@@ -360,10 +785,19 @@ function HelpModal({ topicId, onClose }: { topicId: HelpTopicId; onClose: () => 
           ))}
         </div>
 
-        <div className="px-6 py-4 border-t border-border shrink-0">
+        <div className="px-6 py-4 border-t border-border shrink-0 flex items-center gap-2">
+          {onReplayTour && (
+            <button
+              onClick={onReplayTour}
+              className="px-3 py-2.5 rounded-xl font-semibold transition-colors hover:bg-white/[0.06]"
+              style={{ fontSize: 13, color: 'var(--muted-foreground)', border: '1px solid var(--border)' }}
+            >
+              Replay quick tour
+            </button>
+          )}
           <button
             onClick={onClose}
-            className="w-full py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
+            className="flex-1 py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
             style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
           >
             Got it
@@ -372,6 +806,11 @@ function HelpModal({ topicId, onClose }: { topicId: HelpTopicId; onClose: () => 
       </motion.div>
     </div>
   );
+}
+
+/** The full Guide, opened from the sidebar. Starts on Getting Started. */
+export function HelpCenter({ onClose, onReplayTour, topic = 'start' }: { onClose: () => void; onReplayTour?: () => void; topic?: HelpTopicId }) {
+  return <HelpModal topicId={topic} onClose={onClose} onReplayTour={onReplayTour} />;
 }
 
 interface HelpButtonProps {

@@ -12,6 +12,8 @@ class LimitOrderRequest(BaseModel):
     side: OrderSide
     price: Decimal = Field(gt=0)
     quantity: int = Field(gt=0)
+    # Optional: cancel automatically after this many minutes (1 minute to 90 days). Omit for "until cancelled".
+    expires_in_minutes: int | None = Field(default=None, ge=1, le=90 * 24 * 60)
 
 
 class QuickOrderRequest(BaseModel):
@@ -32,6 +34,7 @@ class OrderResponse(BaseModel):
     is_bot: bool
     created_at: datetime
     cancelled_at: datetime | None
+    expires_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

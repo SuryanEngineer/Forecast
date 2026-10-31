@@ -7,6 +7,7 @@ import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
 import { ActivityHistory } from './ActivityHistory';
+import { OpenOrders } from './OpenOrders';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -227,6 +228,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
         </>
       )}
 
+      <OpenOrders openPlayer={openPlayer} />
       <ActivityHistory openPlayer={openPlayer} />
     </div>
   );

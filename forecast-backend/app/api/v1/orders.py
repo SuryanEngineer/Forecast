@@ -23,7 +23,10 @@ def _to_http_error(exc: ServiceError) -> HTTPException:
 @router.post("/limit", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 def place_limit_order(payload: LimitOrderRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> OrderResponse:
     try:
-        order = order_service.place_limit_order(db, user.id, payload.player_id, payload.side, payload.price, payload.quantity)
+        order = order_service.place_limit_order(
+            db, user.id, payload.player_id, payload.side, payload.price, payload.quantity,
+            expires_in_minutes=payload.expires_in_minutes,
+        )
         db.commit()
     except ServiceError as exc:
         db.rollback()

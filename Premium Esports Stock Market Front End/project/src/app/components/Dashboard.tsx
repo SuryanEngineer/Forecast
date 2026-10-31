@@ -6,7 +6,8 @@ import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { tournamentDisplayName } from '../lib/tournamentName';
 import { LiveLeaderboard } from './LiveLeaderboard';
-import { VerifiedBadge } from './HelpModal';
+import { VerifiedBadge, HelpButton } from './HelpModal';
+import { OpenOrdersBanner } from './OpenOrders';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -124,6 +125,8 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
           </div>
         </div>
       </div>
+
+      <OpenOrdersBanner onReview={() => navigate('portfolio')} />
 
       {/* Top players by price */}
       <div>
@@ -273,7 +276,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
       </div>
 
       <div className="rounded-2xl border p-5" style={{ background: 'rgba(155,111,255,0.06)', borderColor: 'rgba(155,111,255,0.2)' }}>
-        <p className="font-bold text-foreground mb-2" style={{ fontSize: 16 }}>💰 How Dividends Work</p>
+        <p className="font-bold text-foreground mb-2 flex items-center gap-1.5" style={{ fontSize: 16 }}>💰 How Dividends Work <HelpButton topic="dividends" /></p>
         <p className="text-muted-foreground" style={{ fontSize: 14, lineHeight: 1.7 }}>
           When a player you own places well in a tournament, you earn a <span style={{ color: 'var(--accent)' }}>dividend</span> split
           across every shareholder. Buy shares before big events to maximize your earnings!

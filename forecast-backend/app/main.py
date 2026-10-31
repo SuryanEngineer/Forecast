@@ -144,6 +144,31 @@ async def _maintenance_loop() -> None:
         await asyncio.sleep(60)
 
 
+def _expire_orders_once() -> int:
+    if not lease_service.holds_lease():
+        return 0
+    from app.services import order_service
+
+    db = SessionLocal()
+    try:
+        return order_service.expire_due_orders(db)
+    finally:
+        db.close()
+
+
+async def _order_expiry_loop() -> None:
+    """Cancels limit orders whose optional time limit has passed (and frees their cash / shares). Runs on the lease holder."""
+    await asyncio.sleep(10)
+    while True:
+        try:
+            n = await asyncio.to_thread(_expire_orders_once)
+            if n:
+                maintenance_logger.info("Expired %d limit order(s)", n)
+        except Exception:
+            maintenance_logger.exception("Order expiry sweep failed -- will retry")
+        await asyncio.sleep(20)
+
+
 lease_logger = logging.getLogger("forecast.lease")
 
 
@@ -214,6 +239,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(_bot_tick_loop()))
 
     tasks.append(asyncio.create_task(_maintenance_loop()))
+    tasks.append(asyncio.create_task(_order_expiry_loop()))
 
     if settings.OSIRION_SYNC_ENABLED:
         tasks.append(asyncio.create_task(_osirion_sync_loop()))

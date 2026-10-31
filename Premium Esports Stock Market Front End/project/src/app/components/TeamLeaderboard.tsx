@@ -11,7 +11,8 @@ import {
 import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
 
-const PAGE_SIZE = 50;
+// 100 per page so a full 100-player solo event fits on one page (the API allows up to 200).
+const PAGE_SIZE = 100;
 const COLS = '44px 1fr 1fr 1fr 1fr 1fr';
 
 function money(n: number): string {
@@ -134,6 +135,84 @@ function TeamCard({
   const mine = team.my_payout !== null ? toNumber(team.my_payout) : null;
   const hasStake = mine !== null || (team.my_shares_at_start ?? 0) > 0;
   const label = team.members.length === 1 ? null : team.members.length === 2 ? 'Duo' : 'Squad';
+
+  // Solo entries (one player) get a slim single-line row: a 100-player solo event then fits on one page without
+  // each entry taking a whole multi-line card. Duos/squads keep the full card below.
+  if (team.members.length === 1) {
+    const m = team.members[0];
+    const mPool = m.pool_amount !== null ? toNumber(m.pool_amount) : null;
+    const perShare = m.per_share_amount !== null ? toNumber(m.per_share_amount) : null;
+    const myPay = m.my_payout !== null ? toNumber(m.my_payout) : null;
+    const owned = (m.my_shares_at_start ?? 0) > 0;
+    const stats = [
+      team.eliminations !== null ? `${team.eliminations} elims` : null,
+      team.points !== null ? `${toNumber(team.points)} pts` : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <div
+        ref={cardRef}
+        className="rounded-xl overflow-hidden"
+        style={{
+          background: 'var(--muted)',
+          border: focused ? '1.5px solid var(--primary)' : hasStake ? '1.5px solid rgba(251,191,36,0.65)' : '1px solid transparent',
+          boxShadow: focused ? '0 0 0 1px rgba(0,200,255,0.25)' : hasStake ? '0 0 0 1px rgba(251,191,36,0.15)' : undefined,
+        }}
+      >
+        <div className="flex items-center gap-3 px-3 py-1.5">
+          <div
+            className="rounded-lg flex items-center justify-center font-mono font-bold shrink-0"
+            style={{ width: 40, height: 26, fontSize: 12, ...placementBadgeStyle(team.placement) }}
+          >
+            #{team.placement}
+          </div>
+          <button onClick={() => onOpenPlayer(m.player_id)} className="flex items-center gap-2 text-left min-w-0 flex-1 hover:opacity-80 transition-opacity">
+            <span className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>
+              {m.gamertag}
+              <VerifiedBadge show={m.is_verified} />
+            </span>
+            {owned && (
+              <span className="shrink-0 rounded-full px-1.5 py-0.5 font-bold" style={{ fontSize: 9, background: 'rgba(251,191,36,0.18)', color: GOLD }}>
+                YOU OWN {m.my_shares_at_start}
+              </span>
+            )}
+          </button>
+          <span className="hidden md:block text-muted-foreground text-right shrink-0" style={{ fontSize: 11.5, minWidth: 96 }}>{stats}</span>
+          <span
+            className="font-mono font-bold text-right shrink-0"
+            style={{ fontSize: 12.5, minWidth: 74, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}
+            title={estimate ? 'estimated total payout' : 'total payout'}
+          >
+            {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
+          </span>
+          <span className="hidden sm:block font-mono text-foreground text-right shrink-0" style={{ fontSize: 12, minWidth: 74 }} title="per share">
+            {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}/sh` : '–'}
+          </span>
+          <span className="text-right shrink-0" style={{ minWidth: 92 }}>
+            {myPay !== null && myPay > 0 ? (
+              <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono font-bold" style={{ fontSize: 12, background: 'rgba(251,191,36,0.16)', color: GOLD }}>
+                <Coins className="w-3 h-3" /> +{money(myPay)}
+              </span>
+            ) : owned && !estimate ? (
+              <span style={{ fontSize: 11, color: GOLD, fontWeight: 600 }}>pending</span>
+            ) : null}
+          </span>
+          <button
+            onClick={() => setOpen(o => !o)}
+            title={open ? 'Hide game results' : 'Show game results'}
+            className="p-1 rounded-md hover:bg-white/[0.08] transition-colors shrink-0"
+            style={{ color: 'var(--primary)' }}
+          >
+            {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+        {open && (
+          <div className="px-3 pb-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <TeamGames tournamentId={tournamentId} playerId={m.player_id} />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -330,6 +409,17 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
         </p>
       )}
 
+      {data.items.every(t => t.members.length === 1) && (
+        <div className="hidden sm:flex items-center gap-3 px-3 text-muted-foreground uppercase" style={{ fontSize: 9.5, letterSpacing: '0.06em', fontWeight: 600 }}>
+          <span style={{ width: 40 }}>Place</span>
+          <span className="flex-1">Player</span>
+          <span className="hidden md:block text-right" style={{ minWidth: 96 }}>Stats</span>
+          <span className="text-right" style={{ minWidth: 74 }}>{estimate ? 'Est. payout' : 'Payout'}</span>
+          <span className="text-right" style={{ minWidth: 74 }}>Per share</span>
+          <span className="text-right" style={{ minWidth: 92 }}>You</span>
+          <span style={{ width: 24 }} />
+        </div>
+      )}
       {data.items.map(team => (
         <TeamCard
           key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}

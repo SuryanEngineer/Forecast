@@ -16,7 +16,7 @@ successfully), so a failed settlement never leaves a half-written trade.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy.orm import Session
@@ -261,8 +261,12 @@ def place_limit_order(
     price: Decimal,
     quantity: int,
     is_bot: bool = False,
+    expires_in_minutes: int | None = None,
 ) -> Order:
-    """`is_bot=True` is used exclusively by market_maker_service.py to post
+    """`expires_in_minutes` (optional) makes the order cancel itself after that long (expire_due_orders); None = good
+    until cancelled.
+
+    `is_bot=True` is used exclusively by market_maker_service.py to post
     the House's resting liquidity quotes -- it's still a real Order row
     owned by the House account and still goes through the exact same
     hold/match/settle path as a human's order, it's just tagged so
@@ -315,6 +319,7 @@ def place_limit_order(
             filled_quantity=0,
             status=OrderStatus.OPEN,
             is_bot=is_bot,
+            expires_at=(datetime.now(timezone.utc) + timedelta(minutes=expires_in_minutes)) if expires_in_minutes else None,
         )
         db.add(order)
         db.flush()
@@ -482,7 +487,39 @@ def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
         raise OrderNotCancellableError("quick orders settle instantly and cannot be cancelled")
     if order.status not in (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED):
         raise OrderNotCancellableError(f"order is already {order.status.value}")
+    return _cancel_resting(db, order)
 
+
+def expire_due_orders(db: Session, now: datetime | None = None, limit: int = 200) -> int:
+    """Cancels every open / part-filled limit order whose `expires_at` has passed, releasing its cash or shares exactly like
+    a manual cancel. Run every ~20s by the market-lease holder (main._order_expiry_loop). Returns how many were cancelled."""
+    now = now or datetime.now(timezone.utc)
+    due = (
+        db.query(Order)
+        .filter(
+            Order.expires_at.isnot(None),
+            Order.expires_at <= now,
+            Order.order_kind == OrderKind.LIMIT,
+            Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]),
+        )
+        .order_by(Order.expires_at.asc())
+        .limit(limit)
+        .all()
+    )
+    done = 0
+    for order in due:
+        try:
+            _cancel_resting(db, order)
+            db.commit()
+            done += 1
+        except Exception:  # one bad order must not block the rest; it is retried next sweep
+            db.rollback()
+    return done
+
+
+def _cancel_resting(db: Session, order: Order) -> Order:
+    """Takes a resting limit order off the book and releases what it was holding (shared by cancel and expiry)."""
+    user_id = order.user_id
     lock = book_registry.get_player_lock(order.player_id)
     with lock:
         book = book_registry.get_book(db, order.player_id)
