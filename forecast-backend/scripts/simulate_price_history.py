@@ -74,7 +74,10 @@ def _aware(dt: datetime) -> datetime:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--start", default="2026-01-01", help="First day of history (default 2026-01-01).")
+    ap.add_argument("--start", default=None,
+                    help="First day of history, YYYY-MM-DD (default: 180 days ago). Our results only go back to early 2026, so the "
+                         "first months of 'dividends so far' understate what players had really earned; a shorter history "
+                         "avoids a fake climb from a too-low starting price.")
     ap.add_argument("--step-days", type=float, default=1.0, help="Days between baseline points (default 1).")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--dry-run", action="store_true", help="Compute and summarise, write nothing.")
@@ -97,7 +100,11 @@ def main() -> None:
 
     rng = random.Random(args.seed)
     now = datetime.now(timezone.utc)
-    t_start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    if args.start:
+        t_start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    else:
+        t_start = (now - timedelta(days=180)).replace(hour=0, minute=0, second=0, microsecond=0)
+    print(f"History window: {t_start.date()} -> {now.date()}")
     db = SessionLocal()
     try:
         players = db.query(Player.id, Player.gamertag, Player.region, Player.ipo_price, Player.total_shares_outstanding).filter(Player.is_active.is_(True)).all()
@@ -200,6 +207,7 @@ def main() -> None:
         band_low = economic_params_service.get_param(db, "market.band_low")
         band_high = economic_params_service.get_param(db, "market.band_high")
         new_rows: list[dict] = []
+        name_has_fair = {p.gamertag: (p.id in fair_live) for p in players}
         per_player_pts = []
         big_corr = 0
         for p in players:
@@ -306,7 +314,11 @@ def main() -> None:
         if ends and args.reset_prices:
             sh_by_name = {p.gamertag: shares_of[p.id] for p in players}
             mv_end = sum(prices[-1][1] * sh_by_name[tag] for tag, prices in per_player_pts)
+            with_fair = [(tag, prices[-1][1] * sh_by_name[tag]) for tag, prices in per_player_pts if name_has_fair.get(tag)]
+            without = [(tag, prices[-1][1] * sh_by_name[tag]) for tag, prices in per_player_pts if not name_has_fair.get(tag)]
             print(f"  resulting market value (every share x its new price): {mv_end:,.0f}")
+            print(f"    stocks with a results history ({len(with_fair)}): {sum(v for _t, v in with_fair):,.0f}  <- this is what the target is solved for")
+            print(f"    stocks with no results at all ({len(without)}): {sum(v for _t, v in without):,.0f}  (priced near the floor; no fair price, so no band)")
         if ends:
             print("  end prices: p10 ${:.2f}  p25 ${:.2f}  median ${:.2f}  p75 ${:.2f}  p90 ${:.2f}  max ${:.2f}".format(
                 ends[int(.1 * len(ends))], ends[int(.25 * len(ends))], ends[len(ends) // 2], ends[int(.75 * len(ends))], ends[int(.9 * len(ends))], ends[-1]))
