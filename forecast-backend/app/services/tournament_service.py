@@ -178,6 +178,20 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
     # transaction is a no-op.
     db.commit()
 
+    # Results are now official: move each participant's listed price most of the way to its new fair value at once
+    # (see rerate_service) so the stock is not left cheap for hours after a big finish. Never blocks finalizing.
+    if new_payouts:
+        try:
+            from app.services import rerate_service  # local import: keeps tournament_service import-light
+
+            rerate_service.rerate_players(db, [p.player_id for p in new_payouts])
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            import logging
+
+            logging.getLogger(__name__).exception("price re-rate after finalize failed (finalize itself is unaffected)")
+
     for payout in new_payouts:
         enqueue_dividend_payout(str(payout.id))
 

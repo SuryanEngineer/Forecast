@@ -514,7 +514,9 @@ python3 scripts/simulate_price_history.py --reset-prices --dry-run   # preview t
 python3 scripts/simulate_price_history.py --reset-prices             # do it
 ```
 
-Then **restart the backend on Render** straight away (it keeps order books and bot memory in RAM).
+Then **restart the backend on Render** straight away (it keeps order books and bot memory in RAM). The reset refuses to run without `--yes` and prints how it changes each real user's share value first.
+
+**Re-rate on results:** when a tournament is finalized, every participant's listed price jumps 60% (in log terms) of the way to its new fair price at once (`app/services/rerate_service.py`, a no-trade price point with volume 0), so a stock isn't left cheap for hours after a big finish. Both simulation modes of `simulate_price_history.py` delete volume-0 points, so only re-run them before launch, not once live re-rates exist.
 
 ## Bot pace, prices and database limits
 
