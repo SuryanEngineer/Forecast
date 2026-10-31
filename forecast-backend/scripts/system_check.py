@@ -371,7 +371,7 @@ def check_trading_and_dividends() -> dict:
         payouts = tournament_service.finalize_tournament(db, t.id)
         db.commit()
         check("finalize created one payout", len(payouts) == 1)
-        rerated = db.query(PriceSnapshot).filter(PriceSnapshot.player_id == ctx["player"].id, PriceSnapshot.volume == 0, PriceSnapshot.recorded_at >= start).count()
+        rerated = db.query(PriceSnapshot).filter(PriceSnapshot.player_id == ctx["player"], PriceSnapshot.volume == 0, PriceSnapshot.recorded_at >= start).count()
         check("finalizing re-rates the participant's price at once (a no-trade price point toward the new fair value)", rerated == 1, f"{rerated} re-rate points")
         db.expire_all()
         p = db.query(DividendPayout).filter(DividendPayout.tournament_id == t.id).one()
