@@ -75,7 +75,7 @@ def main() -> None:
             args.target_yield = float(economic_params_service.get_param(db, "market.target_yield"))
         house_id = db.query(User.id).filter(User.email == HOUSE_ACCOUNT_EMAIL).scalar()
         bot_ids = {uid for (uid,) in db.query(BotProfile.user_id).all()}
-        users = {uid for (uid,) in db.query(User.id).filter(User.is_active.is_(True)).all()}
+        users = {uid for (uid,) in db.query(User.id).filter(User.is_active.is_(True), ~User.email.like("%@test.local")).all()}  # smoke-test accounts are not real users
         human_ids = users - bot_ids - ({house_id} if house_id else set())
 
         def group(uid):
