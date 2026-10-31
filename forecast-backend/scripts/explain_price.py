@@ -40,7 +40,7 @@ def main() -> None:
     try:
         y = fair_price_service.refresh_target_yield(db)
         now = datetime.now(timezone.utc)
-        inc, shares = fair_price_service.income_per_share(db)
+        inc, _shares = fair_price_service.income_per_share(db)
         curve = economic_params_service.get_placement_curve(db)
         cutoff = now - timedelta(days=bots.INCOME_WINDOW_DAYS)
         print(f"target yield {y * 100:.2f}%   (fair price = shrunk yearly dividends per share / yield, floor ${bots.FAIR_MIN:g}, cap ${bots.FAIR_MAX:g})\n")
