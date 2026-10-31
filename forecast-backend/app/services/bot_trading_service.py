@@ -286,6 +286,9 @@ def _result_income(
         if tid in excluded:
             continue
         done = _aware(end) if end is not None else start + timedelta(days=1)
+        # A recorded result has already happened: never date it in the future (a tournament with no end time that is
+        # finalized within a day of its start would otherwise count for nothing, and the news re-rate would miss it).
+        done = min(done, datetime.now(timezone.utc))
         value = float(pools.get(tid, Decimal("0")) * placement_payout_fraction(placement, max(1, field.get(tid, 1)), curve))
         events[pid].append((done, value))
     return events, first_seen
