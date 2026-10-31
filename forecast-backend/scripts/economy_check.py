@@ -111,10 +111,25 @@ def main() -> None:
         user_wealth = user_cash + treasury["human"] + treasury["bot"] + user_value
         print(f"   players' total wealth (humans+bots): {money(user_wealth)}; {user_value / user_wealth * 100 if user_wealth else 0:.0f}% of it is in shares, {user_cash / user_wealth * 100 if user_wealth else 0:.0f}% idle cash")
 
-        print("\n2. SHARES")
+        print("\n2. WHO OWNS THE SHARES")
         user_qty = qty_total.get("human", 0) + qty_total.get("bot", 0)
-        print(f"   total shares {total_shares:,}; held by players {user_qty:,} ({user_qty / total_shares * 100 if total_shares else 0:.1f}%); House holds {qty_total.get('house', 0):,} ({qty_total.get('house', 0) / total_shares * 100 if total_shares else 0:.1f}%)")
-        print("   (the House sells to anyone at the going price, so supply never runs out)")
+        for g, label in (("house", "House (unsold inventory)"), ("bot", "Bots"), ("human", "Human players")):
+            q = qty_total.get(g, 0)
+            v = value.get(g, 0)
+            print(f"   {label:<26} {q:>12,} shares = {q / total_shares * 100 if total_shares else 0:>6.2f}% of all shares, {money(v):>16} = {v / mcap * 100 if mcap else 0:>6.2f}% of market cap")
+        print(f"   total shares {total_shares:,} across {len(players)} players ({total_shares // max(1, len(players)):,} each)")
+        # How much of each stock has left the House?
+        sold_pct = sorted(
+            100.0 * (sum(held[g].get(pid, 0) for g in ('human', 'bot'))) / shares[pid] for pid in shares if shares[pid]
+        )
+        print(f"   share of each stock owned by players: median {pct(sold_pct, .5):.2f}%  p90 {pct(sold_pct, .9):.2f}%  max {sold_pct[-1] if sold_pct else 0:.1f}%;  {sum(1 for s in sold_pct if s == 0)} stocks have no player owner at all")
+        name_of = {p.id: p.gamertag for p in players}
+        top_owned = sorted(shares, key=lambda pid: -(sum(held[g].get(pid, 0) for g in ('human', 'bot')) / shares[pid]))[:5]
+        print("   most-owned stocks (bots / humans / House %):")
+        for pid in top_owned:
+            s = shares[pid]
+            print(f"     {name_of[pid]:<24} {held['bot'].get(pid, 0) / s * 100:>5.1f}% / {held['human'].get(pid, 0) / s * 100:>5.1f}% / {held['house'].get(pid, 0) / s * 100:>5.1f}%   price ${price.get(pid, 0):,.2f}")
+        print("   The House sells out of this inventory (and pays cash when players sell back); it can only sell what it still owns.")
 
         print("\n3. MARKET CAP vs MONEY")
         print(f"   market cap (every share x price): {money(mcap)}")
@@ -149,6 +164,10 @@ def main() -> None:
         print(f"\n5. DIVIDENDS (this year's results, scaled to 12 months; {len(tids)} tournaments, {days:.0f} days so far)")
         print(f"   dividends created per year: {money(total_year)} = {total_year / user_wealth * 100 if user_wealth else 0:.1f}% of player wealth, {total_year / mcap * 100 if mcap else 0:.2f}% of market cap")
         print(f"   starting balance per new user: {money(float(economic_params_service.get_param(db, 'wallet.starting_balance')))}; treasury pays about 1% a year, so a stock should pay clearly more to be worth holding")
+        house_div = sum(per_share_year.get(pid, 0.0) * q for pid, q in held["house"].items())
+        player_div = sum(per_share_year.get(pid, 0.0) * q for g in ("human", "bot") for pid, q in held[g].items())
+        print(f"   who actually receives it at today's ownership: House ~{money(house_div)}/yr, players ~{money(player_div)}/yr")
+        print(f"   (House cash {money(cash['house'])} pays for buying shares back from sellers; its dividends and the 0.25% trading fees refill it)")
         ys = []
         pairs = []
         for pid, dps in per_share_year.items():
