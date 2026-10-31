@@ -7,7 +7,7 @@ No trades are made. Each player's price path is a model, built from the same pie
   * Fair value AS OF each date: the bots' fair price (yearly dividends per share / 10% target yield,
     bot_trading_service._fair_from_income) recomputed from only the results that had finished by then, so a player's
     line steps up or down as results come in. Before a player has results it starts from a reputation prior.
-  * Daily noise (about 1%) that pulls back toward fair value, plus a quicker catch-up in the few days after a result.
+  * Quiet-market noise (about 1.2% a day, fat-tailed, capped by the live market's own hourly move limits) that slowly pulls back to fair value; faster noise around the player's own tournaments; and an immediate jump when a result lands (the live re-rate). Top stocks get hourly points for the last week so 1D/1W charts look like a live market.
   * Dividend timing for players in the field: a small run-up before a tournament starts and a small dip just after
     (the dividend is locked in at the start).
   * Missed events: a player who normally plays their region's qualifying events but is not in one slips a little
@@ -47,15 +47,19 @@ from app.models.tournament import PlacementResult, Tournament  # noqa: E402
 from app.services import bot_trading_service as bots  # noqa: E402
 from app.services import economic_params_service, missed_event_service  # noqa: E402
 
-DAILY_SIGMA = 0.010          # day-to-day noise on the log price
-KAPPA_BASE = 0.08            # daily pull back to the target
-KAPPA_REACT = 0.45           # faster pull in the days right after a result lands
-REACT_DAYS = 3.0
+HOURLY_SIGMA = 0.0025        # quiet-market noise on the log price per sqrt(hour) (~1.2% a day): many small bot trades against a
+                             # damped reference price, with fat tails (Student-t) because a few trades are bigger than the rest
+EVENT_SIGMA_MULT = 4.0       # noise is this much larger from 2h before one of the player's events starts until 6h after it ends
+CALM_HOURLY_CAP = 0.02       # the live market's own limits (market.calm_hourly_move / market.event_hourly_move): the reference
+EVENT_HOURLY_CAP = 0.12      # price may move at most this much an hour; the history obeys them so it cannot look wilder than live
+RESULT_JUMP = 0.9            # when a result lands the live re-rate moves the price at once, to ~this share of the way to the new fair
+KAPPA_BASE = 0.08            # daily pull back toward fair value (bots buying under it, selling over it)
 RUNUP = 0.02                 # log-price bump building up to a tournament start (players in the field)
 RUNUP_DAYS = 3.0
 EXDIV = 0.015                # log-price dip after the start (dividend already locked in)
 EXDIV_DAYS = 2.0
 MIN_PRICE = 0.01
+HIRES_PLAYERS = 150          # the most valuable stocks (the ones that really trade) get intraday detail
 RAMP_DAYS = 21.0             # with --reset-prices: the last this-many days bend smoothly onto the live fair price
 
 
@@ -79,6 +83,7 @@ def main() -> None:
                          "first months of 'dividends so far' understate what players had really earned; a shorter history "
                          "avoids a fake climb from a too-low starting price.")
     ap.add_argument("--step-days", type=float, default=1.0, help="Days between baseline points (default 1).")
+    ap.add_argument("--hourly-days", type=float, default=7.0, help="Days of hourly points for the top stocks (4-hourly for the 3 weeks before that, daily before).")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--dry-run", action="store_true", help="Compute and summarise, write nothing.")
     ap.add_argument("--player", default=None, help="Only this gamertag (for a quick look).")
@@ -210,6 +215,7 @@ def main() -> None:
         name_has_fair = {p.gamertag: (p.id in fair_live) for p in players}
         per_player_pts = []
         big_corr = 0
+        rank_of = {pid: i for i, (pid, _f) in enumerate(sorted(final_fair_all.items(), key=lambda kv: -kv[1]))}
         for p in players:
             end_ts = first_real_t.get(p.id, now)
             if end_ts <= t_start + timedelta(days=2):
@@ -245,30 +251,65 @@ def main() -> None:
                     elif -EXDIV_DAYS <= ds <= 0:
                         tgt -= EXDIV * (1.0 + ds / EXDIV_DAYS)
                 tgt -= missed_event_service.decayed_penalty(missed.get(p.id, []), t)
-                react = (t - last_cp).total_seconds() / 86400.0 < REACT_DAYS and last_cp > t_start
-                return tgt, (KAPPA_REACT if react else KAPPA_BASE)
+                return tgt, KAPPA_BASE
 
-            # time grid: one point per step-day (jittered inside the day) + every tournament start / finish of this player
+            # Time grid. Baseline: one point a day; the most valuable stocks get 4-hourly points for the 3 weeks before the
+            # hourly stretch and hourly points for the last --hourly-days (that is how a live chart looks at 1D / 1W zoom).
+            # Every one of the player's tournaments adds points around it: before the start, the start, the finish, and the
+            # moment the result is re-rated.
+            hires = rank_of[p.id] < HIRES_PLAYERS
             times = []
             d = t_start
+            hourly_from = end_ts - timedelta(days=args.hourly_days)
+            fourh_from = hourly_from - timedelta(days=21)
             while d < end_ts:
-                times.append(d + timedelta(hours=rng.uniform(8, 20)) if args.step_days >= 1 else d)
-                d += timedelta(days=args.step_days)
+                if hires and d >= hourly_from:
+                    times.append(d)
+                    d += timedelta(hours=1)
+                elif hires and d >= fourh_from:
+                    times.append(d)
+                    d += timedelta(hours=4)
+                else:
+                    times.append(d + timedelta(hours=rng.uniform(8, 20)) if args.step_days >= 1 else d)
+                    d += timedelta(days=args.step_days)
+            jump_times = set()
+            windows = []  # (from, to) while this player's own events make the market move faster
             for (done, start, _v) in my_events:
-                for t in (start, done + timedelta(hours=1)):
+                rt = done + timedelta(minutes=30)
+                for t in (start - timedelta(hours=2), start, done, rt, done + timedelta(hours=3)):
                     if t_start <= t < end_ts:
                         times.append(t)
+                if t_start <= rt < end_ts:
+                    jump_times.add(rt)
+                windows.append((start - timedelta(hours=2), done + timedelta(hours=6)))
             times = sorted({t for t in times if t_start <= t < end_ts})
             if not times:
                 continue
+
+            def in_event(t: datetime) -> bool:
+                return any(a <= t <= b for a, b in windows)
+
+            def noise() -> float:
+                # Student-t with 4 degrees of freedom, scaled to unit variance: mostly small moves, occasionally a bigger one.
+                z = rng.gauss(0, 1)
+                chi = sum(rng.gauss(0, 1) ** 2 for _ in range(4))
+                return z / math.sqrt(chi / 4.0) / math.sqrt(2.0)
 
             x = target(times[0])[0]
             prev = times[0]
             path = [(times[0], x)]
             for t in times[1:]:
-                dt = max((t - prev).total_seconds() / 86400.0, 1e-3)
+                dt = max((t - prev).total_seconds() / 86400.0, 1e-4)
+                hours = dt * 24.0
                 tgt, kappa = target(t)
-                x += (1.0 - math.exp(-kappa * dt)) * (tgt - x) + DAILY_SIGMA * math.sqrt(dt) * rng.gauss(0, 1)
+                evt = in_event(t)
+                step = (1.0 - math.exp(-kappa * dt)) * (tgt - x) + HOURLY_SIGMA * (EVENT_SIGMA_MULT if evt else 1.0) * math.sqrt(hours) * noise()
+                cap = (EVENT_HOURLY_CAP if evt else CALM_HOURLY_CAP) * max(1.0, hours)
+                step = max(-cap, min(cap, step))
+                if t in jump_times:
+                    # the live re-rate: the price moves at once to (most of) the new fair value, not over several days
+                    step += RESULT_JUMP * (tgt - target(t - timedelta(minutes=1))[0])
+                x += step
                 path.append((t, x))
                 prev = t
             # land on the first real trade price
