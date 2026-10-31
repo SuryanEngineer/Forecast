@@ -311,6 +311,8 @@ def place_limit_order(
         raise ValueError("quantity must be positive")
     if price <= 0:
         raise ValueError("price must be positive")
+    if price < market_policy.MIN_PRICE:
+        raise ValueError(f"minimum share price is ${market_policy.MIN_PRICE}")
     lease_service.require_primary()
 
     player = _get_player_or_raise(db, player_id)

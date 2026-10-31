@@ -618,22 +618,41 @@ def check_book_price_and_retention(ctx: dict) -> None:
         o = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("12.00"), 12)  # $144 of resting demand above the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a bid above the last price lifts the listed price (capped at +6%)", Decimal(str(r.json()["last_price"])) == Decimal("10.60"), r.text)
+        check("a resting bid does not move the listed price (only real trades do)", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
         listing = client.get("/api/v1/markets?search=BookPro").json()["items"]
-        check("the market list shows the same book-aware price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("10.60"), str(listing))
+        check("the market list shows the same listed price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("10"), str(listing))
         book = client.get(f"/api/v1/markets/{pid}/book").json()
         check("order-book endpoint lists the resting bid", book["bids"] and Decimal(str(book["bids"][0]["price"])) == Decimal("12") and book["bids"][0]["quantity"] == 12, str(book))
         tiny = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("13.00"), 1)  # $13: too small to move the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("10.60"), r.text)
+        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
         order_service.cancel_order(db, ctx["carl"], o.id)
         order_service.cancel_order(db, ctx["carl"], tiny.id)
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("cancelling the bids returns the price to the last trade", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+        check("cancelling the bids leaves the price where it was", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
         m = r.json()
         check("market data carries a buy and a sell price (buy >= sell)", "buy_price" in m and "sell_price" in m and Decimal(str(m["buy_price"])) >= Decimal(str(m["sell_price"])) > 0, str(m))
+        # Listed price = last real trade, kept between the Sell and Buy prices
+        from app.models.player import PriceSnapshot as _PS
+        from app.services import valuation_service as _vs
+        snap = _PS(id=uuid.uuid4(), player_id=pid, price=Decimal("15"), volume=1)
+        db.add(snap)
+        db.commit()
+        _vs._LAST_TRADE_CACHE["at"] = 0.0
+        m2 = client.get(f"/api/v1/markets/{pid}").json()
+        check("a last trade above the Buy price lists at the Buy price", Decimal(str(m2["last_price"])) == Decimal(str(m2["buy_price"])), str(m2))
+        snap.price = Decimal("0.60")
+        db.commit()
+        _vs._LAST_TRADE_CACHE["at"] = 0.0
+        m3 = client.get(f"/api/v1/markets/{pid}").json()
+        check("a last trade below the Sell price lists at the Sell price", Decimal(str(m3["last_price"])) == Decimal(str(m3["sell_price"])), str(m3))
+        db.delete(snap)
+        db.commit()
+        _vs._LAST_TRADE_CACHE["at"] = 0.0
+        from app.engine import market_policy as _mp
+        check("the minimum share price is $0.50", _mp.MIN_PRICE == Decimal("0.50"))
 
         # Self-trade block / price band (alice holds shares of the earlier trading-context player)
         from app.services.exceptions import HouseCapacityError, NoLiquidityError, PriceOutOfBandError, SelfTradeError

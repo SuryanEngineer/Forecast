@@ -958,7 +958,9 @@ def _submit(db, user_id, pid, side: OrderSide, qty: int, limit_price: float | No
         order_service.place_quick_order(db, user_id, pid, side, qty, is_bot=True)
         return True
     lp = Decimal(str(round(limit_price, 2)))
-    if lp < Decimal("0.01"):
+    from app.engine import market_policy
+
+    if lp < market_policy.MIN_PRICE:
         return False
     order_service.place_limit_order(db, user_id, pid, side, lp, qty, is_bot=True)
     return True

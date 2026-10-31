@@ -49,7 +49,7 @@ from app.engine.types import Fill, Side
 DEFAULT_MARKET_IMPACT_COEFFICIENT = Decimal("0.15")
 DEFAULT_SYNTHETIC_DEPTH_FRACTION = Decimal("0.01")  # 1% of shares outstanding
 DEFAULT_MIN_SYNTHETIC_DEPTH = Decimal("100")
-MIN_PRICE = Decimal("0.01")
+MIN_PRICE = Decimal("0.50")
 # Slippage on the synthetic (House) leg never exceeds this fraction of the reference price. Without a cap one large
 # quick order (impact grows with size/depth) priced at +100% or more became the "last price" and dragged the listed
 # price far above value; the cap keeps any single trade's price footprint bounded.

@@ -215,14 +215,18 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             refused (this also protects against typos), and the running price never leaves it.</p>
             <Fact label="Lowest allowed" value={<><BandLow /> fair price</>} />
             <Fact label="Highest allowed" value={<><BandHigh /> fair price</>} />
+            <Fact label="Absolute minimum price" value="$0.50 a share" />
+            <p>No stock can trade below $0.50, whatever its fair price, so nobody can buy up the cheapest players for next to
+            nothing.</p>
           </div>
         ),
       },
       {
         heading: 'How trades move the price',
         body: <p>Each trade nudges the running price toward the trade’s price, in proportion to its size, so a tiny trade at a silly
-        price moves almost nothing and a large trade moves it more. The listed price then sits between the best bid and the best
-        ask, never far from that running price.</p>,
+        price moves almost nothing and a large trade moves it more. The listed price is the price of the last trade,
+        kept between the Sell and Buy prices: if the last trade was above today’s Buy price it shows the Buy price, and if it
+        was below the Sell price it shows the Sell price.</p>,
       },
       {
         heading: 'When results come in',
@@ -324,7 +328,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <div className="space-y-1.5">
             <Fact label="Transaction fee (taker only)" value="0.25%" />
             <Fact label="Fee if your limit order rests and is filled" value="None" />
-            <Fact label="Minimum share price" value="$0.01" />
+            <Fact label="Minimum share price" value="$0.50" />
             <Fact label="Platform cut of dividends" value="None right now" />
           </div>
         ),
@@ -357,7 +361,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <div>
             <Term name="Share">One unit of ownership in a player. Owning shares entitles you to that player’s dividends.</Term>
             <Term name="Buy price / Sell price">What one share costs right now, and what it fetches right now.</Term>
-            <Term name="Listed price">The midpoint between the Buy and Sell prices, shown as the player’s price.</Term>
+            <Term name="Listed price">The price of the last trade, kept between the Sell and Buy prices (above Buy shows Buy, below Sell shows Sell). It is the price shown for the player.</Term>
             <Term name="Order book">The list of resting buy and sell orders for a player, ranked by price.</Term>
             <Term name="Limit order">An order at your chosen price that waits on the book until it fills or you cancel it.</Term>
             <Term name="Quick trade">An instant order that takes the best available price now.</Term>
@@ -424,7 +428,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Prices and orders',
         body: (
           <div>
-            <QA q="Why is the Buy price higher than the listed price?">The listed price is the midpoint. You buy at the higher Buy price and sell at the lower Sell price, so the listed price is neither.</QA>
+            <QA q="Why is the Buy price higher than the listed price?">The listed price is the last trade, kept between Sell and Buy. If the last trade was above today’s Buy price, the listed price shows the Buy price. You always buy at the Buy price and sell at the Sell price.</QA>
             <QA q="Why did my portfolio dip right after I bought?">You paid the Buy price plus the 0.25% fee, while your value counts what selling all your shares would pay. See Fees &amp; Costs.</QA>
             <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Team whenever you like.</QA>
             <QA q="How long does a limit order stay open?">Until it fills or you cancel it, unless you chose a time limit (1 hour, 1 day, or 1 week) when placing it. Timed orders cancel themselves within about 20 seconds of expiring and release your cash or shares.</QA>
@@ -493,7 +497,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             <p>Only the “taker” pays a fee: the trader whose order executes against the book, whether through a limit order
             that crosses it or a quick trade. The fee is charged once, on the total value of that order’s fills.</p>
             <Fact label="Transaction fee (taker only)" value="0.25%" />
-            <Fact label="Minimum share price" value="$0.01" />
+            <Fact label="Minimum share price" value="$0.50" />
           </div>
         ),
       },
@@ -627,14 +631,14 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   market: {
     emoji: '📈',
     title: 'Reading the Market',
-    intro: 'Every player has a Buy price and a Sell price, and the listed price is the midpoint between them.',
+    intro: 'Every player has a Buy price and a Sell price, and the listed price is the last trade, kept between the two.',
     sections: [
       {
         heading: 'Where prices come from',
         body: (
           <p>The <strong>Buy price</strong> is what one share costs right now (the cheapest seller, or the House if nobody is
           selling cheaper) and the <strong>Sell price</strong> is what one share fetches right now (the best bidder, or the
-          House). The listed price is the midpoint. The House always quotes around the market’s running price, which moves
+          House). The listed price is the last trade, kept between the Sell and Buy prices. The House always quotes around the market’s running price, which moves
           with trades in proportion to their size, so a single tiny trade at a silly price cannot move anything but sustained
           buying or selling can move it a long way. It stays inside a wide band around the player’s fair price (see How Prices Are Set).</p>
         ),
@@ -715,11 +719,12 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   },
 };
 
-/** The Guide. Opens on one topic (an ⓘ button's own topic, or Getting Started), but every topic is one tap away in the bar
+/** The Guide. Opens on one topic (an ⓘ button's own topic, or Getting Started), but every topic is one tap away in the 3-column grid
  * under the header, so any ⓘ doubles as a doorway into the whole manual. `onReplayTour` adds a "Replay the quick tour" link. */
 function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; onClose: () => void; onReplayTour?: () => void }) {
   const [current, setCurrent] = useState<HelpTopicId>(topicId);
   const topic = HELP_TOPICS[current];
+  const idx = HELP_TOPIC_ORDER.indexOf(current);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -735,7 +740,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
     >
       <motion.div
         className="w-full rounded-2xl border border-border flex flex-col"
-        style={{ background: 'var(--card)', maxWidth: 620, maxHeight: '88vh' }}
+        style={{ background: 'var(--card)', maxWidth: 720, maxHeight: '90vh' }}
         initial={{ opacity: 0, scale: 0.95, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -753,9 +758,9 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
           </button>
         </div>
 
-        {/* topic bar */}
+        {/* topic buttons: a fixed 3-column grid, never a sideways scroll */}
         <div className="px-6 pb-3 shrink-0 border-b border-border">
-          <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+          <div className="grid grid-cols-3 gap-1.5">
             {HELP_TOPIC_ORDER.map(id => {
               const t = HELP_TOPICS[id];
               const active = id === current;
@@ -763,9 +768,9 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
                 <button
                   key={id}
                   onClick={() => setCurrent(id)}
-                  className="px-2.5 py-1 rounded-full font-semibold whitespace-nowrap transition-colors shrink-0"
+                  className="px-2 py-1.5 rounded-lg font-semibold transition-colors text-left truncate"
                   style={{
-                    fontSize: 11.5,
+                    fontSize: 12,
                     background: active ? 'rgba(0,200,255,0.18)' : 'transparent',
                     color: active ? 'var(--primary)' : 'var(--muted-foreground)',
                     border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
@@ -797,13 +802,41 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
               Replay quick tour
             </button>
           )}
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
-            style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
-          >
-            Got it
-          </button>
+          {idx > 0 && (
+            <button
+              onClick={() => setCurrent(HELP_TOPIC_ORDER[idx - 1])}
+              className="px-3 py-2.5 rounded-xl font-semibold transition-colors hover:bg-white/[0.06]"
+              style={{ fontSize: 13, color: 'var(--muted-foreground)', border: '1px solid var(--border)' }}
+            >
+              Back
+            </button>
+          )}
+          {idx < HELP_TOPIC_ORDER.length - 1 ? (
+            <button
+              onClick={() => setCurrent(HELP_TOPIC_ORDER[idx + 1])}
+              className="flex-1 py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
+              style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
+            >
+              Next: {HELP_TOPICS[HELP_TOPIC_ORDER[idx + 1]].title.replace(/^(How |A |The |Understanding |Reading )/, '')}
+            </button>
+          ) : (
+            <button
+              onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
+              style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
+            >
+              Got it
+            </button>
+          )}
+          {idx < HELP_TOPIC_ORDER.length - 1 && (
+            <button
+              onClick={onClose}
+              className="px-3 py-2.5 rounded-xl font-semibold transition-colors hover:bg-white/[0.06]"
+              style={{ fontSize: 13, color: 'var(--muted-foreground)', border: '1px solid var(--border)' }}
+            >
+              Close
+            </button>
+          )}
         </div>
       </motion.div>
     </div>

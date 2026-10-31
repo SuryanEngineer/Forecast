@@ -364,7 +364,7 @@ const SLIDES: Slide[] = [
   {
     emoji: '🔎',
     title: 'Reading a price',
-    body: 'Each player has a Buy price (what one share costs) and a Sell price (what it fetches). The listed price is the midpoint. Try different sizes.',
+    body: 'Each player has a Buy price (what one share costs) and a Sell price (what it fetches). The listed price is the last trade, kept between the two. Try different sizes.',
     visual: () => <SpreadDemo />,
   },
   {

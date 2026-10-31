@@ -31,7 +31,7 @@ D = Decimal
 BAND_LOW_DEFAULT = D("0.5")
 BAND_HIGH_DEFAULT = D("2.0")
 MAX_PULL = D("0.06")            # real orders may move the LISTED price at most this far from the reference
-MIN_PRICE = D("0.01")
+MIN_PRICE = D("0.50")     # no stock may trade below this, so nobody can corner the penny stocks
 CENT = D("0.01")
 
 

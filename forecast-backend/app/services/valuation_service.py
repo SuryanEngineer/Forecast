@@ -1,7 +1,7 @@
 """
 Read-side prices and valuations, all built from app/engine/market_policy.py:
 
-  * listed price  -- midpoint of the best buy and best sell price for one share (what the screens headline);
+  * listed price  -- the last real trade, kept between the sell and buy prices below (what the screens headline);
   * buy / sell    -- the actual price of ONE share to buy / to sell right now;
   * holding value -- what quick-selling the WHOLE position would pay (real bids capped at the reference price, then the
                      House at its size-dependent price). Net worth, leaderboards, seasons and stats use this.
@@ -14,16 +14,45 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func
+import time
+
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.engine import market_policy as mp
 from app.models.order import Order, OrderKind, OrderSide, OrderStatus
-from app.models.player import Player
+from app.models.player import Player, PriceSnapshot
 from app.services import book_price_service, economic_params_service, fair_price_service, reference_service
 
 _OPEN = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
 ZERO = Decimal("0")
+
+_LAST_TRADE_CACHE: dict = {"at": 0.0, "data": {}}
+_LAST_TRADE_TTL = 5.0
+
+
+def last_trade_prices(db: Session) -> dict[uuid.UUID, Decimal]:
+    """{player: price of the most recent REAL trade} (real trades are the price points with volume > 0; the simulated history
+    has volume 0, so after a reset a stock has no 'last trade' until someone really trades it). Cached for a few seconds."""
+    now = time.monotonic()
+    if _LAST_TRADE_CACHE["data"] is not None and now - _LAST_TRADE_CACHE["at"] < _LAST_TRADE_TTL and _LAST_TRADE_CACHE["at"]:
+        return _LAST_TRADE_CACHE["data"]
+    latest = (
+        db.query(PriceSnapshot.player_id.label("pid"), func.max(PriceSnapshot.recorded_at).label("mx"))
+        .filter(PriceSnapshot.volume > 0)
+        .group_by(PriceSnapshot.player_id)
+        .subquery()
+    )
+    rows = (
+        db.query(PriceSnapshot.player_id, PriceSnapshot.price)
+        .join(latest, and_(PriceSnapshot.player_id == latest.c.pid, PriceSnapshot.recorded_at == latest.c.mx))
+        .filter(PriceSnapshot.volume > 0)
+        .all()
+    )
+    data = {pid: Decimal(px) for pid, px in rows}
+    _LAST_TRADE_CACHE["at"] = now
+    _LAST_TRADE_CACHE["data"] = data
+    return data
 
 
 class Valuer:
@@ -46,6 +75,7 @@ class Valuer:
             self.depth[pid] = max(Decimal(shares) * depth_frac, depth_min)
             self.ref[pid] = mp.clamp_to_band(raw_refs.get(pid, ipo), fair.get(pid), self.low, self.high)
         self.quotes = book_price_service.bulk_best_quotes(db, ids)
+        self.last_trade = last_trade_prices(db)
         # resting bid levels per player, best price first: [(price, remaining quantity)]
         rem = Order.quantity - Order.filled_quantity
         bids: dict[uuid.UUID, list[tuple[Decimal, int]]] = {}
@@ -64,11 +94,15 @@ class Valuer:
         return self.ref.get(pid, ZERO)
 
     def listed(self, pid: uuid.UUID) -> Decimal:
+        """The price shown for a stock: the LAST TRADE, kept between the Sell and Buy prices (above Buy -> Buy, below Sell ->
+        Sell). With no real trade yet it is the reference price."""
         ref = self.ref.get(pid)
         if ref is None:
             return ZERO
-        bid, ask = self.quotes.get(pid, (None, None))
-        return mp.listed_price(ref, bid, ask)
+        buy, sell = self.buy_sell(pid)
+        lo, hi = min(buy, sell), max(buy, sell)
+        last = self.last_trade.get(pid, ref)
+        return min(max(last, lo), hi).quantize(Decimal("0.01"))
 
     def buy_sell(self, pid: uuid.UUID, qty: int = 1) -> tuple[Decimal, Decimal]:
         """Per-share price to BUY and to SELL `qty` shares right now (real best quote vs the House, whichever is better)."""

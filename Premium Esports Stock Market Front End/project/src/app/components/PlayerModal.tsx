@@ -335,6 +335,10 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
     const priceVal = parseFloat(limitPrice);
     const shares = parseInt(orderShares, 10);
     if (!priceVal || !shares || priceVal <= 0 || shares <= 0) return;
+    if (priceVal < 0.5) {
+      setMessage({ kind: 'error', text: 'The minimum share price is $0.50.' });
+      return;
+    }
     setSubmitting(true);
     setMessage(null);
     try {
@@ -585,7 +589,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-mono" style={{ fontSize: 15 }}>$</span>
                     <input
                       type="number"
-                      min={0.01}
+                      min={0.5}
                       step={0.01}
                       placeholder={price.toFixed(2)}
                       value={limitPrice}
