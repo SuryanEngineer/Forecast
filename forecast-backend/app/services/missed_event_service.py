@@ -50,12 +50,35 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def fill_regions(db: Session, player_regions: dict[uuid.UUID, str | None]) -> dict[uuid.UUID, str | None]:
+    """Many players have no Player.region (Osirion does not always give one). For those, use the region of the
+    single-region tournaments they have actually played in -- the most common one wins."""
+    out = dict(player_regions)
+    missing = [pid for pid, r in out.items() if region_key(r) is None]
+    if not missing:
+        return out
+    counts: dict[uuid.UUID, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for pid, region in (
+        db.query(PlacementResult.player_id, Tournament.region)
+        .join(Tournament, Tournament.id == PlacementResult.tournament_id)
+        .filter(PlacementResult.player_id.in_(missing), Tournament.region.isnot(None))
+        .all()
+    ):
+        rk = region_key(region)
+        if rk is not None:
+            counts[pid][rk] += 1
+    for pid, c in counts.items():
+        out[pid] = max(c.items(), key=lambda kv: kv[1])[0]
+    return out
+
+
 def missed_events(
     db: Session, player_regions: dict[uuid.UUID, str | None], since: datetime, now: datetime | None = None
 ) -> list[tuple[uuid.UUID, datetime, float]]:
     """[(player_id, event_time, penalty)] for every missed event whose start is on/after `since` and that is already
     over. `event_time` is the tournament's end (start + 1 day when the end is unknown)."""
     now = now or datetime.now(timezone.utc)
+    player_regions = fill_regions(db, player_regions)
     types = list(MISSED_PENALTY.keys())
     rows = (
         db.query(Tournament.id, Tournament.tournament_type, Tournament.region, Tournament.start_time, Tournament.end_time, Tournament.status)

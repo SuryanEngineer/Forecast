@@ -145,9 +145,22 @@ def main() -> None:
             end_ts = first_real_t.get(p.id, now)
             if end_ts <= t_start + timedelta(days=2):
                 continue  # real trading already covers (almost) all of the window
+            # Before a player has results the market still has a reputation to go on, so start from a prior halfway
+            # (in log terms) between the base price and where the player ends up, and let results take over:
+            # weight on results = n / (n + 2) after n finished events.
+            final_ev = ev_asof(p.id, now)
+            final_fair = float(bots._compute_fair_value(base_price, Decimal(str(final_ev)) if final_ev is not None else None, median_ev))
+            prior_log = 0.5 * math.log(final_fair) + 0.5 * math.log(float(base_price))
             fair_at = []  # [(checkpoint_time, log fair)]
             for c in checkpoints:
-                fair_at.append((c, math.log(float(bots._compute_fair_value(base_price, Decimal(str(e)) if (e := ev_asof(p.id, c)) is not None else None, median_ev)))))
+                e = ev_asof(p.id, c)
+                n = min(bots.HISTORY_MAX_RESULTS_PER_PLAYER, sum(1 for (d, _s, _v) in results.get(p.id, ()) if d <= c))
+                if e is None or n == 0:
+                    fair_at.append((c, prior_log))
+                    continue
+                res_log = math.log(float(bots._compute_fair_value(base_price, Decimal(str(e)), median_ev)))
+                w = n / (n + 2.0)
+                fair_at.append((c, w * res_log + (1.0 - w) * prior_log))
             my_events = results.get(p.id, [])
 
             def target(t: datetime) -> tuple[float, float]:
@@ -210,6 +223,12 @@ def main() -> None:
 
         print(f"Built {len(new_rows):,} synthetic points for {len(per_player_pts)} players "
               f"({sum(len(v) for v in missed.values())} missed-event penalties applied; {big_corr} paths needed a big bridge to their first real trade).")
+        if not any(missed.values()):
+            from collections import Counter
+            filled = missed_event_service.fill_regions(db, {p.id: p.region for p in players})
+            print("  (no missed events found) player regions:", dict(Counter(missed_event_service.region_key(r) for r in filled.values()).most_common(8)))
+            print("  tournaments of the qualifying types, by (type, region):",
+                  dict(Counter((t.value, missed_event_service.region_key(r)) for t, r in db.query(Tournament.tournament_type, Tournament.region).filter(Tournament.tournament_type.in_(list(missed_event_service.MISSED_PENALTY)), Tournament.start_time >= t_start).all()).most_common(10)))
         for tag, prices in sorted(per_player_pts, key=lambda r: -r[1][-1][1])[:6]:
             lo, hi = min(px for _, px in prices), max(px for _, px in prices)
             print(f"  {tag:<22} start ${prices[0][1]:>8.2f}  end ${prices[-1][1]:>8.2f}  range ${lo:.2f}-${hi:.2f}")
