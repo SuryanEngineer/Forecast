@@ -28,7 +28,7 @@ _OPEN = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
 ZERO = Decimal("0")
 
 _LAST_TRADE_CACHE: dict = {"at": 0.0, "data": {}}
-_LAST_TRADE_TTL = 5.0
+_LAST_TRADE_TTL = 30.0
 
 
 def last_trade_prices(db: Session) -> dict[uuid.UUID, Decimal]:

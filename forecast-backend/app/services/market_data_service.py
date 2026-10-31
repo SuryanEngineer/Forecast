@@ -14,6 +14,8 @@ production-hardened" phase.
 """
 from __future__ import annotations
 
+import time
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -153,7 +155,27 @@ def _bulk_dividends_total(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid
     return {pid: Decimal(str(total or 0)) for pid, total in rows}
 
 
+# The market list is the heaviest read on the site (every player, quotes, order book, volumes) and every open tab asks for it
+# every 15 seconds, so it is computed once and shared: one computation per MARKET_LIST_TTL no matter how many people are
+# looking. This is what keeps database egress (the free plan's monthly cap) flat as testers join.
+MARKET_LIST_TTL = 12.0
+_LIST_CACHE: dict = {}
+
+
 def list_market_snapshots(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
+    key = (active_only, (search or "").strip().lower())
+    now = time.monotonic()
+    hit = _LIST_CACHE.get(key)
+    if hit is not None and now - hit[0] < MARKET_LIST_TTL:
+        return list(hit[1])
+    if len(_LIST_CACHE) > 200:  # searches are free text: never let the cache grow without bound
+        _LIST_CACHE.clear()
+    data = _list_market_snapshots_uncached(db, active_only, search)
+    _LIST_CACHE[key] = (now, data)
+    return list(data)
+
+
+def _list_market_snapshots_uncached(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
     """Batch-computed equivalent of calling get_market_snapshot() once per
     player. That naive per-player loop meant THREE separate DB
     round-trips per player (last price, price-24h-ago, 24h volume) -- for
