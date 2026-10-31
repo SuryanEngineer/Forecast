@@ -80,7 +80,7 @@ def main() -> None:
     t_start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
     db = SessionLocal()
     try:
-        players = db.query(Player.id, Player.gamertag, Player.region, Player.ipo_price).filter(Player.is_active.is_(True)).all()
+        players = db.query(Player.id, Player.gamertag, Player.region, Player.ipo_price, Player.total_shares_outstanding).filter(Player.is_active.is_(True)).all()
         if args.player:
             players = [p for p in players if p.gamertag.lower() == args.player.lower()]
         if not players:
@@ -237,8 +237,34 @@ def main() -> None:
         for tag, prices in sorted(per_player_pts, key=lambda r: -r[1][-1][1])[:6]:
             lo, hi = min(px for _, px in prices), max(px for _, px in prices)
             print(f"  {tag:<22} start ${prices[0][1]:>8.2f}  end ${prices[-1][1]:>8.2f}  range ${lo:.2f}-${hi:.2f}")
+        if args.reset_prices:
+            # Show what the reprice does to real people's portfolios BEFORE anyone commits to it.
+            from app.models.bot import BotProfile
+            from app.models.player import Position
+            from app.models.user import User
+            from app.services import portfolio_service
+            from app.services.house_account import HOUSE_ACCOUNT_EMAIL
+            skip = {uid for (uid,) in db.query(BotProfile.user_id).all()} | {uid for (uid,) in db.query(User.id).filter(User.email == HOUSE_ACCOUNT_EMAIL).all()}
+            old_px = {pid: float(v) for pid, v in portfolio_service.last_prices(db).items()}
+            new_px: dict = {}
+            name_to_id = {p.gamertag: p.id for p in players}
+            for tag, prices in per_player_pts:
+                new_px[name_to_id[tag]] = prices[-1][1]
+            per_user: dict = defaultdict(lambda: [0.0, 0.0])
+            for uid, pid, qty in db.query(Position.user_id, Position.player_id, Position.quantity).filter(Position.quantity > 0).all():
+                if uid in skip or pid not in new_px:
+                    continue
+                per_user[uid][0] += qty * old_px.get(pid, 0.0)
+                per_user[uid][1] += qty * new_px[pid]
+            names = {uid: n for uid, n in db.query(User.id, User.display_name).filter(User.id.in_(list(per_user))).all()} if per_user else {}
+            print(f"\nImpact on {len(per_user)} real users who hold shares (shares value before -> after the reprice; cash is unchanged):")
+            for uid, (before, after) in sorted(per_user.items(), key=lambda kv: -kv[1][0]):
+                print(f"  {str(names.get(uid, uid))[:24]:<24} ${before:>12,.0f} -> ${after:>12,.0f}   ({(after / before - 1) * 100 if before else 0:+.0f}%)")
         if args.dry_run:
             print("Dry run: nothing written.")
+            return
+        if args.reset_prices and not args.yes:
+            print("Refusing to reset prices without --yes. Back up the database first, read the impact list above, then re-run with --yes.")
             return
 
         if args.reset_prices:
