@@ -56,7 +56,7 @@ from app.models.player import Player, Position, PriceSnapshot
 from app.models.wallet import Wallet
 from app.models.tournament import PlacementResult, Tournament, TournamentEntrant, TournamentStatus
 from app.models.user import User, UserRole
-from app.services import book_price_service, economic_params_service, order_service, qualifier_model_service, wallet_service
+from app.services import book_price_service, economic_params_service, missed_event_service, order_service, qualifier_model_service, wallet_service
 from app.services.bot_names import generate_username
 from app.services.exceptions import ServiceError
 
@@ -104,8 +104,10 @@ POSITION_CAP = {"whale": 0.30, "index_investor": 0.05, "scalper": 0.08, "dividen
 MIN_CASH_FRACTION = 0.03
 REST_PER_TICK = 2            # strategic resting-order refreshes per bot per tick
 ANCHOR_SCALE = 0.5            # how much of a bot's style anchor to the recent trade average is kept (lower = values follow the model)
-TAKE_BAND = 0.10              # a take may reach this far through the current price (bigger moves than the old +-2%)
-REST_UP, REST_DOWN = 1.20, 0.70  # resting bids / asks are posted within this band of the current price
+BAND_MIN, BAND_MAX = 0.02, 0.12  # how far through the current price one bot order may reach. Near fair value it is only
+                                 # +-2% (calm market); the further the price is from the bot's value, the wider it gets
+                                 # (up to 12%), so a badly mispriced stock still converges but a fair one just jitters.
+REST_FLOOR = 0.85                # resting quotes are never posted further than this below the price
 STALE_AFTER_SECONDS = 4 * 3600   # a player with no trade for this long is "stale" and gets spotlighted
 SPOTLIGHT_PER_BOT = 3            # stale players added to each bot's watchlist (spreads trading across the whole market)
 RECENT_HALF_LIFE = 1800.0        # seconds; how long a player counts as "already busy" when picking what to trade
@@ -116,7 +118,7 @@ MM_COVERAGE = 1            # every active player is quoted by at least this many
 MM_PLAYERS_PER_TICK = 6
 MM_PLAYERS_PER_MAKER = 25  # how many players one maker can reasonably cover (drives the minimum maker count)
 MM_MIN_MAKERS = 8
-MM_MAX_SKEW = 0.03         # mid leans toward fair value by at most 3%
+MM_MAX_SKEW = 0.01         # mid leans toward fair value by at most 3%
 
 ORDER_MAX_AGE = timedelta(hours=6)
 
@@ -126,6 +128,12 @@ HISTORY_MAX_RESULTS_PER_PLAYER = 20
 PERFORMANCE_ELASTICITY = 0.5
 PERFORMANCE_MULT_MIN = 0.06
 PERFORMANCE_MULT_MAX = 6.0
+
+
+def _band(px: float, v: float, floor: float = BAND_MIN) -> float:
+    """Reach of one order through the current price: floor when the price is near this bot's value, widening with the gap."""
+    gap = abs(math.log(v / px)) if px > 0 and v > 0 else 0.0
+    return _clamp(floor + 0.5 * max(0.0, gap - 0.08), floor, BAND_MAX)
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -396,7 +404,7 @@ def _load_players(db: Session):
     now = time.monotonic()
     if _PLAYER_CACHE["rows"] and _PLAYER_CACHE["key"] == key and now - _PLAYER_CACHE["t"] < PLAYER_CACHE_SECONDS:
         return _PLAYER_CACHE["rows"]
-    rows = db.query(Player.id, Player.ipo_price, Player.total_shares_outstanding, Player.is_verified).filter(Player.is_active.is_(True)).all()
+    rows = db.query(Player.id, Player.ipo_price, Player.total_shares_outstanding, Player.is_verified, Player.region).filter(Player.is_active.is_(True)).all()
     _PLAYER_CACHE.update(t=now, key=key, rows=rows)
     return rows
 
@@ -507,6 +515,17 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         if days > 0:
             events[pid] = (1.0 if days <= 1 else 0.8 if days <= 3 else 0.5 if days <= 7 else 0.25) * max(0.3, qv.p_qualify)
 
+    # Missing a qualifying-style event in your own region is a mildly bad sign (see missed_event_service): a small, fading markdown.
+    def _load_missed() -> dict:
+        found: dict[uuid.UUID, list] = defaultdict(list)
+        since = datetime.now(timezone.utc) - timedelta(days=int(3 * missed_event_service.MISSED_DECAY_DAYS))
+        for pid, when, pen in missed_event_service.missed_events(db, {p.id: p.region for p in players}, since):
+            found[pid].append((when, pen))
+        return found
+
+    missed = _slow("missed", player_ids, _load_missed)
+    now_utc = datetime.now(timezone.utc)
+
     qual_out: dict[uuid.UUID, float] = {}
     signals: dict[uuid.UUID, dict[str, float]] = {}
     model_value: dict[uuid.UUID, Decimal] = {}
@@ -546,6 +565,8 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             out += min(0.15, yy * ev_sig)
         elif ev_sig < 0:
             out -= min(0.10, yy * 0.7)
+        if p.id in missed:
+            out -= missed_event_service.decayed_penalty(missed[p.id], now_utc)
         out = _clamp(out, -0.20, 0.25)
         model_value[p.id] = fair_value[p.id] * Decimal(str(round(math.exp(out), 6)))
 
@@ -699,9 +720,9 @@ def _personality(user_id: uuid.UUID, strategy: str) -> dict:
     r = random.Random(user_id.int & 0xFFFFFFFFFFFF)
     s = STYLE.get(strategy, STYLE["random"])
     return {
-        "sigma": s["sigma"] * (0.8 + 0.4 * r.random()),
+        "sigma": 0.5 * s["sigma"] * (0.8 + 0.4 * r.random()),  # beliefs differ, but only mildly: calm market
         "anchor": _clamp(s["anchor"] + r.uniform(-0.1, 0.1), 0.05, 0.8),
-        "margin": s["margin"] * (0.8 + 0.45 * r.random()),
+        "margin": 1.5 * s["margin"] * (0.8 + 0.45 * r.random()),  # demand a real edge before trading
         "tilt_mom": s["tilt_mom"],
         "tilt_event": s["tilt_event"],
         "target_cash": _clamp(s["cash"] + r.uniform(-0.08, 0.08), 0.02, 0.6),
@@ -961,11 +982,11 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
         if max(buy_edge, sell_edge) <= 0 or rng.random() > conviction:
             continue
         dampener = rng.uniform(0.3, 1.0)
-        instant = rng.random() < 0.25 * conviction
+        instant = rng.random() < 0.08 * conviction
         try:
             if buy_edge > 0 and cash / portfolio > MIN_CASH_FRACTION:
-                spend = min(cash * cash_fraction_cap * size_mult * dampener * (0.6 + conviction), position_room(pid, px))
-                limit = min(v * (1.0 - m * 0.5), px * (1.0 + TAKE_BAND))
+                spend = min(0.5 * cash * cash_fraction_cap * size_mult * dampener * (0.6 + conviction), position_room(pid, px))
+                limit = min(v * (1.0 - m * 0.5), px * (1.0 + _band(px, v)))
                 qty = int(spend // max(limit, 0.01))
                 if _submit(db, bot_user.id, pid, OrderSide.BUY, qty, None if instant else limit):
                     cash -= qty * limit
@@ -979,7 +1000,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
             elif sell_edge > 0 and pos is not None and pos.available_quantity > 0:
                 frac = min(1.0, share_fraction_cap * size_mult * dampener * (0.6 + conviction))
                 qty = min(pos.available_quantity, max(1, int(pos.available_quantity * frac)))
-                limit = max(v * (1.0 + m * 0.5), px * (1.0 - TAKE_BAND))
+                limit = max(v * (1.0 + m * 0.5), px * (1.0 - _band(px, v)))
                 if _submit(db, bot_user.id, pid, OrderSide.SELL, qty, None if instant else limit):
                     acted = True
                     takes += 1
@@ -1003,11 +1024,12 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
         # Quotes sit at the bot's own value band, even when that is on the far side of today's price: a bid above the
         # last trade (it thinks the stock is cheap) or an ask below it (it thinks it is dear) is exactly what moves the
         # listed price (see book_price_service).
-        bid = min(v * (1.0 - m), px * REST_UP)
-        ask = max(v * (1.0 + m), px * REST_DOWN)
-        if bid < REST_DOWN * px:
+        reach = _band(px, v, floor=0.03)
+        bid = min(v * (1.0 - m), px * (1.0 + reach))
+        ask = max(v * (1.0 + m), px * (1.0 - reach))
+        if bid < REST_FLOOR * px:
             bid = 0.0
-        if ask > 1.45 * px:
+        if ask > 1.25 * px:
             ask = 0.0
         pos = holdings.get(pid)
         can_ask = ask > 0 and pos is not None and pos.available_quantity > 0

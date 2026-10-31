@@ -12,7 +12,7 @@ people will sell for less -> price falls".
 
 Safeguards so a lone order can't drag the price around:
   * only orders worth at least MIN_NOTIONAL dollars of remaining size count (a 1-share bid can't move anything);
-  * the book can move the price at most MAX_PULL (25%) away from the last trade; bigger moves need real trades.
+  * the book can move the price at most MAX_PULL (6%) away from the last trade; bigger moves need real trades.
 Pure read-side: nothing here writes.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.models.order import Order, OrderKind, OrderSide, OrderStatus
 
 MIN_NOTIONAL = Decimal("100")
-MAX_PULL = Decimal("0.25")
+MAX_PULL = Decimal("0.06")
 
 _OPEN = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
 

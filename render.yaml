@@ -108,7 +108,7 @@ services:
       - key: BOT_TRADING_ENABLED
         value: "true"
       - key: BOT_TICK_INTERVAL_SECONDS
-        value: "5"
+        value: "20"
       - key: BOT_ACTIONS_PER_TICK
         value: "2"
       - key: BOT_MM_PLAYERS_PER_TICK

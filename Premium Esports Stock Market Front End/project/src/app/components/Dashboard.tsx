@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { ArrowUpRight, ArrowDownRight, ChevronRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
+import { useDayChange, useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { tournamentDisplayName } from '../lib/tournamentName';
@@ -37,13 +37,12 @@ function playerName(m: MarketSnapshot): string {
 
 export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props) {
   const { user, wallet } = useAuth();
-  // "Hot Right Now" is a ranked view of the WHOLE market (top absolute
-  // movers), so it comes from a small dedicated page of the ranked
-  // listing -- not from the same lookup used for the user's own
-  // holdings below, which needs specific players by id instead (see
-  // useMarketsByIds' docstring).
-  const { data: hotPage, loading: marketsLoading } = useMarkets(1, 4, 'hot');
-  const topMovers = hotPage.items;
+  // "Top Players" is a ranked view of the WHOLE market (highest-priced players), so it comes from a small dedicated
+  // page of the ranked listing -- not from the same lookup used for the user's own holdings below, which needs
+  // specific players by id instead (see useMarketsByIds' docstring).
+  const { data: topPage, loading: marketsLoading } = useMarkets(1, 4, 'price_desc');
+  const topMovers = topPage.items;
+  const { data: serverDay } = useDayChange();
   const { data: positions } = useMyPositions();
   const { data: tournaments } = useTournamentsList();
   const liveTournament = usePickLiveTournament(tournaments);
@@ -68,10 +67,11 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
     .sort((a, b) => b.value - a.value);
 
   const holdingsValue = holdings.reduce((s, h) => s + h.value, 0);
-  const dayChange = holdings.reduce((s, h) => s + h.dayChange, 0);
   const totalPortfolio = cashBalance + holdingsValue;
-  const prevPortfolio = totalPortfolio - dayChange;
-  const dayChangePct = prevPortfolio > 0 ? (dayChange / prevPortfolio) * 100 : 0;
+  // The server rebuilds what the portfolio was worth 24h ago from the trade ledger, so buying or selling a stock today
+  // (or adding cash) is never mistaken for a gain or loss. Before it loads, show 0 rather than a misleading estimate.
+  const dayChange = serverDay ? serverDay.change : 0;
+  const dayChangePct = serverDay ? serverDay.change_pct : 0;
 
   const upcoming = tournaments
     .filter(t => t.status === 'scheduled')
@@ -103,7 +103,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                 style={{ fontSize: 14, background: dayChange >= 0 ? 'rgba(16,217,160,0.15)' : 'rgba(255,61,92,0.15)', color: dayChange >= 0 ? 'var(--gain)' : 'var(--loss)' }}
               >
                 {dayChange >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                {dayChange >= 0 ? '+' : ''}${Math.abs(dayChange).toLocaleString('en-US', { maximumFractionDigits: 2 })} today
+                {dayChange >= 0 ? '+' : ''}${Math.abs(dayChange).toLocaleString('en-US', { maximumFractionDigits: 2 })} past 24h
               </span>
               <span
                 className="px-3 py-1.5 rounded-full font-mono font-bold"
@@ -124,10 +124,10 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
         </div>
       </div>
 
-      {/* Hot right now */}
+      {/* Top players by price */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <p className="text-foreground font-bold" style={{ fontSize: 18 }}>🔥 Hot Right Now</p>
+          <p className="text-foreground font-bold" style={{ fontSize: 18 }}>⭐ Top Players</p>
           <button onClick={() => navigate('markets')} className="flex items-center gap-1 text-primary" style={{ fontSize: 13 }}>
             See all players <ChevronRight className="w-4 h-4" />
           </button>
@@ -135,7 +135,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
         {marketsLoading && topMovers.length === 0 ? (
           <p className="text-muted-foreground" style={{ fontSize: 13 }}>Loading markets…</p>
         ) : topMovers.length === 0 ? (
-          <p className="text-muted-foreground" style={{ fontSize: 13 }}>No players are trading yet.</p>
+          <p className="text-muted-foreground" style={{ fontSize: 13 }}>No players are listed yet.</p>
         ) : (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {topMovers.map(m => {

@@ -24,6 +24,16 @@ def get_my_wallet(user: User = Depends(get_current_user), db: Session = Depends(
     )
 
 
+@router.get("/day-change")
+def day_change(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    """The user's real change in net worth over the last 24 hours (trades, deposits and treasury moves netted out; dividends
+    counted). See portfolio_service.day_change."""
+    from app.services import portfolio_service
+
+    r = portfolio_service.day_change(db, user.id)
+    return {k: float(v) for k, v in r.items()}
+
+
 @router.post("/deposit", response_model=WalletResponse)
 def deposit(payload: DepositRequest, admin: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> WalletResponse:
     """Admin-only cash grant (see DepositRequest docstring for why this

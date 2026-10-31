@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../lib/api';
 import { useSeasonList } from '../lib/hooks';
 import { seasonMarkersBetween } from '../lib/seasons';
-import { toNumber, type PriceHistoryPoint } from '../lib/types';
+import { toNumber, type PlayerTournamentEntryResponse, type PriceHistoryPoint } from '../lib/types';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -52,8 +52,11 @@ function ChartTooltip({ active, payload }: any) {
 
 /** Price history as a step function: a stock's price only changes when a trade executes, so the line stays flat
  * between trades and jumps straight to the next trade price (no smoothing). It always runs on to "now". */
-export function PriceChart({ playerId, color, latestTradeId }: { playerId: string; color: string; latestTradeId?: string }) {
+export function PriceChart({
+  playerId, color, latestTradeId, tournaments,
+}: { playerId: string; color: string; latestTradeId?: string; tournaments?: PlayerTournamentEntryResponse[] }) {
   const [range, setRange] = useState<RangeKey>('1w');
+  const [hover, setHover] = useState<{ x: number; y: number; entry: PlayerTournamentEntryResponse } | null>(null);
   const [raw, setRaw] = useState<PriceHistoryPoint[] | null>(null);
   const loadedKey = useRef('');
   const { data: seasons } = useSeasonList();
@@ -100,6 +103,21 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
   // Dashed lines where a Fortnite season begins -- only inside the span this chart actually has data for.
   const markers = useMemo(() => (view ? seasonMarkersBetween(seasons, view.start, view.end) : []), [view, seasons]);
 
+  // One dot per tournament this player finished, sitting on the price line at the moment the event ended.
+  const eventDots = useMemo(() => {
+    if (!view || !tournaments?.length) return [];
+    const dots: { key: string; t: number; price: number; entry: PlayerTournamentEntryResponse }[] = [];
+    for (const entry of tournaments) {
+      const when = entry.tournament.end_time ?? entry.tournament.start_time;
+      const t = when ? new Date(when).getTime() : NaN;
+      if (!Number.isFinite(t) || t < view.start || t > view.end) continue;
+      let price = view.pts[0].price;
+      for (const p of view.pts) { if (p.t <= t) price = p.price; else break; } // the price in force then (step line)
+      dots.push({ key: entry.tournament.id, t, price, entry });
+    }
+    return dots;
+  }, [view, tournaments]);
+
   const up = (view?.changePct ?? 0) >= 0;
   const stroke = view ? (up ? '#10d9a0' : '#ff3d5c') : color;
   const gid = `pc-${playerId}`;
@@ -141,6 +159,25 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
           No trades yet. The chart starts with the first trade.
         </div>
       ) : (
+        <div style={{ position: 'relative' }}>
+        {hover && (
+          <div
+            className="rounded-xl px-3 py-2 border border-border pointer-events-none"
+            style={{
+              position: 'absolute', zIndex: 5, background: 'var(--popover)', whiteSpace: 'nowrap',
+              left: Math.min(Math.max(hover.x, 90), 9999), top: Math.max(hover.y - 62, 0), transform: 'translateX(-50%)',
+            }}
+          >
+            <p className="font-semibold text-foreground" style={{ fontSize: 12 }}>{hover.entry.tournament.name}</p>
+            <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+              Finished <span className="font-mono font-bold" style={{ color: '#ffb020' }}>#{hover.entry.placement}</span>
+              {hover.entry.total_teams > 1 ? ` of ${hover.entry.total_teams}` : ''}
+              {hover.entry.tournament.end_time || hover.entry.tournament.start_time
+                ? ` · ${new Date((hover.entry.tournament.end_time ?? hover.entry.tournament.start_time) as string).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                : ''}
+            </p>
+          </div>
+        )}
         <ResponsiveContainer width="100%" height={170}>
           <AreaChart data={view.pts} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
             <defs>
@@ -182,8 +219,32 @@ export function PriceChart({ playerId, color, latestTradeId }: { playerId: strin
             ))}
             <Tooltip content={<ChartTooltip />} />
             <Area type="stepAfter" dataKey="price" stroke={stroke} strokeWidth={2} fill={`url(#${gid})`} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+            {eventDots.map(d => (
+              <ReferenceDot
+                key={d.key}
+                x={d.t}
+                y={d.price}
+                ifOverflow="visible"
+                shape={(p: any) => (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={() => setHover({ x: p.cx, y: p.cy, entry: d.entry })}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    <circle cx={p.cx} cy={p.cy} r={9} fill="transparent" />
+                    <circle cx={p.cx} cy={p.cy} r={4.5} fill="#ffb020" stroke="var(--popover)" strokeWidth={1.5} />
+                  </g>
+                )}
+              />
+            ))}
           </AreaChart>
         </ResponsiveContainer>
+        </div>
+      )}
+      {eventDots.length > 0 && (
+        <p className="text-muted-foreground mt-1" style={{ fontSize: 10.5 }}>
+          <span style={{ color: '#ffb020' }}>●</span> = a tournament this player finished. Hover a dot to see where they placed.
+        </p>
       )}
       {markers.length > 0 && (
         <p className="text-muted-foreground mt-1" style={{ fontSize: 10.5 }}>

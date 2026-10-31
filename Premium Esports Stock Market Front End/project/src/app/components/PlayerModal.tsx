@@ -347,7 +347,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
     >
       <motion.div
         className="w-full overflow-y-auto rounded-2xl border border-border"
-        style={{ background: 'var(--card)', maxWidth: 780, maxHeight: '90vh', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
+        style={{ background: 'var(--card)', maxWidth: 920, maxHeight: '90vh', overflowX: 'hidden', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
         initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -389,9 +389,9 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-0 md:grid-cols-[1fr_280px]">
-          <div className="px-6 pb-6 border-r border-border space-y-5">
-            <PriceChart playerId={playerId} color={color} latestTradeId={recentTrades[0]?.id} />
+        <div className="grid grid-cols-1 gap-0 md:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="px-6 pb-6 border-r border-border space-y-5 min-w-0">
+            <PriceChart playerId={playerId} color={color} latestTradeId={recentTrades[0]?.id} tournaments={tournamentHistory?.entries} />
 
             <div className="grid grid-cols-4 gap-2">
               {[
@@ -424,10 +424,18 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
             )}
           </div>
 
-          <div className="px-5 pt-5 pb-6 space-y-4">
+          <div className="px-5 pt-5 pb-6 space-y-4 min-w-0">
             <div className="flex items-center gap-1.5">
               <p className="text-foreground font-bold" style={{ fontSize: 17 }}>Trade</p>
               <HelpButton topic="orders" />
+            </div>
+
+            <div className="rounded-xl p-3" style={{ background: 'rgba(0,200,255,0.07)', border: '1px solid rgba(0,200,255,0.2)' }}>
+              <p className="text-foreground font-semibold" style={{ fontSize: 12 }}>How dividends work</p>
+              <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+                A tournament pays its dividends to whoever owns shares at the moment it <strong>starts</strong>. Buying after it
+                starts will not earn you that tournament's payout, and selling after it starts will not lose it.
+              </p>
             </div>
 
             <OrderBook

@@ -148,9 +148,9 @@ def check_pure_logic() -> None:
     D = Decimal
     ep = book_price_service.effective_price
     check("price stays at the last trade when it sits inside the spread", ep(D("10"), D("9.5"), D("10.5")) == D("10.00"))
-    check("a bid above the last trade lifts the listed price to the bid", ep(D("10"), D("11"), D("12")) == D("11.00"))
-    check("an ask below the last trade drops the listed price to the ask", ep(D("10"), D("8"), D("9")) == D("9.00"))
-    check("the book can move the price at most 25% from the last trade", ep(D("10"), D("30"), None) == D("12.50") and ep(D("10"), None, D("1")) == D("7.50"))
+    check("a bid above the last trade lifts the listed price to the bid", ep(D("10"), D("10.4"), D("12")) == D("10.40"))
+    check("an ask below the last trade drops the listed price to the ask", ep(D("10"), D("8"), D("9.6")) == D("9.60"))
+    check("the book can move the price at most 6% from the last trade", ep(D("10"), D("30"), None) == D("10.60") and ep(D("10"), None, D("1")) == D("9.40"))
     check("no orders -> the last trade", ep(D("10"), None, None) == D("10.00"))
     # Skill-based fair value is anchored to ONE base price, not each player's own IPO price
     fv = bot_trading_service._compute_fair_value
@@ -578,15 +578,15 @@ def check_book_price_and_retention(ctx: dict) -> None:
         o = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("12.00"), 12)  # $144 of resting demand above the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a bid above the last price lifts the listed price (capped at +25%)", Decimal(str(r.json()["last_price"])) == Decimal("12.00"), r.text)
+        check("a bid above the last price lifts the listed price (capped at +6%)", Decimal(str(r.json()["last_price"])) == Decimal("10.60"), r.text)
         listing = client.get("/api/v1/markets?search=BookPro").json()["items"]
-        check("the market list shows the same book-aware price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("12.00"), str(listing))
+        check("the market list shows the same book-aware price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("10.60"), str(listing))
         book = client.get(f"/api/v1/markets/{pid}/book").json()
         check("order-book endpoint lists the resting bid", book["bids"] and Decimal(str(book["bids"][0]["price"])) == Decimal("12") and book["bids"][0]["quantity"] == 12, str(book))
         tiny = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("13.00"), 1)  # $13: too small to move the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("12.00"), r.text)
+        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("10.60"), r.text)
         order_service.cancel_order(db, ctx["carl"], o.id)
         order_service.cancel_order(db, ctx["carl"], tiny.id)
         db.commit()

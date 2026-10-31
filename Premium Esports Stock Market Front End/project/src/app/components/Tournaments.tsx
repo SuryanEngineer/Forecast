@@ -449,7 +449,7 @@ export function Tournaments({ openTournament }: Props) {
           <HelpButton topic="tournaments" size={17} />
         </div>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>
-          Own the right players when results come in to earn dividends.
+          Dividends go to whoever owns a player when the tournament starts. Buying or selling after it starts does not change your payout.
         </p>
       </div>
 

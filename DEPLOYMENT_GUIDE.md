@@ -492,15 +492,26 @@ to `FORTNITE_CALENDAR` and re-run `sync-calendar`, or use `manage_seasons.py cre
 the sidebar and marks each season start on the price charts.
 
 
+## 2026 price history (one-time)
+
+Charts only have data from the day the bots started trading. To fill in 2026, run once (from `forecast-backend`):
+
+```powershell
+python3 scripts/simulate_price_history.py --dry-run   # preview, writes nothing
+python3 scripts/simulate_price_history.py             # write it (add --step-days 2 for half the rows)
+```
+
+It makes no trades. Each player's past price follows the same skill-based fair value the bots use, recomputed as of each date from the results that existed then, with small daily noise, a small run-up before and dip after each tournament they play, and a small fading drop when they miss a qualifying event in their own region. The path is bent to land on their first real trade price. Rows are marked `volume = 0`, so re-running replaces the old simulated rows and never touches real trades. Player charts show a dot for each tournament played; hover for the placement.
+
 ## Bot pace, prices and database limits
 
-**How prices work now.** The listed price is the last trade, pulled up to the best resting bid if buyers are bidding above it, or down to the best resting ask if sellers are asking below it (never more than 25% away from the last trade, and only orders worth at least $100 count, so a 1-share order cannot move a price). Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.
+**How prices work now.** The listed price is the last trade, pulled up to the best resting bid if buyers are bidding above it, or down to the best resting ask if sellers are asking below it (never more than 6% away from the last trade, and only orders worth at least $100 count, so a 1-share order cannot move a price). Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.
 
 **Pace knobs** (Render → backend → Environment; all optional, defaults shown):
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BOT_TICK_INTERVAL_SECONDS` | 5 | seconds between bot ticks |
+| `BOT_TICK_INTERVAL_SECONDS` | 20 | seconds between bot ticks |
 | `BOT_ACTIONS_PER_TICK` | 2 | max orders the whole bot population places per tick |
 | `BOT_MM_PLAYERS_PER_TICK` | 2 | max market-maker re-quotes per tick |
 | `BOT_STATE_REFRESH_SECONDS` | 900 | how often bot wallets/holdings are re-read (cached in between) |

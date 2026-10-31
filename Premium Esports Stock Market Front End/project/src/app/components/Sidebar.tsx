@@ -104,7 +104,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
       <div className="px-4 pb-2">
         <button
           onClick={() => navigate('leaderboards')}
-          title="Fortnite season -- see the ranked ladder"
+          title="Current Fortnite season: view the ranked ladder"
           className="w-full text-left rounded-xl border p-3 transition-colors hover:bg-white/5"
           style={{ background: 'rgba(155,111,255,0.07)', borderColor: 'rgba(155,111,255,0.25)' }}
         >

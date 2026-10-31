@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.models.bot import BotProfile
-from app.models.player import Player, Position, PriceSnapshot
+from app.models.player import Player, Position, PriceSnapshot, ShareTransfer
+from app.services import book_price_service
 from app.models.treasury import TreasuryHolding, TreasuryHoldingStatus
 from app.models.user import User
 from app.models.wallet import Wallet
@@ -40,7 +42,10 @@ def last_prices(db: Session) -> dict[uuid.UUID, Decimal]:
         prices[pid] = price
     for pid, ipo in db.query(Player.id, Player.ipo_price).all():
         prices.setdefault(pid, ipo)
-    return prices
+    # The price users see is the last trade pulled into the resting order book (see book_price_service); value holdings
+    # at that same price so net worth matches the market screens.
+    quotes = book_price_service.bulk_best_quotes(db)
+    return {pid: book_price_service.effective_price(px, *quotes.get(pid, (None, None))) for pid, px in prices.items()}
 
 
 def eligible_user_ids(db: Session, include_bots: bool = True) -> list[uuid.UUID]:
@@ -88,3 +93,60 @@ def compute_net_worths_cached(db: Session, include_bots: bool = True) -> dict[uu
 
 def clear_cache() -> None:
     _CACHE.clear()
+
+
+def day_change(db: Session, user_id: uuid.UUID, hours: int = 24) -> dict[str, Decimal]:
+    """A user's real change in net worth over the last `hours`, as a number the dashboard can trust.
+
+    change = net worth now - net worth `hours` ago - money the user added or took out (deposits / withdrawals).
+
+    Net worth then is rebuilt exactly, not guessed from today's holdings:
+      * cash then      = cash now - every signed cash movement since (trades, fees, dividends, treasury moves, deposits);
+      * shares then    = shares now - every share-ledger delta since, valued at the price in force back then;
+      * treasury then  = treasury now, undone for treasury purchases / redemptions made since.
+    So buying a stock today does not look like a gain or a loss (cash became shares at the same value), a dividend does
+    count as a gain, and a brand-new account starts from zero change. The percentage is relative to what the user had
+    at the start of the window (plus anything deposited during it)."""
+    from app.models.wallet import LedgerEntry, LedgerEntryType
+    from app.services import market_data_service
+
+    now = datetime.now(timezone.utc)
+    t0 = now - timedelta(hours=hours)
+    nw_now = compute_net_worths(db, [user_id]).get(user_id, {"cash": ZERO, "holdings": ZERO, "treasury": ZERO, "net_worth": ZERO})
+
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).one_or_none()
+    cash_delta = flow = treasury_moved = ZERO
+    if wallet is not None:
+        for etype, total in (
+            db.query(LedgerEntry.entry_type, func.coalesce(func.sum(LedgerEntry.amount), 0))
+            .filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.created_at > t0)
+            .group_by(LedgerEntry.entry_type)
+            .all()
+        ):
+            total = Decimal(str(total or 0))
+            cash_delta += total
+            if etype in (LedgerEntryType.DEPOSIT, LedgerEntryType.WITHDRAWAL):
+                flow += total
+            elif etype == LedgerEntryType.TREASURY_BUY:
+                treasury_moved += -total          # cash out of the wallet, into treasury
+            elif etype == LedgerEntryType.TREASURY_REDEEM:
+                treasury_moved -= total           # cash back into the wallet, out of treasury
+    cash_then = nw_now["cash"] - cash_delta
+    treasury_then = max(ZERO, nw_now["treasury"] - treasury_moved)
+
+    now_qty = {pid: qty for pid, qty in db.query(Position.player_id, Position.quantity).filter(Position.user_id == user_id, Position.quantity > 0).all()}
+    moved = {pid: int(d or 0) for pid, d in db.query(ShareTransfer.player_id, func.sum(ShareTransfer.delta)).filter(ShareTransfer.user_id == user_id, ShareTransfer.occurred_at > t0).group_by(ShareTransfer.player_id).all()}
+    pids = set(now_qty) | set(moved)
+    price_now = last_prices(db) if pids else {}
+    price_then = market_data_service._bulk_latest_prices(db, list(pids), before=t0) if pids else {}
+    holdings_then = ZERO
+    for pid in pids:
+        qty_then = now_qty.get(pid, 0) - moved.get(pid, 0)
+        if qty_then > 0:
+            holdings_then += qty_then * price_then.get(pid, price_now.get(pid, ZERO))
+
+    nw_then = cash_then + holdings_then + treasury_then
+    change = nw_now["net_worth"] - nw_then - flow
+    base = nw_then + max(ZERO, flow)
+    pct = (change / base * 100) if base > 0 else ZERO
+    return {"net_worth": nw_now["net_worth"], "net_worth_then": nw_then, "change": change, "change_pct": pct, "hours": Decimal(hours)}

@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     # DOES require restarting the process (they control the background
     # asyncio task started in main.py's lifespan).
     BOT_TRADING_ENABLED: bool = True
-    BOT_TICK_INTERVAL_SECONDS: int = 5
+    BOT_TICK_INTERVAL_SECONDS: int = 20
     BOT_ACTIONS_PER_TICK: int = 2  # cap on orders the whole bot population places per tick (each costs DB egress)
     BOT_MM_PLAYERS_PER_TICK: int = 2  # cap on market-maker player re-quotes per tick
     BOT_STATE_REFRESH_SECONDS: int = 900  # how often bots' cash/holdings/open orders are re-read from the DB (cached between)

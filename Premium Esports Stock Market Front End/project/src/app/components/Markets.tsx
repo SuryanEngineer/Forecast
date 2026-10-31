@@ -415,10 +415,10 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="rounded-xl border border-border p-3" style={{ background: 'var(--muted)' }}>
                   <p className="flex items-center gap-1.5 font-semibold mb-2" style={{ fontSize: 12, color: 'var(--gain)' }}>
-                    <TrendingUp className="w-3.5 h-3.5" /> Gainers (players)
+                    <TrendingUp className="w-3.5 h-3.5" /> Top gainers
                   </p>
                   {topGainers.length === 0 ? (
-                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>Nothing's up right now.</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>No players are up today.</p>
                   ) : (
                     <div className="space-y-1.5">
                       {topGainers.map(m => (
@@ -432,10 +432,10 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
                 </div>
                 <div className="rounded-xl border border-border p-3" style={{ background: 'var(--muted)' }}>
                   <p className="flex items-center gap-1.5 font-semibold mb-2" style={{ fontSize: 12, color: 'var(--loss)' }}>
-                    <TrendingDown className="w-3.5 h-3.5" /> Losers (players)
+                    <TrendingDown className="w-3.5 h-3.5" /> Top losers
                   </p>
                   {topLosers.length === 0 ? (
-                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>Nothing's down right now.</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>No players are down today.</p>
                   ) : (
                     <div className="space-y-1.5">
                       {topLosers.map(m => (

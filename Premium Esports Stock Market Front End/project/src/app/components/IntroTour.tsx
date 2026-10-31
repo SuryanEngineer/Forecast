@@ -143,7 +143,7 @@ const SLIDES: Slide[] = [
   {
     emoji: '🏆',
     title: 'Tournaments pay dividends',
-    body: 'When a player you own places well in a tournament, every shareholder of record at the start of the event is paid a dividend, deposited directly into your cash balance.',
+    body: 'When a player you own places well in a tournament, everyone who owned shares when it started is paid a dividend, straight into your cash balance. Trades made after it starts do not change your payout.',
     visual: <DividendSnip />,
   },
   {
