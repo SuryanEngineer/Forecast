@@ -108,7 +108,7 @@ export function TeamModal({ userId, onClose }: Props) {
             <div className="px-6 pb-6">
               <p className="text-muted-foreground text-center" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
                 A per-player holdings breakdown, value history, and trade history for other investors isn't available yet --
-                only your own "My Team" page shows that level of detail right now.
+                only your own "My Portfolio" page shows that level of detail right now.
               </p>
             </div>
           </>

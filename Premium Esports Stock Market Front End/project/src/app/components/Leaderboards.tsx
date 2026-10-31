@@ -159,7 +159,7 @@ export function Leaderboards({ openTeam }: Props) {
           <HelpButton topic="rankings" size={17} />
         </div>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>
-          Real investors only, ranked by net worth &middot; tap anyone to view their team
+          Real investors only, ranked by net worth
         </p>
       </div>
       <AllTimeBoard openTeam={openTeam} />

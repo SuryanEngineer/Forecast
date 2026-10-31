@@ -159,7 +159,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         ),
       },
       {
-        heading: 'My Team',
+        heading: 'My Portfolio',
         body: <p>Everything you own: each holding’s value and gain or loss, a chart of your portfolio over time, your open limit
         orders (cancel any here), and an activity log of every buy, sell, dividend, and fee, filterable by type.</p>,
       },
@@ -430,7 +430,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <div>
             <QA q="Why is the Buy price higher than the listed price?">The listed price is the last trade, kept between Sell and Buy. If the last trade was above today’s Buy price, the listed price shows the Buy price. You always buy at the Buy price and sell at the Sell price.</QA>
             <QA q="Why did my portfolio dip right after I bought?">You paid the Buy price plus the 0.25% fee, while your value counts what selling all your shares would pay. See Fees &amp; Costs.</QA>
-            <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Team whenever you like.</QA>
+            <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Portfolio whenever you like.</QA>
             <QA q="How long does a limit order stay open?">Until it fills or you cancel it, unless you chose a time limit (1 hour, 1 day, or 1 week) when placing it. Timed orders cancel themselves within about 20 seconds of expiring and release your cash or shares.</QA>
             <QA q="It says the House can’t buy or sell that many.">The exchange’s own liquidity has limits. Try a smaller size or use a limit order.</QA>
             <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price (<BandLow /> to <BandHigh />). See How Prices Are Set.</QA>
@@ -464,7 +464,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             up. At the same price, the order placed first is filled first.</p>
             <List
               items={[
-                'You can cancel an open or partially filled limit order at any time before it completes. Open orders are listed in amber on My Team (with Cancel and Cancel all), on that player’s page, as a banner on Home, and as a count on the My Team link, so you never lose track of one.',
+                'You can cancel an open or partially filled limit order at any time before it completes. Open orders are listed in amber on My Portfolio (with Cancel and Cancel all), on that player’s page, as a banner on Home, and as a count on the My Portfolio link, so you never lose track of one.',
                 'An open order locks up the cash (buy) or shares (sell) it needs until it fills or you cancel it.',
                 'Optional time limit: when you place a limit order you can tap “Keep it open” for 1 hour, 1 day, or 1 week and it cancels itself if it has not filled by then, freeing the cash or shares. Leave it on “Until I cancel” and it stays open until it fills or you cancel it.',
                 'A limit order is not guaranteed to fill. If the market never reaches your price, it will remain open.',

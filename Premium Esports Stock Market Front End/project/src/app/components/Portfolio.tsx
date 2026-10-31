@@ -59,7 +59,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
     <div className="p-6 max-w-[900px] mx-auto space-y-6">
       <div>
         <div className="flex items-center gap-1.5">
-          <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>My Team</h1>
+          <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>My Portfolio</h1>
           <HelpButton topic="portfolio" size={17} />
         </div>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>All your players and how they're performing</p>
@@ -98,7 +98,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       </div>
 
       {loading && holdings.length === 0 ? (
-        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading your team…</p>
+        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading your portfolio…</p>
       ) : holdings.length === 0 ? (
         <div className="rounded-2xl border border-border p-10 text-center" style={{ background: 'var(--card)' }}>
           <p style={{ fontSize: 32 }}>🎒</p>

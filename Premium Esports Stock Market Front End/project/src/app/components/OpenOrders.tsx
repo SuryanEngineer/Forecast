@@ -6,7 +6,7 @@ import { useMarketsByIds } from '../lib/hooks';
 import { toNumber, type OrderResponse } from '../lib/types';
 
 // A resting limit order ties up cash (buys) or shares (sells) until it fills or is cancelled, so nobody should be able
-// to leave one open by accident. Open orders are therefore shown in several places (My Team, the player's own page, a
+// to leave one open by accident. Open orders are therefore shown in several places (My Portfolio, the player's own page, a
 // banner on Home, a count on the sidebar), each with a one-tap Cancel and a "Cancel all". They stay in sync through a
 // tiny window event: anything that places or cancels an order calls notifyOrdersChanged().
 const ORDERS_CHANGED = 'forecast:orders-changed';
@@ -158,7 +158,7 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
   );
 }
 
-/** A bright strip for Home / anywhere: shows only when the user has open orders and sends them to My Team to cancel. */
+/** A bright strip for Home / anywhere: shows only when the user has open orders and sends them to My Portfolio to cancel. */
 export function OpenOrdersBanner({ onReview }: { onReview: () => void }) {
   const { orders } = useOpenOrders();
   if (!orders || orders.length === 0) return null;

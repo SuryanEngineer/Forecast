@@ -16,7 +16,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Home', icon: Home },
   { id: 'markets', label: 'Market', icon: TrendingUp },
-  { id: 'portfolio', label: 'My Team', icon: Briefcase },
+  { id: 'portfolio', label: 'My Portfolio', icon: Briefcase },
   { id: 'leaderboards', label: 'Leaderboard', icon: Trophy },
   { id: 'stats', label: 'My Stats', icon: BarChart3 },
   { id: 'tournaments', label: 'Events', icon: Zap },

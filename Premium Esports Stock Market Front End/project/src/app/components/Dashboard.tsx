@@ -172,12 +172,12 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
         )}
       </div>
 
-      {/* Your team + upcoming */}
+      {/* Your portfolio + upcoming */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_340px]">
 
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-foreground font-bold" style={{ fontSize: 18 }}>💼 Your Team</p>
+            <p className="text-foreground font-bold" style={{ fontSize: 18 }}>💼 Your Portfolio</p>
             <button onClick={() => navigate('portfolio')} className="flex items-center gap-1 text-primary" style={{ fontSize: 13 }}>
               Full portfolio <ChevronRight className="w-4 h-4" />
             </button>

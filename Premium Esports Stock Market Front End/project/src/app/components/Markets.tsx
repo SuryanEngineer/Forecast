@@ -506,7 +506,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
         </div>
       ) : (
         <>
-          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+          <div className="grid gap-4 transition-opacity" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', opacity: loading ? 0.45 : 1 }}>
             {markets.map(m => (
               <PlayerCard key={m.id} market={m} navigate={navigate} />
             ))}
