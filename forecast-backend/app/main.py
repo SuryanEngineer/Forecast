@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.services import bot_trading_service, maintenance_service, osirion_service, qualifier_service
+from app.services import bot_trading_service, lease_service, maintenance_service, osirion_service, qualifier_service
 
 logger = logging.getLogger("forecast.bots")
 osirion_logger = logging.getLogger("forecast.osirion")
@@ -28,6 +28,8 @@ def _run_one_bot_tick(rng: random.Random) -> None:
     """Runs on a worker thread (see asyncio.to_thread below) with its own
     plain SessionLocal(), NOT the request-scoped `get_db` dependency --
     there is no HTTP request driving this, it's a background loop."""
+    if not lease_service.holds_lease():
+        return  # another instance runs the market
     db = SessionLocal()
     try:
         result = bot_trading_service.run_bot_tick(db, rng)
@@ -63,6 +65,8 @@ def _run_one_osirion_sync() -> None:
     for everything currently tracked -- a no-op sync (queries zero
     mappings) until at least one tournament is tracked, whether that
     happened automatically or via the manual admin endpoint."""
+    if not lease_service.holds_lease():
+        return  # finalizing a tournament re-rates prices: only the market's primary instance does it
     db = SessionLocal()
     try:
         if settings.OSIRION_AUTO_TRACK_ENABLED:
@@ -117,6 +121,8 @@ maintenance_logger = logging.getLogger("forecast.maintenance")
 
 
 def _run_one_maintenance_pass() -> None:
+    if not lease_service.holds_lease():
+        return
     db = SessionLocal()
     try:
         result = maintenance_service.run_maintenance_pass(db)
@@ -138,9 +144,47 @@ async def _maintenance_loop() -> None:
         await asyncio.sleep(60)
 
 
+lease_logger = logging.getLogger("forecast.lease")
+
+
+def _renew_lease_once() -> None:
+    db = SessionLocal()
+    try:
+        lease_service.acquire_or_renew(db)
+    finally:
+        db.close()
+
+
+async def _lease_loop() -> None:
+    """Keeps this process's claim on the market lease alive (or takes it over when the holder is gone)."""
+    while True:
+        try:
+            await asyncio.to_thread(_renew_lease_once)
+        except Exception:
+            lease_logger.exception("Lease renewal failed -- will retry")
+        await asyncio.sleep(lease_service.HEARTBEAT_SECONDS)
+
+
+def _release_lease_once() -> None:
+    db = SessionLocal()
+    try:
+        lease_service.release(db)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
+
+    lease_service.mark_server()
+    if lease_service.enabled():
+        # Claim (or wait for) the market lease BEFORE any loop that matches orders starts.
+        try:
+            await asyncio.to_thread(_renew_lease_once)
+        except Exception:
+            lease_logger.exception("Initial lease attempt failed -- the heartbeat will retry")
+        tasks.append(asyncio.create_task(_lease_loop()))
 
     if not settings.REDIS_ENABLED:
         # The in-process pub/sub substitute for the live price feed
@@ -178,6 +222,11 @@ async def lifespan(app: FastAPI):
 
     for task in tasks:
         task.cancel()
+    if lease_service.enabled():
+        try:
+            await asyncio.to_thread(_release_lease_once)  # clean hand-over: the next instance takes over within seconds
+        except Exception:
+            lease_logger.exception("Could not release the lease (it will simply expire)")
 
 
 app = FastAPI(

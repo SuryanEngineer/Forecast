@@ -109,7 +109,9 @@ export interface MarketSnapshot {
   region: string | null;
   total_shares_outstanding: number;
   ipo_price: Money;
-  last_price: Money;
+  last_price: Money; // listed price: midpoint of the buy and sell price for one share
+  buy_price?: Money; // what 1 share costs to buy right now
+  sell_price?: Money; // what 1 share fetches if sold right now
   prev_close: Money;
   change: Money;
   change_pct: Money;
@@ -156,6 +158,7 @@ export interface PositionResponse {
   held_quantity: number;
   available_quantity: number;
   average_cost: Money;
+  value?: Money; // what selling the whole position would pay right now (what portfolio value counts)
 }
 
 export interface OrderResponse {

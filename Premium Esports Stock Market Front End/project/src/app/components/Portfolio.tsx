@@ -34,8 +34,9 @@ export function Portfolio({ navigate, openPlayer }: Props) {
     .map(p => {
       const market = marketById.get(p.player_id);
       if (!market) return null;
-      const price = toNumber(market.last_price);
-      const currentVal = p.quantity * price;
+      // A position is worth what selling all of it right now would pay (the server computes it, big positions fetch a
+      // little less per share); fall back to shares x listed price only if the server did not send it.
+      const currentVal = p.value !== undefined ? toNumber(p.value) : p.quantity * toNumber(market.last_price);
       const costVal = p.quantity * toNumber(p.average_cost);
       const pl = currentVal - costVal;
       const plPct = costVal > 0 ? (pl / costVal) * 100 : 0;

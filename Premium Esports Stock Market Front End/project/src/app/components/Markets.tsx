@@ -134,6 +134,12 @@ function PlayerCard({ market, navigate }: { market: MarketSnapshot; navigate: Pr
         <p className="font-mono font-bold mb-2" style={{ fontSize: 26, color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
           ${price.toFixed(2)}
         </p>
+        {market.buy_price !== undefined && market.sell_price !== undefined && (
+          <p className="text-muted-foreground font-mono -mt-1 mb-2" style={{ fontSize: 12 }}>
+            Buy <span style={{ color: 'var(--gain)' }}>${toNumber(market.buy_price).toFixed(2)}</span>
+            {' · '}Sell <span style={{ color: 'var(--loss)' }}>${toNumber(market.sell_price).toFixed(2)}</span>
+          </p>
+        )}
 
         <div className="flex gap-4 mt-1 mb-4">
           <div>

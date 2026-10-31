@@ -11,7 +11,7 @@ from app.models.tournament import Tournament, PlacementResult, TournamentType, T
 from app.models.dividend import DividendPayout, DividendLineItem, DividendPayoutStatus  # noqa: F401
 from app.models.treasury import TreasuryInstrument, TreasuryHolding, TreasuryAccrualLog, TreasuryHoldingStatus  # noqa: F401
 from app.models.audit import AuditLog, ActorType  # noqa: F401
-from app.models.economic_params import PlatformParameter, DividendPlacementCurveEntry  # noqa: F401
+from app.models.economic_params import PlatformParameter, DividendPlacementCurveEntry, MarketLease  # noqa: F401
 from app.models.auction import AuctionRound, AuctionParticipant, AuctionBid, AuctionRoundStatus  # noqa: F401
 from app.models.bot import BotProfile  # noqa: F401
 from app.models.password_reset import PasswordResetToken  # noqa: F401

@@ -57,7 +57,8 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
       if (!market) return null;
       const price = toNumber(market.last_price);
       const prevClose = toNumber(market.prev_close);
-      const value = p.quantity * price;
+      // What selling the whole position would pay right now (server-computed); matches the leaderboard's net worth.
+      const value = p.value !== undefined ? toNumber(p.value) : p.quantity * price;
       const dayChange = p.quantity * (price - prevClose);
       const costBasis = p.quantity * toNumber(p.average_cost);
       const allTimePl = value - costBasis;

@@ -41,5 +41,7 @@ class PositionResponse(BaseModel):
     held_quantity: int
     available_quantity: int
     average_cost: Decimal
+    # What quick-selling ALL of this position would pay right now (what portfolio value counts).
+    value: Decimal = Decimal("0")
 
     model_config = {"from_attributes": True}

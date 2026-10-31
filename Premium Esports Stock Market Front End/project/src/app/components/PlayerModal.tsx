@@ -381,6 +381,13 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                 {isUp ? '+' : ''}{changePct.toFixed(2)}% (24h)
               </span>
             </div>
+            {market.buy_price !== undefined && market.sell_price !== undefined && (
+              <p className="text-muted-foreground font-mono mt-1" style={{ fontSize: 13 }}>
+                Buy <span style={{ color: 'var(--gain)' }}>${toNumber(market.buy_price).toFixed(2)}</span>
+                {' · '}Sell <span style={{ color: 'var(--loss)' }}>${toNumber(market.sell_price).toFixed(2)}</span>
+                <span style={{ fontSize: 11 }}> per share · the listed price is the midpoint</span>
+              </p>
+            )}
             {position && position.quantity > 0 && (
               <p className="text-muted-foreground mt-2" style={{ fontSize: 12 }}>
                 You own {position.quantity} share{position.quantity !== 1 ? 's' : ''} (avg cost ${toNumber(position.average_cost).toFixed(2)})
@@ -500,8 +507,8 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                 </div>
                 <div className="rounded-xl p-3 border border-border text-center" style={{ background: 'var(--muted)' }}>
                   <p className="text-muted-foreground" style={{ fontSize: 12 }}>Estimated cost</p>
-                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>${(quickQty * price).toFixed(2)}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 10 }}>plus a small transaction fee</p>
+                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>${(quickQty * (market.buy_price !== undefined ? toNumber(market.buy_price) : price)).toFixed(2)}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: 10 }}>at the buy price; bigger orders cost a little more per share, plus a small transaction fee</p>
                 </div>
                 <button
                   disabled={submitting}

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.bot import BotProfile
 from app.models.player import Player, Position, PriceSnapshot, ShareTransfer
-from app.services import book_price_service
+from app.services import book_price_service, valuation_service
 from app.models.treasury import TreasuryHolding, TreasuryHoldingStatus
 from app.models.user import User
 from app.models.wallet import Wallet
@@ -28,24 +28,9 @@ CACHE_TTL_SECONDS = 10.0
 
 
 def last_prices(db: Session) -> dict[uuid.UUID, Decimal]:
-    """Latest trade price per player (IPO price when never traded)."""
-    newest = (
-        db.query(PriceSnapshot.player_id.label("pid"), func.max(PriceSnapshot.recorded_at).label("m"))
-        .group_by(PriceSnapshot.player_id).subquery()
-    )
-    prices: dict[uuid.UUID, Decimal] = {}
-    for pid, price in (
-        db.query(PriceSnapshot.player_id, PriceSnapshot.price)
-        .join(newest, and_(PriceSnapshot.player_id == newest.c.pid, PriceSnapshot.recorded_at == newest.c.m))
-        .all()
-    ):
-        prices[pid] = price
-    for pid, ipo in db.query(Player.id, Player.ipo_price).all():
-        prices.setdefault(pid, ipo)
-    # The price users see is the last trade pulled into the resting order book (see book_price_service); value holdings
-    # at that same price so net worth matches the market screens.
-    quotes = book_price_service.bulk_best_quotes(db)
-    return {pid: book_price_service.effective_price(px, *quotes.get(pid, (None, None))) for pid, px in prices.items()}
+    """The LISTED price per player (midpoint of the best buy / sell price for one share, see market_policy.listed_price).
+    Holdings are NOT valued at this price any more -- see compute_net_worths (liquidation value)."""
+    return valuation_service.listed_prices(db)
 
 
 def eligible_user_ids(db: Session, include_bots: bool = True) -> list[uuid.UUID]:
@@ -60,7 +45,9 @@ def compute_net_worths(db: Session, user_ids: list[uuid.UUID] | None = None, inc
     ids = set(user_ids) if user_ids is not None else set(eligible_user_ids(db, include_bots))
     if not ids:
         return {}
-    prices = last_prices(db)
+    # Holdings are worth what quick-selling the whole position would pay right now (real bids capped at the reference
+    # price, then the House at its size-dependent price) -- not "shares x last trade", which one tiny trade could move.
+    valuer = valuation_service.Valuer(db)
     out: dict[uuid.UUID, dict[str, Decimal]] = {uid: {"cash": ZERO, "holdings": ZERO, "treasury": ZERO} for uid in ids}
 
     for uid, cash in db.query(Wallet.user_id, Wallet.cash_balance).all():
@@ -68,7 +55,7 @@ def compute_net_worths(db: Session, user_ids: list[uuid.UUID] | None = None, inc
             out[uid]["cash"] = cash
     for uid, pid, qty in db.query(Position.user_id, Position.player_id, Position.quantity).filter(Position.quantity > 0).all():
         if uid in out:
-            out[uid]["holdings"] += prices.get(pid, ZERO) * qty
+            out[uid]["holdings"] += valuer.value(pid, qty)
     for uid, principal, accrued in db.query(
         TreasuryHolding.user_id, TreasuryHolding.principal_amount, TreasuryHolding.accrued_interest
     ).filter(TreasuryHolding.status == TreasuryHoldingStatus.ACTIVE).all():
@@ -137,13 +124,16 @@ def day_change(db: Session, user_id: uuid.UUID, hours: int = 24) -> dict[str, De
     now_qty = {pid: qty for pid, qty in db.query(Position.player_id, Position.quantity).filter(Position.user_id == user_id, Position.quantity > 0).all()}
     moved = {pid: int(d or 0) for pid, d in db.query(ShareTransfer.player_id, func.sum(ShareTransfer.delta)).filter(ShareTransfer.user_id == user_id, ShareTransfer.occurred_at > t0).group_by(ShareTransfer.player_id).all()}
     pids = set(now_qty) | set(moved)
-    price_now = last_prices(db) if pids else {}
+    valuer = valuation_service.Valuer(db, list(pids)) if pids else None
     price_then = market_data_service._bulk_latest_prices(db, list(pids), before=t0) if pids else {}
     holdings_then = ZERO
     for pid in pids:
         qty_then = now_qty.get(pid, 0) - moved.get(pid, 0)
         if qty_then > 0:
-            holdings_then += qty_then * price_then.get(pid, price_now.get(pid, ZERO))
+            # Same yardstick at both ends: the price then, with today's size haircut (what a position this big fetches
+            # relative to the headline price), so buying or selling shares is value-neutral and only real moves count.
+            px_then = price_then.get(pid, valuer.listed(pid))
+            holdings_then += qty_then * px_then * valuer.haircut(pid, now_qty.get(pid, qty_then))
 
     nw_then = cash_then + holdings_then + treasury_then
     change = nw_now["net_worth"] - nw_then - flow

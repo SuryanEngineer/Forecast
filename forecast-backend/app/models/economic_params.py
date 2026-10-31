@@ -21,6 +21,18 @@ from app.db.base import Base
 from app.db.types import GUID
 
 
+class MarketLease(Base):
+    """A named lock held by ONE web-server process at a time (see app/services/lease_service.py). The order books are
+    in memory, so only the holder of the 'market' lease may match orders."""
+
+    __tablename__ = "market_lease"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(80), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class PlatformParameter(Base):
     """One named scalar knob. `key` is a dotted namespace, e.g.
     'quick_trade.market_impact_coefficient' or 'bot_liquidity.spread_pct'

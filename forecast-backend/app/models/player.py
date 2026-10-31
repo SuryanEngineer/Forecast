@@ -45,6 +45,9 @@ class Player(Base):
     # "solid journeyman" default for existing/legacy rows that predate
     # this column.
     power_rating: Mapped[int] = mapped_column(Integer, nullable=False, default=65)
+    # The market's running opinion of the price (app/engine/market_policy.py): nudged by trades in proportion to their
+    # size, reset after results, always inside a band around the dividend-based fair price. NULL until first set.
+    reference_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

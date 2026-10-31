@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.player import Player, Position
 from app.models.user import User
 from app.schemas.player import PlayerCreateRequest, PlayerResponse, PositionResponse
-from app.services import market_maker_service, player_service
+from app.services import market_maker_service, player_service, valuation_service
 
 router = APIRouter(prefix="/players", tags=["players"])
 
@@ -61,12 +61,26 @@ def get_player(player_id: uuid.UUID, db: Session = Depends(get_db)) -> PlayerRes
     return player
 
 
+def _positions_with_values(db: Session, rows: list[Position]) -> list[PositionResponse]:
+    if not rows:
+        return []
+    valuer = valuation_service.Valuer(db, [p.player_id for p in rows])
+    return [
+        PositionResponse(
+            player_id=p.player_id, quantity=p.quantity, held_quantity=p.held_quantity,
+            available_quantity=p.available_quantity, average_cost=p.average_cost, value=valuer.value(p.player_id, p.quantity),
+        )
+        for p in rows
+    ]
+
+
 @router.get("/positions/me", response_model=list[PositionResponse])
 def get_my_positions(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[PositionResponse]:
     """Every player this user currently holds shares in (quantity > 0).
     Cross-reference with GET /markets for current prices -- this endpoint
-    only returns raw holdings, not valuations."""
-    return db.query(Position).filter(Position.user_id == user.id, Position.quantity > 0).all()
+    for the market-wide listed prices; each row carries `value`, what selling the whole position would pay right now."""
+    rows = db.query(Position).filter(Position.user_id == user.id, Position.quantity > 0).all()
+    return _positions_with_values(db, rows)
 
 
 @router.get("/{player_id}/position", response_model=PositionResponse)
@@ -78,4 +92,4 @@ def get_my_position(player_id: uuid.UUID, user: User = Depends(get_current_user)
     )
     if position is None:
         return PositionResponse(player_id=player_id, quantity=0, held_quantity=0, available_quantity=0, average_cost=0)
-    return position
+    return _positions_with_values(db, [position])[0]

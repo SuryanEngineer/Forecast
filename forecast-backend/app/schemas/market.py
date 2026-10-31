@@ -14,7 +14,9 @@ class MarketSnapshotResponse(BaseModel):
     region: str | None
     total_shares_outstanding: int
     ipo_price: Decimal
-    last_price: Decimal
+    last_price: Decimal  # the listed price: midpoint of the buy and sell price for one share
+    buy_price: Decimal = Decimal("0")   # what 1 share costs to buy right now
+    sell_price: Decimal = Decimal("0")  # what 1 share fetches if sold right now
     prev_close: Decimal
     change: Decimal
     change_pct: Decimal

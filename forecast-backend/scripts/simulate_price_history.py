@@ -143,6 +143,12 @@ def main() -> None:
                 first_real_p[pid] = float(px)
 
         # ---- simulate ----------------------------------------------------------------------------------------------
+        from app.engine import market_policy
+        from app.services import fair_price_service
+
+        fair_live = fair_price_service.compute_fair(db)
+        band_low = economic_params_service.get_param(db, "market.band_low")
+        band_high = economic_params_service.get_param(db, "market.band_high")
         new_rows: list[dict] = []
         per_player_pts = []
         big_corr = 0
@@ -218,6 +224,11 @@ def main() -> None:
                 span = max((end_ts - path[0][0]).total_seconds(), 1.0)
                 path = [(t, v + delta * (((t - path[0][0]).total_seconds() / span) ** 2)) for t, v in path]
             prices = [(t, max(MIN_PRICE, math.exp(v))) for t, v in path]
+            if p.id not in first_real_p and p.id in fair_live:
+                # The live market clamps every reference price into [band_low, band_high] x its (fluke-shrunk) fair price;
+                # end the path inside that band so the chart's last point IS the reference price the market starts from.
+                lo_px, hi_px = (float(x) for x in market_policy.band_limits(fair_live[p.id], band_low, band_high))
+                prices[-1] = (prices[-1][0], min(max(prices[-1][1], lo_px), hi_px))
             per_player_pts.append((p.gamertag, prices))
             for t, px in prices:
                 new_rows.append({"id": uuid.uuid4(), "player_id": p.id, "price": Decimal(str(round(px, 4))), "volume": 0, "recorded_at": t})
@@ -266,6 +277,9 @@ def main() -> None:
         if args.reset_prices and not args.yes:
             print("Refusing to reset prices without --yes. Back up the database first, read the impact list above, then re-run with --yes.")
             return
+        # Writing prices/orders: the web server keeps order books and reference prices in memory, so it must not be running.
+        from app.services import lease_service
+        lease_service.script_guard_or_exit(db, "simulate_price_history")
 
         if args.reset_prices:
             from app.models.order import Order, OrderStatus
@@ -292,6 +306,15 @@ def main() -> None:
             db.bulk_insert_mappings(PriceSnapshot, new_rows[i:i + 5000])
             db.commit()
             print(f"  inserted {min(i + 5000, len(new_rows)):,}/{len(new_rows):,}")
+        if args.reset_prices:
+            # The market's reference price starts at each stock's last simulated price (already inside its fair band).
+            name_to_id = {p.gamertag: p.id for p in players}
+            for tag, prices in per_player_pts:
+                db.query(Player).filter(Player.id == name_to_id[tag]).update(
+                    {Player.reference_price: Decimal(str(round(prices[-1][1], 4)))}, synchronize_session=False
+                )
+            db.commit()
+            print(f"Set the reference price of {len(per_player_pts)} stocks.")
         db.commit()
         print("Done. Charts now show 2026 history; reload the site.")
     finally:

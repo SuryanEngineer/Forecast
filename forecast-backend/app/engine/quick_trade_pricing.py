@@ -91,6 +91,7 @@ def estimate_quick_order_cost(
     market_impact_coefficient: Decimal = DEFAULT_MARKET_IMPACT_COEFFICIENT,
     synthetic_liquidity_depth: Optional[Decimal] = None,
     max_synthetic_quantity: Optional[Decimal] = None,
+    reference_price_override: Optional[Decimal] = None,
 ) -> Optional[Decimal]:
     """
     Non-mutating estimate of the total notional cost (BUY) or proceeds
@@ -141,7 +142,8 @@ def estimate_quick_order_cost(
     if remaining > 0:
         if max_synthetic_quantity is not None and remaining > max_synthetic_quantity:
             return None
-        reference_price = book.mid_price() or fallback_reference_price
+        # An explicit reference (the market's reference price) always wins; otherwise the old book-mid / fallback logic.
+        reference_price = reference_price_override or book.mid_price() or fallback_reference_price
         if reference_price is None:
             return None
         impact = min(market_impact_coefficient * (remaining / depth), MAX_SYNTHETIC_IMPACT)
@@ -154,6 +156,50 @@ def estimate_quick_order_cost(
     return total_notional
 
 
+def estimate_synthetic_leg(
+    book: OrderBook,
+    side: Side,
+    quantity: Decimal,
+    shares_outstanding: Decimal,
+    fallback_reference_price: Optional[Decimal] = None,
+    market_impact_coefficient: Decimal = DEFAULT_MARKET_IMPACT_COEFFICIENT,
+    synthetic_liquidity_depth: Optional[Decimal] = None,
+    reference_price_override: Optional[Decimal] = None,
+) -> tuple[Decimal, Decimal]:
+    """(shares, dollars) the HOUSE itself would have to take on for this quick order after the real book is used up:
+    for a SELL that is the cash the House must pay out, for a BUY the shares it must hand over. (0, 0) when real orders
+    cover everything. Same pricing as estimate_quick_order_cost / execute_quick_order."""
+    depth = synthetic_liquidity_depth or default_synthetic_depth(shares_outstanding)
+    opposite_side = Side.SELL if side == Side.BUY else Side.BUY
+    remaining = quantity
+    for price, level_qty in book.depth(opposite_side, max_levels=10_000):
+        if remaining <= 0:
+            break
+        remaining -= min(remaining, level_qty)
+    if remaining <= 0:
+        return Decimal("0"), Decimal("0")
+    reference_price = reference_price_override or book.mid_price() or fallback_reference_price
+    if reference_price is None:
+        return remaining, Decimal("0")
+    impact = min(market_impact_coefficient * (remaining / depth), MAX_SYNTHETIC_IMPACT)
+    price = reference_price * (Decimal("1") + impact) if side == Side.BUY else max(reference_price * (Decimal("1") - impact), MIN_PRICE)
+    return remaining, remaining * price
+
+
+def worst_sweep_price(book: OrderBook, side: Side, quantity: Decimal) -> Optional[Decimal]:
+    """The last (worst) real price level a quick order of `quantity` would reach, or None if it would exhaust the real
+    book (the rest goes to the House)."""
+    opposite_side = Side.SELL if side == Side.BUY else Side.BUY
+    remaining = quantity
+    worst: Optional[Decimal] = None
+    for price, level_qty in book.depth(opposite_side, max_levels=10_000):
+        if remaining <= 0:
+            return worst
+        worst = price
+        remaining -= min(remaining, level_qty)
+    return worst if remaining <= 0 else None
+
+
 def execute_quick_order(
     book: OrderBook,
     order_id: str,
@@ -164,6 +210,7 @@ def execute_quick_order(
     market_impact_coefficient: Decimal = DEFAULT_MARKET_IMPACT_COEFFICIENT,
     synthetic_liquidity_depth: Optional[Decimal] = None,
     max_synthetic_quantity: Optional[Decimal] = None,
+    reference_price_override: Optional[Decimal] = None,
 ) -> QuickExecutionResult:
     """
     Execute a quick buy/sell of `quantity` shares against `book`, falling
@@ -190,7 +237,7 @@ def execute_quick_order(
     # mutates the book) and this function always agree exactly on the
     # synthetic leg's price -- see book_registry.py for why that
     # agreement is a safety-critical invariant, not just a nice-to-have.
-    pre_trade_reference_price = book.mid_price() or fallback_reference_price
+    pre_trade_reference_price = reference_price_override or book.mid_price() or fallback_reference_price
 
     match = book.add_quick_order(order_id=order_id, side=side, quantity=quantity)
 

@@ -184,7 +184,7 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
         try:
             from app.services import rerate_service  # local import: keeps tournament_service import-light
 
-            rerate_service.rerate_players(db, [p.player_id for p in new_payouts])
+            rerate_service.rerate_players(db, [p.player_id for p in new_payouts], [tournament_id])
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()

@@ -22,7 +22,24 @@ class PlayerNotFoundError(ServiceError):
     pass
 
 
+class PriceOutOfBandError(ServiceError):
+    """A limit price outside the allowed band around the stock's fair (dividend-based) price."""
+
+
+class SelfTradeError(ServiceError):
+    """An order that would trade against the same user's own resting order."""
+
+
+class NotPrimaryError(ServiceError):
+    """This server instance is not the one allowed to match orders right now (see lease_service)."""
+
+
 class NoLiquidityError(ServiceError):
     """Raised when a quick order can't be filled even synthetically (no
     resting book AND no fallback reference price exists yet -- i.e. the
     player has never traded and has no IPO price set)."""
+
+
+class HouseCapacityError(NoLiquidityError):
+    """The House cannot take the other side of a quick order right now (not enough House cash to buy that many shares,
+    or not enough House shares left to sell that many)."""

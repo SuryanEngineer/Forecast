@@ -189,6 +189,9 @@ class Settings(BaseSettings):
     # DOES require restarting the process (they control the background
     # asyncio task started in main.py's lifespan).
     BOT_TRADING_ENABLED: bool = True
+    # Only the web-server process holding the 'market' lease matches orders / runs bots / pays dividends (see
+    # app/services/lease_service.py). Turn off only for single-process local debugging.
+    MARKET_LEASE_ENABLED: bool = True
     BOT_TICK_INTERVAL_SECONDS: int = 20
     BOT_ACTIONS_PER_TICK: int = 2  # cap on orders the whole bot population places per tick (each costs DB egress)
     BOT_MM_PLAYERS_PER_TICK: int = 2  # cap on market-maker player re-quotes per tick

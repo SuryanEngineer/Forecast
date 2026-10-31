@@ -169,6 +169,21 @@ def check_pure_logic() -> None:
     from app.engine.types import Side
     res = execute_quick_order(OrderBook("p"), "o1", Side.BUY, D("100000"), D("1000"), fallback_reference_price=D("10"))
     check("synthetic quick-buy price is capped at +25% of the reference", res.fills and res.fills[0].price == D("10") * (1 + MAX_SYNTHETIC_IMPACT), str(res.fills[0].price if res.fills else None))
+    # Market policy: reference price, listed price, sell-everything value, fluke shrinkage, news pass-through
+    from app.engine import market_policy as mp
+    from app.services import fair_price_service, rerate_service
+    check("band clamps a price to 0.5x-2x of fair", mp.clamp_to_band(D("500"), D("100")) == D("200.0") and mp.clamp_to_band(D("1"), D("100")) == D("50.0"))
+    check("a 1-share trade at a silly price barely moves the reference price", D("100") < mp.reference_after_trade(D("100"), D("2000"), D("1"), D("200"), D("100")) < D("110"))
+    check("a big trade resets the reference (inside the band)", mp.reference_after_trade(D("100"), D("150"), D("400"), D("200"), D("100")) == D("150") and mp.reference_after_trade(D("100"), D("9000"), D("400"), D("200"), D("100")) == D("200.0"))
+    check("listed price = midpoint, House quotes at the reference (bids below it don't count)", mp.listed_price(D("100"), D("90"), D("110")) == D("100.00") and mp.listed_price(D("100"), D("104"), None) == D("102.00"))
+    check("listed price pull is capped at 6%", mp.listed_price(D("100"), D("500"), None) == D("106.00"))
+    liq = mp.liquidation_value(100, D("10"), [(D("50"), 40), (D("9"), 30)], D("1000"), D("0.15"), D("0.25"))
+    check("sell-everything value: bids capped at the reference, House takes the rest with slippage", abs(liq - (D("400") + D("270") + D("30") * D("10") * D("0.9955"))) < D("0.0001"), str(liq))
+    check("a huge position is worth less per share (House slippage at its cap)", mp.liquidation_value(10000, D("10"), [], D("100"), D("0.15"), D("0.25")) == D("75000.00"))
+    sh = fair_price_service.shrunk_income
+    check("fluke shrinkage: 1 result is mostly the roster median, 30 results mostly its own", abs(sh(1000.0, 1, 100.0) - (1000 / 7 + 100 * 6 / 7)) < 1e-9 and sh(1000.0, 30, 100.0) > 800 and sh(5.0, 0, 100.0) == 0.0)
+    nm = rerate_service.news_move
+    check("news re-rate: fair x2 moves the reference up (damped), no news changes nothing", 1.5 < nm(50.0, 100.0) < 2.0 and nm(100.0, 100.0) == 1.0 and nm(100.0, 1e9) <= 2.02)
     check("rank steps are ordered", [r for r, _ in season_service.RANKS][0] == "Bronze I" and [r for r, _ in season_service.RANKS][-1] == "Unreal")
     # Names / validation
     db = SessionLocal()
@@ -600,6 +615,26 @@ def check_book_price_and_retention(ctx: dict) -> None:
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
         check("cancelling the bids returns the price to the last trade", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+        m = r.json()
+        check("market data carries a buy and a sell price (buy >= sell)", "buy_price" in m and "sell_price" in m and Decimal(str(m["buy_price"])) >= Decimal(str(m["sell_price"])) > 0, str(m))
+
+        # Self-trade block / price band (alice holds shares of the earlier trading-context player)
+        from app.services.exceptions import HouseCapacityError, NoLiquidityError, PriceOutOfBandError, SelfTradeError
+        check("'House can't buy/sell that many' is a clean liquidity error", issubclass(HouseCapacityError, NoLiquidityError))
+        listed_ctx = Decimal(str(client.get(f"/api/v1/markets/{ctx['player']}").json()["last_price"]))
+        sell_o = None
+        try:
+            sell_o = order_service.place_limit_order(db, ctx["alice"], ctx["player"], OrderSide.SELL, (listed_ctx * Decimal("1.05")).quantize(Decimal("0.01")), 1)
+            db.commit()
+        except PriceOutOfBandError as exc:
+            db.rollback()
+            check("a limit price outside the fair-value band is refused with the allowed range", "must be between" in str(exc), str(exc))
+        if sell_o is not None:
+            err = _raises(lambda: order_service.place_limit_order(db, ctx["alice"], ctx["player"], OrderSide.BUY, (listed_ctx * Decimal("1.10")).quantize(Decimal("0.01")), 1))
+            db.rollback()
+            check("an order that would trade against your own resting order is refused", isinstance(err, (SelfTradeError, PriceOutOfBandError)), repr(err))
+            order_service.cancel_order(db, ctx["alice"], sell_o.id)
+            db.commit()
 
         # Retention: old bot-vs-bot trades go, human trades stay
         from app.models.order import Trade

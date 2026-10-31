@@ -205,8 +205,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'All-Time board',
         body: (
-          <p><strong>Net worth = cash + the current market value of every share you hold</strong> (each valued at its player’s
-          latest trade price) plus any treasury holdings. It never resets.</p>
+          <p><strong>Net worth = cash + what selling every share you hold would pay right now</strong> (real bids first, then
+          the House at its size-dependent price) plus any treasury holdings. It never resets.</p>
         ),
       },
       {
@@ -223,9 +223,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Portfolio value',
         body: (
-          <p><strong>Cash balance + holdings value</strong>, where each holding is its player’s current price multiplied by
-          the number of shares you own. This is the figure used for your ranking. Moving cash into shares does not change
-          your portfolio value on its own; only price movement, dividends, and trading fees do.</p>
+          <p><strong>Cash balance + holdings value</strong>, where each holding is what selling <em>all</em> of those shares
+          right now would pay (so a very large position is worth slightly less per share than the listed price). This is the
+          figure used for your ranking. Buying shares costs you the small gap between the buy and sell price and the
+          transaction fee; otherwise only price movement and dividends change your portfolio value.</p>
         ),
       },
       {
@@ -240,14 +241,25 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
   market: {
     emoji: '📈',
     title: 'Reading the Market',
-    intro: 'Every price on the exchange is a real trade price set by buyers and sellers. There is no hidden “true value” behind a player.',
+    intro: 'Every player has a Buy price and a Sell price, and the listed price is the midpoint between them.',
     sections: [
       {
         heading: 'Where prices come from',
         body: (
-          <p>A player’s price is the price of their most recent executed trade, kept inside the current order book: if
-          buyers are bidding above the last trade the price moves up to the highest bid, and if sellers are asking below it
-          the price moves down to the lowest ask. It is not set by a model or by the platform.</p>
+          <p>The <strong>Buy price</strong> is what one share costs right now (the cheapest seller, or the House if nobody is
+          selling cheaper) and the <strong>Sell price</strong> is what one share fetches right now (the best bidder, or the
+          House). The listed price is the midpoint. The House always quotes around the market’s running price, which moves
+          with trades in proportion to their size and stays within a band around what the player’s dividends are worth, so a
+          single tiny trade at a silly price cannot move anything.</p>
+        ),
+      },
+      {
+        heading: 'Big orders cost more per share',
+        body: (
+          <p>The House’s price gets worse the more shares you buy or sell in one go. That is also how your portfolio is valued:
+          a position is worth what selling <em>all</em> of it right now would pay, so large positions are worth a little less
+          per share than the listed price. If the House can’t take on a very large order it will tell you; a limit order lets
+          you wait for another trader instead.</p>
         ),
       },
       {

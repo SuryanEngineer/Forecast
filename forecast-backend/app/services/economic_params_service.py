@@ -42,6 +42,23 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         Decimal("100"),
         "Floor on synthetic liquidity depth, in shares, so newly-IPO'd/thinly-held players aren't absurdly illiquid.",
     ),
+    "market.band_low": (
+        Decimal("0.5"),
+        "Lowest price a stock's reference price / limit orders may take, as a multiple of its dividend-based fair price.",
+    ),
+    "market.band_high": (
+        Decimal("2.0"),
+        "Highest price a stock's reference price / limit orders may take, as a multiple of its dividend-based fair price.",
+    ),
+    "market.reference_damping_fraction": (
+        Decimal("0.01"),
+        "A trade moves the reference price all the way to its price only when it is at least this fraction of the "
+        "stock's shares; smaller trades move it proportionally less (so a 1-share trade barely moves anything).",
+    ),
+    "market.reference_damping_min": (
+        Decimal("100"),
+        "Floor, in shares, on the size at which a trade fully resets the reference price.",
+    ),
     "dividend.platform_fee_pct": (
         Decimal("0.0"),
         "Fraction of each dividend pool kept by the platform before distribution to shareholders. "

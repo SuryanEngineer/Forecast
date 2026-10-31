@@ -21,23 +21,37 @@ from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy.orm import Session
 
+from app.engine import market_policy
 from app.engine.matching_engine import OrderBook
 from app.engine.quick_trade_pricing import (
     SYSTEM_LIQUIDITY_MAKER_ID,
     estimate_quick_order_cost,
+    estimate_synthetic_leg,
     execute_quick_order,
+    worst_sweep_price,
 )
 from app.engine.types import Fill, Side as EngineSide
 from app.models.order import Order, OrderKind, OrderSide, OrderStatus, Trade
 from app.models.player import Player, PriceSnapshot
-from app.services import book_registry, economic_params_service, position_service, price_feed, wallet_service
+from app.services import (
+    book_registry,
+    economic_params_service,
+    lease_service,
+    position_service,
+    price_feed,
+    reference_service,
+    wallet_service,
+)
 from app.services.exceptions import (
+    HouseCapacityError,
     InsufficientFundsError,
     InsufficientSharesError,
     NoLiquidityError,
     OrderNotCancellableError,
     OrderNotFoundError,
     PlayerNotFoundError,
+    PriceOutOfBandError,
+    SelfTradeError,
 )
 from app.services.house_account import get_or_create_house_user
 
@@ -53,18 +67,72 @@ def _engine_side(side: OrderSide) -> EngineSide:
     return EngineSide.BUY if side == OrderSide.BUY else EngineSide.SELL
 
 
+class _MarketContext:
+    """Everything the pricing rules need for one stock, read once per order (see app/engine/market_policy.py)."""
+
+    def __init__(self, db: Session, player: Player):
+        from app.services import fair_price_service  # lazy: fair_price_service imports the bots, which import this module
+
+        self.low = economic_params_service.get_param(db, "market.band_low")
+        self.high = economic_params_service.get_param(db, "market.band_high")
+        frac = economic_params_service.get_param(db, "market.reference_damping_fraction")
+        dmin = economic_params_service.get_param(db, "market.reference_damping_min")
+        self.damping_depth = max(Decimal(player.total_shares_outstanding) * frac, dmin)
+        self.fair = fair_price_service.fair_for(db, player.id)
+        raw = reference_service.get_ref(db, player.id, fallback=player.ipo_price)
+        # The reference can sit outside the band after a result moved the fair price; price off the clamped value.
+        self.reference = market_policy.clamp_to_band(raw, self.fair, self.low, self.high)
+
+    def band(self) -> tuple[Decimal, Decimal] | None:
+        if self.fair is None or self.fair <= 0:
+            return None
+        return market_policy.band_limits(self.fair, self.low, self.high)
+
+
 def _reference_price(db: Session, player: Player) -> Decimal:
-    """Last traded price for this player, falling back to its IPO price if
-    it has never traded. Always returns a usable Decimal -- this is what
-    guarantees quick orders can always be priced (see NoLiquidityError
-    docstring in exceptions.py)."""
-    last_snapshot = (
-        db.query(PriceSnapshot)
-        .filter(PriceSnapshot.player_id == player.id)
-        .order_by(PriceSnapshot.recorded_at.desc())
-        .first()
+    """The market's reference price for this player (falls back to the IPO price). Always returns a usable Decimal --
+    this is what guarantees quick orders can always be priced (see NoLiquidityError docstring in exceptions.py)."""
+    return reference_service.get_ref(db, player.id, fallback=player.ipo_price)
+
+
+def _update_reference(db: Session, player: Player, ctx: _MarketContext, fill_price: Decimal, qty: int) -> None:
+    current = reference_service.get_ref(db, player.id, fallback=player.ipo_price)
+    new = market_policy.reference_after_trade(
+        current, fill_price, Decimal(qty), ctx.damping_depth, ctx.fair, ctx.low, ctx.high
     )
-    return last_snapshot.price if last_snapshot else player.ipo_price
+    if new.quantize(Decimal("0.0001")) != Decimal(current).quantize(Decimal("0.0001")):
+        reference_service.set_ref(db, player.id, new)
+
+
+def _check_self_trade(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, reach: Decimal | None) -> None:
+    """Refuse an order that would trade against the same user's own resting order (wash trades fake volume and move the
+    reference price). `reach` is the worst price the new order can trade at (its limit price, or the last real level a
+    quick order sweeps); None = it can reach everything."""
+    opposite = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+    prices = [
+        p
+        for (p,) in db.query(Order.limit_price)
+        .filter(
+            Order.user_id == user_id,
+            Order.player_id == player_id,
+            Order.side == opposite,
+            Order.order_kind == OrderKind.LIMIT,
+            Order.status.in_([OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]),
+            Order.quantity > Order.filled_quantity,
+            Order.limit_price.isnot(None),
+        )
+        .all()
+    ]
+    if not prices:
+        return
+    if reach is None:
+        hit = True
+    elif side == OrderSide.BUY:
+        hit = any(p <= reach for p in prices)
+    else:
+        hit = any(p >= reach for p in prices)
+    if hit:
+        raise SelfTradeError("This order would trade against your own resting order for this player -- cancel that order first.")
 
 
 def _resolve_maker(db: Session, maker_order_id: str, house_user_id: uuid.UUID) -> tuple[uuid.UUID, Order | None]:
@@ -98,6 +166,7 @@ def _process_fills(
     trades: list[Trade] = []
     total_taker_fill_qty = 0
     taker_notional = Decimal("0")
+    ctx = _MarketContext(db, player) if fills else None
 
     for fill in fills:
         fill_qty = int(fill.quantity)
@@ -151,6 +220,9 @@ def _process_fills(
         position_service.transfer_shares_for_trade(db, buyer_owner, seller_owner, player.id, fill_qty, fill.price)
 
         db.add(PriceSnapshot(id=uuid.uuid4(), player_id=player.id, price=fill.price, volume=fill_qty))
+        # The reference price follows trades in proportion to their SIZE (a 1-share trade barely moves it) and never
+        # leaves the band around the fair price.
+        _update_reference(db, player, ctx, fill.price, fill_qty)
         price_feed.publish_trade(player.id, fill.price, fill_qty)
 
         # Update the OTHER side's order row if it's a real resting order
@@ -200,6 +272,7 @@ def place_limit_order(
         raise ValueError("quantity must be positive")
     if price <= 0:
         raise ValueError("price must be positive")
+    lease_service.require_primary()
 
     player = _get_player_or_raise(db, player_id)
     house = get_or_create_house_user(db)
@@ -207,6 +280,18 @@ def place_limit_order(
 
     lock = book_registry.get_player_lock(player_id)
     with lock:
+        # A limit price must sit inside the band around the stock's fair (dividend-based) value: nobody can post (or
+        # accept) a price wildly off what the stock is worth, which is what made wash-trading and "pump" bids possible.
+        ctx = _MarketContext(db, player)
+        band = ctx.band()
+        if band is not None and not market_policy.in_band(price, ctx.fair, ctx.low, ctx.high):
+            lo, hi = band
+            raise PriceOutOfBandError(
+                f"Limit prices for {player.gamertag} must be between ${lo.quantize(Decimal('0.01'))} and "
+                f"${hi.quantize(Decimal('0.01'))} (its fair value is about ${ctx.fair.quantize(Decimal('0.01'))})."
+            )
+        _check_self_trade(db, user_id, player_id, side, price)
+
         order_id = uuid.uuid4()
 
         if side == OrderSide.BUY:
@@ -247,6 +332,7 @@ def place_limit_order(
 def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, quantity: int, is_bot: bool = False) -> Order:
     if quantity <= 0:
         raise ValueError("quantity must be positive")
+    lease_service.require_primary()
 
     player = _get_player_or_raise(db, player_id)
     house = get_or_create_house_user(db)
@@ -257,7 +343,11 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
     with lock:
         book = book_registry.get_book(db, player_id)
         shares_outstanding = Decimal(player.total_shares_outstanding)
-        fallback_price = _reference_price(db, player)
+        ctx = _MarketContext(db, player)
+        # The House quotes around the market's reference price (not the last trade): what a trade costs depends on the
+        # reference and its own size, never on whatever tiny trade happened last.
+        fallback_price = ctx.reference
+        _check_self_trade(db, user_id, player_id, side, worst_sweep_price(book, engine_side, Decimal(quantity)))
 
         # Read the current tunable slippage/depth parameters from the
         # database (admin-adjustable, see economic_params_service.py)
@@ -278,9 +368,33 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
         # SELL orders have no equivalent cap -- the House buying shares
         # back only needs cash, which it's seeded with $10M of.
         max_synthetic_quantity = None
+        synthetic_qty, synthetic_notional = estimate_synthetic_leg(
+            book, engine_side, Decimal(quantity), shares_outstanding,
+            fallback_reference_price=fallback_price,
+            market_impact_coefficient=market_impact_coefficient,
+            synthetic_liquidity_depth=synthetic_liquidity_depth,
+            reference_price_override=ctx.reference,
+        )
         if side == OrderSide.BUY:
             house_position = position_service.get_or_create_position(db, house.id, player_id)
             max_synthetic_quantity = Decimal(house_position.available_quantity)
+            if synthetic_qty > max_synthetic_quantity:
+                can_do = int(Decimal(quantity) - synthetic_qty + max_synthetic_quantity)
+                raise HouseCapacityError(
+                    f"The House can't sell that many {player.gamertag} shares right now (it has "
+                    f"{int(max_synthetic_quantity):,} left to sell). You can buy about {max(0, can_do):,} shares at once -- "
+                    f"or place a limit order and wait for a seller."
+                )
+        elif synthetic_qty > 0:
+            # Selling: whatever real bids don't cover, the House pays for in cash. A wallet can't go negative, so a
+            # sell bigger than the House's spare cash gets a clear answer instead of a database error.
+            house_wallet = wallet_service.get_or_create_wallet(db, house.id)
+            if house_wallet.available_balance < synthetic_notional:
+                raise HouseCapacityError(
+                    f"The House can't buy that many {player.gamertag} shares right now (it would need "
+                    f"${synthetic_notional.quantize(Decimal('0.01')):,} and doesn't have that much cash free). "
+                    f"Sell fewer shares, or place a limit order and wait for a buyer."
+                )
 
         estimated_notional = estimate_quick_order_cost(
             book,
@@ -291,6 +405,7 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
             market_impact_coefficient=market_impact_coefficient,
             synthetic_liquidity_depth=synthetic_liquidity_depth,
             max_synthetic_quantity=max_synthetic_quantity,
+            reference_price_override=ctx.reference,
         )
         if estimated_notional is None:
             raise NoLiquidityError(
@@ -343,6 +458,7 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
             market_impact_coefficient=market_impact_coefficient,
             synthetic_liquidity_depth=synthetic_liquidity_depth,
             max_synthetic_quantity=max_synthetic_quantity,
+            reference_price_override=ctx.reference,
         )
         if result.unfilled_quantity > 0:
             # Should not happen given the pre-check above (same book, same
@@ -358,6 +474,7 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
 
 
 def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
+    lease_service.require_primary()
     order = db.get(Order, order_id)
     if order is None or order.user_id != user_id:
         raise OrderNotFoundError(str(order_id))

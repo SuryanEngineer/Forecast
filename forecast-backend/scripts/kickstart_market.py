@@ -53,6 +53,9 @@ def main() -> None:
 
     rng = random.Random()
     db = SessionLocal()
+    from app.services import lease_service  # noqa: E402
+
+    lease_service.script_guard_or_exit(db, "kickstart_market")  # bots here would trade against private copies of the books
     total_actions = 0
     total_errors = 0
     try:

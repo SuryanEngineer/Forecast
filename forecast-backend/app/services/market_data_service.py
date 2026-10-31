@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.player import Player, PriceSnapshot
 from app.models.dividend import DividendPayout, DividendPayoutStatus
 from app.models.order import Trade
-from app.services import book_price_service
+from app.services import book_price_service, valuation_service
 
 
 def _last_price(db: Session, player: Player) -> Decimal:
@@ -62,9 +62,9 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(hours=24)
 
-    last_price = _last_price(db, player)
-    # Listed price = last trade pulled into the best bid / best ask (see book_price_service).
-    last_price = book_price_service.apply_book(db, {player.id: last_price})[player.id]
+    valuer = valuation_service.Valuer(db, [player.id])
+    last_price = valuer.listed(player.id) or _last_price(db, player)
+    buy_price, sell_price = valuer.buy_sell(player.id)
     prev_close = _price_as_of(db, player.id, day_ago)
     if prev_close is None:
         # Never traded before the 24h window -- no meaningful "change" yet,
@@ -88,6 +88,8 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
         "total_shares_outstanding": player.total_shares_outstanding,
         "ipo_price": player.ipo_price,
         "last_price": last_price,
+        "buy_price": buy_price,
+        "sell_price": sell_price,
         "prev_close": prev_close,
         "change": change,
         "change_pct": change_pct,
@@ -189,10 +191,9 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(hours=24)
 
-    last_prices = _bulk_latest_prices(db, player_ids)
-    # Players that never traded list at their IPO price; then the order book can pull the listed price either way.
-    last_prices = {p.id: last_prices.get(p.id, p.ipo_price) for p in players}
-    last_prices = book_price_service.apply_book(db, last_prices)
+    valuer = valuation_service.Valuer(db, player_ids)
+    last_prices = {p.id: (valuer.listed(p.id) or p.ipo_price) for p in players}
+    sides = {p.id: valuer.buy_sell(p.id) for p in players}
     prev_prices = _bulk_latest_prices(db, player_ids, before=day_ago)
     volumes = _bulk_volume_since(db, player_ids, day_ago)
     dividends = _bulk_dividends_total(db, player_ids)
@@ -218,6 +219,8 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
                 "total_shares_outstanding": player.total_shares_outstanding,
                 "ipo_price": player.ipo_price,
                 "last_price": last_price,
+                "buy_price": sides[player.id][0],
+                "sell_price": sides[player.id][1],
                 "prev_close": prev_close,
                 "change": change,
                 "change_pct": change_pct,

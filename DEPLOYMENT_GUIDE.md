@@ -514,13 +514,27 @@ python3 scripts/simulate_price_history.py --reset-prices --dry-run   # preview t
 python3 scripts/simulate_price_history.py --reset-prices             # do it
 ```
 
-Then **restart the backend on Render** straight away (it keeps order books and bot memory in RAM). The reset refuses to run without `--yes` and prints how it changes each real user's share value first.
+**The script refuses to run while the web server is live** (the server holds a lease, see "One server runs the market" below). So: in Render **suspend the backend**, wait ~1 minute, run the script with `--yes`, then **resume** the backend. The reset prints how it changes each real user's share value first, sets every stock's reference price (see below) and ends each path inside its fair-value band.
 
-**Re-rate on results:** when a tournament is finalized, every participant's listed price jumps 60% (in log terms) of the way to its new fair price at once (`app/services/rerate_service.py`, a no-trade price point with volume 0), so a stock isn't left cheap for hours after a big finish. Both simulation modes of `simulate_price_history.py` delete volume-0 points, so only re-run them before launch, not once live re-rates exist.
+**Re-rate on results:** when a tournament is finalized, each participant's reference price moves by the *news* only: `new reference = old reference × (fair after ÷ fair before)^0.8` (capped at about ×2 / ÷2, always inside the band; `app/services/rerate_service.py`, a no-trade price point with volume 0). A stock the market already over- or under-valued keeps that opinion; only the new information is applied. Both simulation modes of `simulate_price_history.py` delete volume-0 points, so only re-run them before launch, not once live re-rates exist.
+
+### How a price is built now (reference price, listed price, portfolio value)
+
+* **Fair price** = projected yearly dividends per share ÷ 10%, with each stock's income *shrunk toward the roster median* when it rests on few results (`n/(n+6)` weight on its own record), so one fluke win doesn't price a stock for a year. Stocks with no results at all have no fair price (no band).
+* **Reference price** (`players.reference_price`) is the market's running opinion. Every trade moves it toward the trade price *in proportion to the trade's size* (a 1-share trade barely moves it; a trade of ≥1% of the shares moves it fully), and it can never leave `market.band_low`–`market.band_high` (0.5×–2.0×) of fair. The House quotes around it.
+* **Listed price** = midpoint of the best price you could buy one share at and the best you could sell one at (House at the reference, or a better real order, pull capped at 6%). The market list and player page also show **Buy / Sell**.
+* **Portfolio value / net worth** = what quick-selling the whole position would pay right now (real bids capped at the reference, then the House with slippage). One tiny trade can no longer move anyone's net worth; big positions are worth slightly less per share.
+* **Protections:** limit prices outside the band are refused; an order that would trade against your own resting order is refused; a quick order the House cannot take ("The House can't buy that many … right now") gets a clear message instead of a database error. Admin knobs: `market.band_low`, `market.band_high`, `market.reference_damping_fraction`, `market.reference_damping_min` (Admin → parameters).
+
+### One server runs the market
+
+The order books live in memory, so exactly one backend instance may match orders. A row in the new `market_lease` table names the holder; the server renews it every 15 s and releases it on shutdown, so deploys hand over in seconds. Any other instance still serves reads but order changes return "the market is switching servers for a moment"; bots, dividends, tournament finalizing and Osirion sync only run on the holder. Scripts that change prices/orders (`kickstart_market.py`, `simulate_price_history.py`) refuse to run while a server holds the lease. `MARKET_LEASE_ENABLED=false` turns it off (single-process debugging only). So it is now safe (not just "don't") to have Render briefly run two instances during a deploy.
+
+**Ledger retention** now *rolls up* old bot/House trade and fee ledger rows into one summed row per wallet and type instead of deleting them, so cash always equals the sum of the ledger.
 
 ## Bot pace, prices and database limits
 
-**How prices work now.** The listed price is the last trade, pulled up to the best resting bid if buyers are bidding above it, or down to the best resting ask if sellers are asking below it (never more than 6% away from the last trade, and only orders worth at least $100 count, so a 1-share order cannot move a price). Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.
+**How prices work now.** See "How a price is built now" above (reference price, midpoint listed price, sell-everything portfolio value). Resting orders only count toward the listed price when worth at least $100, so a 1-share order cannot move a price. Bots value every player from skill (career earnings vs the roster median, one shared base price) and post bids/asks at their own value, so prices converge on value through the book as well as through trades. Players now have an **Order book** panel in their trade window.
 
 **Pace knobs** (Render → backend → Environment; all optional, defaults shown):
 

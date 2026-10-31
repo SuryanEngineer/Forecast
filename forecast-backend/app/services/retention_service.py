@@ -4,7 +4,8 @@ a PriceSnapshot, two share-ledger rows and several wallet-ledger rows (~1.7 KB),
 in weeks. Everything pruned here is BOT-ONLY history that nothing user-facing needs after a few days:
 
   * bot-vs-bot trades older than RETENTION_BOT_TRADE_DAYS (the live-activity feed only shows recent ones);
-  * bot / House trade-related wallet ledger rows (trade debit/credit, order hold/release, fees) older than the same;
+  * bot / House wallet ledger rows older than the same: hold/release rows (amount 0) are deleted; trade debit/credit and
+    fee rows are ROLLED UP into one summed row per wallet and type, so cash == sum of ledger keeps reconciling;
   * finished (filled / cancelled / rejected) orders of bots older than the same;
   * bot share-transfer ledger rows older than RETENTION_SHARE_LEDGER_DAYS (holdings_at() only ever reads rows AFTER a
     tournament's start time, so rows older than any pending payout window are dead weight);
@@ -39,13 +40,41 @@ MAX_CHUNKS_PER_TABLE = 6  # per pass; a backlog is cleared over several passes
 RUN_EVERY_SECONDS = 20 * 60
 _last_run = 0.0
 
-_TRADE_LEDGER_TYPES = [
-    LedgerEntryType.TRADE_DEBIT,
-    LedgerEntryType.TRADE_CREDIT,
-    LedgerEntryType.ORDER_HOLD,
-    LedgerEntryType.ORDER_RELEASE,
-    LedgerEntryType.FEE,
-]
+# Money-moving rows are ROLLED UP, never just deleted: old rows of one type for one wallet are replaced by a single row
+# holding their sum, so cash balance == sum of the ledger still holds (the House / bot books reconcile) and per-type totals
+# (fees, trade debits/credits) are unchanged. Hold/release rows carry amount 0 and are simply deleted.
+_ROLLUP_TYPES = [LedgerEntryType.TRADE_DEBIT, LedgerEntryType.TRADE_CREDIT, LedgerEntryType.FEE]
+_ZERO_TYPES = [LedgerEntryType.ORDER_HOLD, LedgerEntryType.ORDER_RELEASE]
+ROLLUP_GROUPS_PER_PASS = 200
+
+
+def _rollup_ledger(db: Session, wallet_ids_query, cut: datetime) -> int:
+    """Collapse each (wallet, entry type)'s rows older than `cut` into one summed row. Returns rows removed."""
+    from sqlalchemy import func
+
+    base = and_(LedgerEntry.wallet_id.in_(wallet_ids_query), LedgerEntry.entry_type.in_(_ROLLUP_TYPES), LedgerEntry.created_at < cut)
+    groups = (
+        db.query(LedgerEntry.wallet_id, LedgerEntry.entry_type, func.sum(LedgerEntry.amount), func.count(LedgerEntry.id), func.max(LedgerEntry.created_at))
+        .filter(base)
+        .group_by(LedgerEntry.wallet_id, LedgerEntry.entry_type)
+        .having(func.count(LedgerEntry.id) > 1)
+        .limit(ROLLUP_GROUPS_PER_PASS)
+        .all()
+    )
+    removed = 0
+    for wallet_id, etype, total, n, newest in groups:
+        same = and_(LedgerEntry.wallet_id == wallet_id, LedgerEntry.entry_type == etype, LedgerEntry.created_at < cut)
+        last_balance = db.query(LedgerEntry.balance_after).filter(same).order_by(LedgerEntry.created_at.desc()).limit(1).scalar()
+        db.query(LedgerEntry).filter(same).delete(synchronize_session=False)
+        db.add(
+            LedgerEntry(
+                wallet_id=wallet_id, entry_type=etype, amount=total, balance_after=last_balance if last_balance is not None else 0,
+                reference_type="rollup", memo=f"Rollup of {n} older entries", created_at=newest,
+            )
+        )
+        db.commit()  # one group per transaction: the delete and the replacement row land together
+        removed += int(n) - 1
+    return removed
 
 
 def _delete_chunked(db: Session, model, where) -> int:
@@ -122,13 +151,14 @@ def run_retention(db: Session, force: bool = False) -> dict:
         bot_wallets = db.query(Wallet.id).filter(Wallet.user_id.in_(bots)).subquery()
         steps += [
             (
-                "bot_ledger",
+                "bot_ledger_zero_rows",
                 lambda: _delete_chunked(
                     db,
                     LedgerEntry,
-                    and_(LedgerEntry.wallet_id.in_(db.query(bot_wallets.c.id)), LedgerEntry.entry_type.in_(_TRADE_LEDGER_TYPES), LedgerEntry.created_at < trade_cut),
+                    and_(LedgerEntry.wallet_id.in_(db.query(bot_wallets.c.id)), LedgerEntry.entry_type.in_(_ZERO_TYPES), LedgerEntry.created_at < trade_cut),
                 ),
             ),
+            ("bot_ledger_rolled_up", lambda: _rollup_ledger(db, db.query(bot_wallets.c.id), trade_cut)),
             (
                 "bot_orders",
                 lambda: _delete_chunked(

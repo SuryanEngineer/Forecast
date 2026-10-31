@@ -255,33 +255,39 @@ def _expected_value_per_tournament(db: Session, player_ids: list[uuid.UUID]) -> 
     return _career_stats(db, player_ids)[0]
 
 
-def _result_income(db: Session, player_ids: list[uuid.UUID]) -> tuple[dict[uuid.UUID, list[tuple[datetime, float]]], datetime | None]:
+def _result_income(
+    db: Session, player_ids: list[uuid.UUID], exclude_tournament_ids: list[uuid.UUID] | None = None
+) -> tuple[dict[uuid.UUID, list[tuple[datetime, float]]], datetime | None]:
     """Every result's dividend value (the tournament's pool x the payout-curve fraction for that placement, in dollars)
     as {player_id: [(finished_at, dollars)]}, plus the earliest tournament time seen anywhere (how far back our data
-    reaches). Pure data: no 'as of' logic -- see income_at."""
+    reaches). Pure data: no 'as of' logic -- see income_at. `exclude_tournament_ids` leaves those tournaments out (used to
+    ask 'what was fair BEFORE this result?'); the first-seen time still reflects them, so the data horizon doesn't shift."""
     events: dict[uuid.UUID, list[tuple[datetime, float]]] = defaultdict(list)
     if not player_ids:
         return events, None
-    rows = (
+    query = (
         db.query(PlacementResult.player_id, PlacementResult.tournament_id, PlacementResult.placement, Tournament.start_time, Tournament.end_time)
         .join(Tournament, Tournament.id == PlacementResult.tournament_id)
         .filter(PlacementResult.player_id.in_(player_ids), Tournament.start_time.isnot(None))
-        .all()
     )
-    tids = {r[1] for r in rows}
-    if not tids:
+    excluded = set(exclude_tournament_ids or [])
+    rows = query.all()
+    tids = {r[1] for r in rows if r[1] not in excluded}
+    if not rows:
         return events, None
-    field = {tid: n for tid, n in db.query(PlacementResult.tournament_id, func.count(PlacementResult.id)).filter(PlacementResult.tournament_id.in_(tids)).group_by(PlacementResult.tournament_id).all()}
-    pools = _tournament_pool_amounts(db, list(tids))
+    field = {tid: n for tid, n in db.query(PlacementResult.tournament_id, func.count(PlacementResult.id)).filter(PlacementResult.tournament_id.in_(tids)).group_by(PlacementResult.tournament_id).all()} if tids else {}
+    pools = _tournament_pool_amounts(db, list(tids)) if tids else {}
     curve = economic_params_service.get_placement_curve(db)
     first_seen: datetime | None = None
     for pid, tid, placement, start, end in rows:
         start = _aware(start)
+        if first_seen is None or start < first_seen:
+            first_seen = start
+        if tid in excluded:
+            continue
         done = _aware(end) if end is not None else start + timedelta(days=1)
         value = float(pools.get(tid, Decimal("0")) * placement_payout_fraction(placement, max(1, field.get(tid, 1)), curve))
         events[pid].append((done, value))
-        if first_seen is None or start < first_seen:
-            first_seen = start
     return events, first_seen
 
 
@@ -509,9 +515,14 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     history = {pid: list(buckets.get(pid) or ()) for pid in player_ids}
 
     last_trade = {pid: (history[pid][0] if history.get(pid) else ipo_price_by_id[pid]) for pid in player_ids}
-    # The listed price also reflects the resting order book (bids above / asks below the last trade), exactly as users see it.
+    # The price bots see is the same listed price users see: midpoint of the best buy / sell price around the market's
+    # reference price (clamped into the fair-price band just below, once fair values are known).
+    from app.engine import market_policy
+    from app.services import reference_service
+
     quotes = book_price_service.bulk_best_quotes(db)
-    price = {pid: book_price_service.effective_price(last_trade[pid], *quotes.get(pid, (None, None))) for pid in player_ids}
+    _refs = reference_service.get_refs(db, player_ids)
+    price = {pid: market_policy.listed_price(_refs.get(pid, last_trade[pid]), *quotes.get(pid, (None, None))) for pid in player_ids}
     ref_price = {
         pid: (sum(history[pid], Decimal("0")) / len(history[pid]) if history.get(pid) else ipo_price_by_id[pid])
         for pid in player_ids
@@ -524,12 +535,18 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             pct_change[pid] = Decimal("0")
 
     expected_value, form, career_fraction, career_strength = _slow("career", player_ids, lambda: _career_stats(db, player_ids))
-    income_events, income_first_seen = _slow("income", player_ids, lambda: _result_income(db, player_ids))
-    now_for_income = datetime.now(timezone.utc)
-    fair_value = {
-        p.id: _fair_from_income(income_at(income_events.get(p.id, []), now_for_income, income_first_seen) / max(1, p.total_shares_outstanding))
-        for p in players
-    }
+    # Fair price comes from the shared service (shrunk toward the roster median for thinly-evidenced stocks, cached).
+    from app.services import fair_price_service
+
+    _fair_all = fair_price_service.fair_prices(db)
+    fair_value = {p.id: _fair_all.get(p.id, Decimal(str(FAIR_MIN))) for p in players}
+    _lo = economic_params_service.get_param(db, "market.band_low")
+    _hi = economic_params_service.get_param(db, "market.band_high")
+    for pid in player_ids:
+        price[pid] = market_policy.listed_price(
+            market_policy.clamp_to_band(_refs.get(pid, last_trade[pid]), fair_value[pid], _lo, _hi),
+            *quotes.get(pid, (None, None)),
+        )
 
     # Expected dividend yield per share (net of fee), blended with what was actually paid out.
     fee = float(economic_params_service.get_param(db, "dividend.platform_fee_pct"))
