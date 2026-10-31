@@ -56,6 +56,16 @@ RUNUP_DAYS = 3.0
 EXDIV = 0.015                # log-price dip after the start (dividend already locked in)
 EXDIV_DAYS = 2.0
 MIN_PRICE = 0.01
+RAMP_DAYS = 21.0             # with --reset-prices: the last this-many days bend smoothly onto the live fair price
+
+
+def _smoothstep(x: float) -> float:
+    """0 before the ramp starts, 1 once it is over, an S-curve in between (no kink at either end)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    return x * x * (3.0 - 2.0 * x)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -263,12 +273,23 @@ def main() -> None:
                     big_corr += 1
                 span = max((end_ts - path[0][0]).total_seconds(), 1.0)
                 path = [(t, v + delta * (((t - path[0][0]).total_seconds() / span) ** 2)) for t, v in path]
+            if args.reset_prices and p.id not in first_real_p and p.id in fair_live:
+                # BLEND INTO THE LIVE MARKET: the market opens at the live fair price (that is what the bots, the House and the
+                # band all work from, and what the market-value target was solved for), so bend the last RAMP_DAYS of the
+                # history smoothly onto it. Earlier history is untouched; the chart ends exactly where trading starts.
+                delta_end = math.log(float(fair_live[p.id])) - path[-1][1]
+                ramp_start = path[-1][0] - timedelta(days=RAMP_DAYS)
+                path = [(t, v + delta_end * _smoothstep(((t - ramp_start).total_seconds() / 86400.0) / RAMP_DAYS)) for t, v in path]
             prices = [(t, max(MIN_PRICE, math.exp(v))) for t, v in path]
             if p.id not in first_real_p and p.id in fair_live:
                 # The live market clamps every reference price into [band_low, band_high] x its (fluke-shrunk) fair price;
                 # end the path inside that band so the chart's last point IS the reference price the market starts from.
                 lo_px, hi_px = (float(x) for x in market_policy.band_limits(fair_live[p.id], band_low, band_high))
                 prices[-1] = (prices[-1][0], min(max(prices[-1][1], lo_px), hi_px))
+            if args.reset_prices and p.id not in first_real_p:
+                # A closing point at "now" with the opening price, so there is no gap or jump between the last simulated
+                # day and the first live trade (the reference price below is set to exactly this value).
+                prices.append((now - timedelta(seconds=30), prices[-1][1]))
             per_player_pts.append((p.gamertag, prices))
             for t, px in prices:
                 new_rows.append({"id": uuid.uuid4(), "player_id": p.id, "price": Decimal(str(round(px, 4))), "volume": 0, "recorded_at": t})
