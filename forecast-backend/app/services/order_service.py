@@ -45,6 +45,7 @@ from app.services import (
     wallet_service,
 )
 from app.services.exceptions import (
+    usd,
     HouseCapacityError,
     InsufficientFundsError,
     InsufficientSharesError,
@@ -464,14 +465,14 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
             wallet = wallet_service.get_or_create_wallet(db, user_id)
             if wallet.available_balance < estimated_total_with_fee:
                 raise InsufficientFundsError(
-                    f"available balance {wallet.available_balance} is less than estimated cost "
-                    f"{estimated_total_with_fee} (including transaction fee)"
+                    f"This order would cost about {usd(estimated_total_with_fee)} (including the transaction fee), "
+                    f"but you have {usd(wallet.available_balance)} available."
                 )
         else:
             position = position_service.get_or_create_position(db, user_id, player_id)
             if position.available_quantity < quantity:
                 raise InsufficientSharesError(
-                    f"user has {position.available_quantity} available shares, needs {quantity}"
+                    f"You have {position.available_quantity:,} available share{'' if position.available_quantity == 1 else 's'}, but this order needs {quantity:,}."
                 )
 
         order_id = uuid.uuid4()
@@ -513,6 +514,48 @@ def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, sid
         _process_fills(db, player, house.id, order, result.fills, transaction_fee_pct=transaction_fee_pct)
 
     return order
+
+
+def quote_quick_order(db: Session, player_id: uuid.UUID, side: OrderSide, quantity: int) -> dict:
+    """What a quick order of `quantity` shares would cost / pay RIGHT NOW, worked out exactly the way place_quick_order does
+    it: walk the real resting orders best price first, then the House for whatever is left (with its size-dependent
+    slippage). Read-only. Money values are returned already rounded to the cent."""
+    cent = Decimal("0.01")
+    if quantity <= 0:
+        raise ValueError("quantity must be positive")
+    player = _get_player_or_raise(db, player_id)
+    house = get_or_create_house_user(db)
+    engine_side = _engine_side(side)
+    fee_pct = economic_params_service.get_param(db, "fees.transaction_fee_pct")
+    lock = book_registry.get_player_lock(player_id)
+    with lock:
+        book = book_registry.get_book(db, player_id)
+        shares_outstanding = Decimal(player.total_shares_outstanding)
+        ctx = _MarketContext(db, player)
+        k = economic_params_service.get_param(db, "quick_trade.market_impact_coefficient")
+        depth_fraction = economic_params_service.get_param(db, "quick_trade.synthetic_depth_fraction")
+        depth_min = economic_params_service.get_param(db, "quick_trade.synthetic_depth_min")
+        depth = max(shares_outstanding * depth_fraction, depth_min)
+        max_synthetic = None
+        if side == OrderSide.BUY:
+            max_synthetic = Decimal(position_service.get_or_create_position(db, house.id, player_id).available_quantity)
+        notional = estimate_quick_order_cost(
+            book, engine_side, Decimal(quantity), shares_outstanding,
+            fallback_reference_price=ctx.reference, market_impact_coefficient=k, synthetic_liquidity_depth=depth,
+            max_synthetic_quantity=max_synthetic, reference_price_override=ctx.reference,
+        )
+    out = {"side": side.value, "quantity": quantity, "feasible": notional is not None, "reason": None}
+    if notional is None:
+        out.update(reason="Not enough shares are available to fill an order this size. Try fewer shares, or use a limit order.",
+                   subtotal=None, fee=None, total=None, average_price=None)
+        return out
+    fee = notional * fee_pct
+    total = notional + fee if side == OrderSide.BUY else notional - fee
+    out.update(
+        subtotal=notional.quantize(cent), fee=fee.quantize(cent), total=total.quantize(cent),
+        average_price=(notional / Decimal(quantity)).quantize(cent),
+    )
+    return out
 
 
 def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:

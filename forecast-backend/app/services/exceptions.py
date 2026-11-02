@@ -1,3 +1,11 @@
+from decimal import ROUND_HALF_UP, Decimal
+
+
+def usd(amount) -> str:
+    """Dollars for people to read: always rounded to the cent ('$1,234.57'), however many decimals the math carried."""
+    return f"${Decimal(str(amount)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,}"
+
+
 class ServiceError(Exception):
     """Base class for errors the API layer should turn into 4xx responses."""
 

@@ -19,7 +19,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.wallet import LedgerEntry, LedgerEntryType, Wallet
-from app.services.exceptions import InsufficientFundsError
+from app.services.exceptions import InsufficientFundsError, usd
 
 
 def get_or_create_wallet(db: Session, user_id: uuid.UUID) -> Wallet:
@@ -70,7 +70,7 @@ def withdraw(db: Session, user_id: uuid.UUID, amount: Decimal, memo: str | None 
     wallet = get_or_create_wallet(db, user_id)
     if wallet.available_balance < amount:
         raise InsufficientFundsError(
-            f"available balance {wallet.available_balance} is less than requested withdrawal {amount}"
+            f"You have {usd(wallet.available_balance)} available, which is less than the {usd(amount)} requested."
         )
     wallet.cash_balance -= amount
     db.flush()
@@ -88,7 +88,7 @@ def hold_funds(db: Session, user_id: uuid.UUID, amount: Decimal, reference_type:
     wallet = get_or_create_wallet(db, user_id)
     if wallet.available_balance < amount:
         raise InsufficientFundsError(
-            f"available balance {wallet.available_balance} is less than requested hold {amount}"
+            f"You have {usd(wallet.available_balance)} available, but this order needs {usd(amount)} set aside."
         )
     wallet.held_balance += amount
     db.flush()
@@ -179,7 +179,7 @@ def debit_for_treasury_purchase(db: Session, user_id: uuid.UUID, amount: Decimal
     wallet = get_or_create_wallet(db, user_id)
     if wallet.available_balance < amount:
         raise InsufficientFundsError(
-            f"available balance {wallet.available_balance} is less than requested treasury purchase {amount}"
+            f"You have {usd(wallet.available_balance)} available, which is less than the {usd(amount)} purchase."
         )
     wallet.cash_balance -= amount
     db.flush()
@@ -209,7 +209,7 @@ def charge_fee(db: Session, user_id: uuid.UUID, amount: Decimal, reference_id: u
     wallet = get_or_create_wallet(db, user_id)
     if wallet.available_balance < amount:
         raise InsufficientFundsError(
-            f"available balance {wallet.available_balance} is less than fee {amount}"
+            f"You have {usd(wallet.available_balance)} available, which is less than the {usd(amount)} fee."
         )
     wallet.cash_balance -= amount
     db.flush()

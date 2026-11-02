@@ -72,3 +72,15 @@ class OrderBookResponse(BaseModel):
     bids: list[BookLevelResponse]
     asks: list[BookLevelResponse]
     last_trade: Decimal | None = None  # last executed price (the listed price may sit at the best bid / ask instead)
+
+
+class QuickQuoteResponse(BaseModel):
+    """What a quick order of this size would cost (buy) or pay (sell) right now, rounded to the cent."""
+    side: str
+    quantity: int
+    feasible: bool
+    reason: str | None = None
+    subtotal: Decimal | None = None       # the shares themselves, summed across the real resting orders and the House
+    fee: Decimal | None = None            # the transaction fee
+    total: Decimal | None = None          # buy: subtotal + fee (what leaves your wallet); sell: subtotal - fee (what you receive)
+    average_price: Decimal | None = None  # subtotal / quantity

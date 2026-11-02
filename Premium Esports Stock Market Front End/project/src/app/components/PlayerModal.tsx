@@ -37,7 +37,20 @@ interface Props {
 }
 
 function usd(n: number): string {
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** The real price of a quick order of this size (GET /markets/{id}/quote): the resting orders it would take first, then the
+ * House for the rest, plus the fee. Already rounded to the cent by the server. */
+interface QuickQuote {
+  side: string;
+  quantity: number;
+  feasible: boolean;
+  reason?: string | null;
+  subtotal?: string | number | null;
+  fee?: string | number | null;
+  total?: string | number | null;
+  average_price?: string | number | null;
 }
 
 /** The player's tournament record: 2026 dividend totals, then every event with the placement and its payout. */
@@ -67,7 +80,7 @@ function TournamentHistory({
           </div>
           <div>
             <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>
-              ${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              {perShare > 0 && perShare < 0.01 ? '<$0.01' : usd(perShare)}
             </p>
             <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>per share</p>
           </div>
@@ -235,8 +248,22 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   // null = good until cancelled (the default). One tap picks a time limit.
   const [expiryMinutes, setExpiryMinutes] = useState<number | null>(null);
   const [quickQty, setQuickQty] = useState(1);
+  const [buyQuote, setBuyQuote] = useState<QuickQuote | null>(null);
+  const [sellQuote, setSellQuote] = useState<QuickQuote | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+
+  // Re-quote whenever the share count changes (short pause so typing "25" doesn't ask twice) or the market moves.
+  const quoteKey = `${market?.buy_price ?? ''}|${market?.sell_price ?? ''}`;
+  useEffect(() => {
+    if (tradeMode !== 'quick') return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api.get<QuickQuote>(`/markets/${playerId}/quote?side=buy&quantity=${quickQty}`).then(q => { if (!cancelled) setBuyQuote(q); }).catch(() => { if (!cancelled) setBuyQuote(null); });
+      api.get<QuickQuote>(`/markets/${playerId}/quote?side=sell&quantity=${quickQty}`).then(q => { if (!cancelled) setSellQuote(q); }).catch(() => { if (!cancelled) setSellQuote(null); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [playerId, quickQty, tradeMode, quoteKey]);
 
   async function load() {
     setLoading(true);
@@ -530,10 +557,37 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                     style={{ background: 'var(--muted)', fontSize: 16, fontWeight: 700 }}
                   />
                 </div>
-                <div className="rounded-xl p-3 border border-border text-center" style={{ background: 'var(--muted)' }}>
-                  <p className="text-muted-foreground" style={{ fontSize: 12 }}>Estimated cost</p>
-                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>${(quickQty * (market.buy_price !== undefined ? toNumber(market.buy_price) : price)).toFixed(2)}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 10 }}>at the buy price; bigger orders cost a little more per share, plus a small transaction fee</p>
+                <div className="rounded-xl p-3 border border-border" style={{ background: 'var(--muted)' }}>
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div>
+                      <p className="text-muted-foreground" style={{ fontSize: 12 }}>Estimated cost</p>
+                      <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>
+                        {buyQuote?.feasible && buyQuote.total != null ? usd(toNumber(buyQuote.total)) : buyQuote ? '—' : '…'}
+                      </p>
+                      {buyQuote?.feasible && buyQuote.average_price != null && (
+                        <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                          about {usd(toNumber(buyQuote.average_price))} a share, plus {usd(toNumber(buyQuote.fee ?? 0))} fee
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground" style={{ fontSize: 12 }}>If you sell</p>
+                      <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>
+                        {sellQuote?.feasible && sellQuote.total != null ? usd(toNumber(sellQuote.total)) : sellQuote ? '—' : '…'}
+                      </p>
+                      {sellQuote?.feasible && sellQuote.average_price != null && (
+                        <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                          about {usd(toNumber(sellQuote.average_price))} a share, after {usd(toNumber(sellQuote.fee ?? 0))} fee
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {buyQuote && !buyQuote.feasible && buyQuote.reason && (
+                    <p className="text-center mt-2" style={{ fontSize: 11, color: 'var(--loss)' }}>{buyQuote.reason}</p>
+                  )}
+                  <p className="text-muted-foreground text-center mt-2" style={{ fontSize: 10 }}>
+                    Worked out from the real orders on the book, then the House for the rest, so bigger orders cost a little more per share.
+                  </p>
                 </div>
                 <button
                   disabled={submitting}

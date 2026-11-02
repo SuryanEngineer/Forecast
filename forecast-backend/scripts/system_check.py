@@ -634,6 +634,16 @@ def check_book_price_and_retention(ctx: dict) -> None:
         check("cancelling the bids leaves the price where it was", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
         m = r.json()
         check("market data carries a buy and a sell price (buy >= sell)", "buy_price" in m and "sell_price" in m and Decimal(str(m["buy_price"])) >= Decimal(str(m["sell_price"])) > 0, str(m))
+        from app.services.exceptions import usd as _usd
+        check("money in messages rounds to the cent", _usd("1234.5678901234") == "$1,234.57" and _usd(5) == "$5.00")
+        qb = client.get(f"/api/v1/markets/{pid}/quote?side=buy&quantity=3").json()
+        qs = client.get(f"/api/v1/markets/{pid}/quote?side=sell&quantity=3").json()
+        check("quick-order quote: buy total = shares + fee, sell total = shares - fee, all to the cent",
+              qb.get("feasible") and qs.get("feasible")
+              and Decimal(str(qb["total"])) == Decimal(str(qb["subtotal"])) + Decimal(str(qb["fee"]))
+              and Decimal(str(qs["total"])) == Decimal(str(qs["subtotal"])) - Decimal(str(qs["fee"]))
+              and Decimal(str(qb["total"])) > Decimal(str(qs["total"]))
+              and Decimal(str(qb["total"])) == Decimal(str(qb["total"])).quantize(Decimal("0.01")), str(qb) + str(qs))
         # Listed price = last real trade, kept between the Sell and Buy prices
         from app.models.player import PriceSnapshot as _PS
         from app.services import valuation_service as _vs

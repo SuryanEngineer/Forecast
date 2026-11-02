@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.order import OrderSide
 from app.models.player import Player
 from app.schemas.market import (
     MarketSnapshotResponse,
@@ -20,8 +21,10 @@ from app.schemas.market import (
     OrderBookResponse,
     PaginatedMarketSnapshotResponse,
     PriceHistoryPointResponse,
+    QuickQuoteResponse,
 )
-from app.services import book_price_service, market_data_service
+from app.services import book_price_service, market_data_service, order_service
+from app.services.exceptions import ServiceError
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 
@@ -93,6 +96,22 @@ def get_order_book(player_id: uuid.UUID, depth: int = Query(8, ge=1, le=25), db:
     book = book_price_service.book_levels(db, player_id, depth)
     book["last_trade"] = market_data_service._last_price(db, player)
     return OrderBookResponse(**book)
+
+
+@router.get("/{player_id}/quote", response_model=QuickQuoteResponse)
+def get_quick_quote(
+    player_id: uuid.UUID,
+    side: str = Query(..., pattern="^(buy|sell)$"),
+    quantity: int = Query(1, ge=1, le=1_000_000),
+    db: Session = Depends(get_db),
+) -> QuickQuoteResponse:
+    """The real price of a quick order of this size: the resting orders it would take first (best price first), then the
+    House for the rest, plus the transaction fee. Read-only; this is what the order box shows as the estimate."""
+    try:
+        quote = order_service.quote_quick_order(db, player_id, OrderSide.BUY if side == "buy" else OrderSide.SELL, quantity)
+    except ServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return QuickQuoteResponse(**quote)
 
 
 @router.get("/{player_id}/price-history", response_model=list[PriceHistoryPointResponse])
