@@ -558,25 +558,29 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                   />
                 </div>
                 <div className="rounded-xl p-3 border border-border" style={{ background: 'var(--muted)' }}>
-                  <div className="grid grid-cols-2 gap-3 text-center">
+                  <div className="flex flex-col gap-3">
                     <div>
-                      <p className="text-muted-foreground" style={{ fontSize: 12 }}>Estimated cost</p>
-                      <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>
+                      <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-muted-foreground shrink-0" style={{ fontSize: 12 }}>Estimated cost</p>
+                      <p className="font-mono font-bold text-foreground text-right whitespace-nowrap" style={{ fontSize: 18 }}>
                         {buyQuote?.feasible && buyQuote.total != null ? usd(toNumber(buyQuote.total)) : buyQuote ? '—' : '…'}
                       </p>
+                      </div>
                       {buyQuote?.feasible && buyQuote.average_price != null && (
-                        <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                        <p className="text-muted-foreground text-right" style={{ fontSize: 10.5 }}>
                           about {usd(toNumber(buyQuote.average_price))} a share, plus {usd(toNumber(buyQuote.fee ?? 0))} fee
                         </p>
                       )}
                     </div>
                     <div>
-                      <p className="text-muted-foreground" style={{ fontSize: 12 }}>If you sell</p>
-                      <p className="font-mono font-bold text-foreground" style={{ fontSize: 20 }}>
+                      <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-muted-foreground shrink-0" style={{ fontSize: 12 }}>If you sell</p>
+                      <p className="font-mono font-bold text-foreground text-right whitespace-nowrap" style={{ fontSize: 18 }}>
                         {sellQuote?.feasible && sellQuote.total != null ? usd(toNumber(sellQuote.total)) : sellQuote ? '—' : '…'}
                       </p>
+                      </div>
                       {sellQuote?.feasible && sellQuote.average_price != null && (
-                        <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                        <p className="text-muted-foreground text-right" style={{ fontSize: 10.5 }}>
                           about {usd(toNumber(sellQuote.average_price))} a share, after {usd(toNumber(sellQuote.fee ?? 0))} fee
                         </p>
                       )}

@@ -107,6 +107,7 @@ ANCHOR_SCALE = 0.5            # how much of a bot's style anchor to the recent t
 BAND_MIN, BAND_MAX = 0.02, 0.12  # how far through the current price one bot order may reach. Near fair value it is only
                                  # +-2% (calm market); the further the price is from the bot's value, the wider it gets
                                  # (up to 12%), so a badly mispriced stock still converges but a fair one just jitters.
+REST_CEIL = 1.25                 # ... or further than this above it
 REST_FLOOR = 0.85                # resting quotes are never posted further than this below the price
 STALE_AFTER_SECONDS = 4 * 3600   # a player with no trade for this long is "stale" and gets spotlighted
 SPOTLIGHT_PER_BOT = 3            # stale players added to each bot's watchlist (spreads trading across the whole market)
@@ -1098,10 +1099,10 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
         reach = _band(px, v, floor=0.03)
         bid = min(v * (1.0 - m), px * (1.0 + reach))
         ask = max(v * (1.0 + m), px * (1.0 - reach))
-        if bid < REST_FLOOR * px:
-            bid = 0.0
-        if ask > 1.25 * px:
-            ask = 0.0
+        # A bot that thinks the stock is dear (or cheap) still leaves a low (high) standing quote at the edge of the
+        # range instead of no quote, so the book always has both sides.
+        bid = max(bid, REST_FLOOR * px)
+        ask = min(ask, REST_CEIL * px)
         pos = holdings.get(pid)
         can_ask = ask > 0 and pos is not None and pos.available_quantity > 0
         can_bid = bid > 0 and cash / portfolio > MIN_CASH_FRACTION and position_room(pid, px) > bid
