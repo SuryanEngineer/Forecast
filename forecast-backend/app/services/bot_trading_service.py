@@ -1144,6 +1144,57 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
     return acted
 
 
+def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int) -> int:
+    """Steady background trading: `n` tiny instant trades (1-4 shares) by random bots on random stocks, weighted toward
+    the pricier ones. Each moves the price by a fraction of a percent (a few shares against the House's depth), and a
+    mild pull toward fair value keeps the sides balanced, so charts get frequent small bumps rather than long flat
+    stretches -- without adding volatility. Returns how many trades went through."""
+    if n <= 0 or not agents or not snapshot.player_ids:
+        return 0
+    pool = list(snapshot.player_ids)
+    weights = [max(float(snapshot.price.get(p, 0)), 0.5) ** 0.6 for p in pool]
+    done = 0
+    for _ in range(n * 4):
+        if done >= n:
+            break
+        bot = rng.choice(agents)
+        try:
+            state = _get_state(db, bot.user_id)
+            cash = float(state.wallet.available_balance)
+            sellable = [pid for pid, pos in state.positions.items() if pid in snapshot.price and pos.available_quantity > 0]
+            pid = rng.choices(pool, weights=weights, k=1)[0]
+            px = float(snapshot.price.get(pid, 0))
+            if px <= 0:
+                continue
+            fair = snapshot.fair_value.get(pid)
+            tilt = -0.8 * math.log(px / float(fair)) if fair and float(fair) > 0 else 0.0
+            side = OrderSide.BUY if rng.random() < _clamp(0.5 + tilt, 0.25, 0.75) else OrderSide.SELL
+            if side == OrderSide.SELL:
+                if pid not in sellable:
+                    if not sellable:
+                        side = OrderSide.BUY
+                    else:
+                        pid = rng.choice(sellable)
+                        px = float(snapshot.price.get(pid, 0))
+            qty = 1 + int(rng.random() ** 2 * 4)  # 1-4 shares, mostly 1-2
+            if side == OrderSide.BUY:
+                if px <= 0 or cash < 5.0 * qty * px:
+                    continue
+            else:
+                qty = min(qty, state.positions[pid].available_quantity)
+                if qty <= 0:
+                    continue
+            if _submit(db, bot.user_id, pid, side, qty, None):
+                db.commit()
+                _reload_state(db, bot.user_id)
+                _note_order(pid, time.time())
+                done += 1
+        except (ServiceError, ValueError):
+            db.rollback()
+            _BOT_STATE.pop(bot.user_id, None)
+    return done
+
+
 # --- Market makers ------------------------------------------------------------------------------------------------
 
 
@@ -1322,4 +1373,9 @@ def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
             errors += 1
             _BOT_STATE.pop(profile_row.user_id, None)  # re-read next time: the cached view was probably stale
 
-    return {"population": len(bots), "active": len(active), "actions": actions, "errors": errors}
+    flow = 0
+    try:
+        flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK))
+    except Exception:  # noqa: BLE001 -- background flow must never break the tick
+        db.rollback()
+    return {"population": len(bots), "active": len(active), "actions": actions + flow, "flow": flow, "errors": errors}

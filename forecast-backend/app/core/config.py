@@ -194,6 +194,11 @@ class Settings(BaseSettings):
     MARKET_LEASE_ENABLED: bool = True
     BOT_TICK_INTERVAL_SECONDS: int = 20
     BOT_ACTIONS_PER_TICK: int = 2  # cap on orders the whole bot population places per tick (each costs DB egress)
+    # Small "flow" trades per tick (1-4 shares each, spread over the whole market, weighted toward the pricier stocks): the
+    # steady background trading of a real market. Each one nudges the price by a fraction of a percent, so charts show
+    # frequent little bumps instead of long flat stretches without adding volatility. More = livelier charts and more database
+    # traffic (egress); 0 turns it off.
+    BOT_FLOW_TRADES_PER_TICK: int = 6
     BOT_MM_PLAYERS_PER_TICK: int = 2  # cap on market-maker player re-quotes per tick
     BOT_STATE_REFRESH_SECONDS: int = 900  # how often bots' cash/holdings/open orders are re-read from the DB (cached between)
     # Disk guard (Supabase free plan = 500 MB): bot-only history older than this is pruned -- see retention_service.py
