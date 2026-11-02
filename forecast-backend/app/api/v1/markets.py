@@ -95,6 +95,16 @@ def get_order_book(player_id: uuid.UUID, depth: int = Query(8, ge=1, le=25), db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
     book = book_price_service.book_levels(db, player_id, depth)
     book["last_trade"] = market_data_service._last_price(db, player)
+    # The House always stands ready to buy and sell, so show it as a level on each side (orders = 0 marks it). Without
+    # this, a stock nobody holds has no asks, and a stock nobody wants has no bids, even though quick trades still work.
+    try:
+        depth_shares = max(int(player.total_shares_outstanding * 0.01), 100)
+        for side, key, reverse in (("buy", "asks", False), ("sell", "bids", True)):
+            q = order_service.quote_quick_order(db, player_id, OrderSide.BUY if side == "buy" else OrderSide.SELL, 1)
+            if q.get("feasible") and q.get("average_price") is not None:
+                book[key] = sorted(book[key] + [{"price": q["average_price"], "quantity": depth_shares, "orders": 0}], key=lambda r: r["price"], reverse=reverse)[:depth]
+    except Exception:  # the book itself is still useful without the House level
+        pass
     return OrderBookResponse(**book)
 
 
