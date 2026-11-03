@@ -78,7 +78,9 @@ def get_market_snapshot(db: Session, player: Player) -> dict:
     change = last_price - prev_close
     change_pct = (change / prev_close * 100) if prev_close > 0 else Decimal("0")
     volume_24h = _volume_since(db, player.id, day_ago)
-    market_cap = last_price * player.total_shares_outstanding
+    # Market cap = what the WHOLE float would fetch if sold right now: resting buy orders first, then the House's
+    # size-dependent sell price for the rest -- not shares x the best single-share price.
+    market_cap = valuer.value(player.id, player.total_shares_outstanding).quantize(Decimal("0.01"))
 
     return {
         "id": player.id,
@@ -248,7 +250,7 @@ def _list_market_snapshots_uncached(db: Session, active_only: bool = True, searc
                 "change": change,
                 "change_pct": change_pct,
                 "volume_24h": volumes.get(player.id, 0),
-                "market_cap": last_price * player.total_shares_outstanding,
+                "market_cap": valuer.value(player.id, player.total_shares_outstanding).quantize(Decimal("0.01")),
                 "dividends_total": dividends.get(player.id, Decimal("0")),
             }
         )
@@ -299,37 +301,16 @@ def list_market_snapshots_page(
 
 
 def get_market_summary(db: Session, active_only: bool = True) -> dict:
-    """Market-wide totals computed as real SQL aggregates, not by summing
-    whatever page of snapshots the client happens to have -- see
-    MarketSummaryResponse's docstring. Correct and cheap at any roster
-    size, unlike building a full snapshot dict per player just to add up
-    a few numbers."""
-    row_number = func.row_number().over(
-        partition_by=PriceSnapshot.player_id,
-        order_by=PriceSnapshot.recorded_at.desc(),
-    ).label("rn")
-    latest_prices_sq = db.query(PriceSnapshot.player_id, PriceSnapshot.price, row_number).subquery()
-    latest_prices = (
-        db.query(latest_prices_sq.c.player_id, latest_prices_sq.c.price)
-        .filter(latest_prices_sq.c.rn == 1)
-        .subquery()
-    )
-
+    """Market-wide totals. Total market cap is the sum of each player's float value (what all of its shares would fetch
+    if sold now -- see get_market_snapshot); the other numbers are real SQL aggregates, not sums over a client's page."""
     player_query = db.query(Player)
     if active_only:
         player_query = player_query.filter(Player.is_active.is_(True))
     players = player_query.subquery()
-
-    price_expr = func.coalesce(latest_prices.c.price, players.c.ipo_price)
-    total_market_cap, total_players = (
-        db.query(
-            func.coalesce(func.sum(price_expr * players.c.total_shares_outstanding), 0),
-            func.count(players.c.id),
-        )
-        .select_from(players)
-        .outerjoin(latest_prices, latest_prices.c.player_id == players.c.id)
-        .one()
-    )
+    total_players = db.query(func.count(players.c.id)).select_from(players).scalar() or 0
+    pairs = db.query(players.c.id, players.c.total_shares_outstanding).all()
+    valuer = valuation_service.Valuer(db, [pid for pid, _n in pairs])
+    total_market_cap = sum((valuer.value(pid, int(n)) for pid, n in pairs), Decimal("0")).quantize(Decimal("0.01"))
 
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(hours=24)

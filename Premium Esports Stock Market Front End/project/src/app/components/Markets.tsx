@@ -374,7 +374,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <div className="flex items-center justify-center gap-1">
                   <p className="text-muted-foreground" style={{ fontSize: 11 }}>Total Market Cap</p>
-                  <InfoDot text="The combined value of all player shares in circulation, at current prices. It rises as prices climb or new players are listed, and excludes investor cash." />
+                  <InfoDot text="What every player share in circulation would fetch if it were all sold right now: resting buy orders first, then the House's lower sell price for the rest. It rises as prices climb or new players are listed, and excludes investor cash." />
                 </div>
                 <p className="font-mono font-bold text-foreground mt-0.5" style={{ fontSize: 18 }}>{formatCompactCurrency(totalMarketCap)}</p>
               </div>
