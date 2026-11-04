@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Mail, MessageSquare, X, Check } from 'lucide-react';
+import { Copy, MessageSquare, X, Check } from 'lucide-react';
 import { SUPPORT_EMAIL } from './LegalModal';
 
 export function FeedbackModal({ onClose }: { onClose: () => void }) {
@@ -37,21 +37,16 @@ export function FeedbackModal({ onClose }: { onClose: () => void }) {
           <p className="text-muted-foreground mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>
             Ideas, bugs, things that felt confusing, anything you'd change. Email us at
           </p>
-          <p className="font-mono font-bold mt-2 break-all" style={{ fontSize: 15, color: 'var(--primary)' }}>{SUPPORT_EMAIL}</p>
-          <div className="flex gap-2 mt-5">
-            <a
-              href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Forecast feedback')}`}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold"
-              style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#020610' }}
-            >
-              <Mail className="w-4 h-4" /> Send an email
-            </a>
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <p className="font-mono font-bold break-all" style={{ fontSize: 15, color: 'var(--primary)' }}>{SUPPORT_EMAIL}</p>
             <button
               onClick={copy}
-              className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl font-semibold hover:bg-white/5"
-              style={{ fontSize: 14, color: 'var(--foreground)', border: '1px solid var(--border)' }}
+              className="p-1.5 rounded-lg hover:bg-white/10 shrink-0"
+              style={{ color: copied ? 'var(--gain)' : 'var(--muted-foreground)' }}
+              aria-label={copied ? 'Copied' : 'Copy email address'}
+              title={copied ? 'Copied' : 'Copy'}
             >
-              {copied ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             </button>
           </div>
         </div>
