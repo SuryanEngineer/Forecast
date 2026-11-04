@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings } from 'lucide-react';
+import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
@@ -27,6 +27,9 @@ interface SidebarProps {
   navigate: (page: Page) => void;
   onShowIntro: () => void;
   onShowLegal: (doc: 'terms' | 'privacy') => void;
+  /** 'rail' = the fixed desktop column; 'drawer' = the slide-out menu used on phones (scrolls, fits any height). */
+  variant?: 'rail' | 'drawer';
+  onClose?: () => void;
 }
 
 function initials(name: string): string {
@@ -35,7 +38,7 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: SidebarProps) {
+export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, variant = 'rail', onClose }: SidebarProps) {
   const { user, wallet, logout } = useAuth();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
@@ -43,8 +46,10 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
 
   return (
     <aside
-      className="w-[200px] shrink-0 h-screen flex flex-col border-r border-border"
-      style={{ background: 'var(--sidebar)' }}
+      className={variant === 'drawer'
+        ? 'w-[280px] max-w-[85vw] h-full flex flex-col border-r border-border overflow-y-auto'
+        : 'w-[200px] shrink-0 h-screen flex flex-col border-r border-border overflow-y-auto'}
+      style={{ background: 'var(--sidebar)', paddingTop: variant === 'drawer' ? 'env(safe-area-inset-top)' : undefined, paddingBottom: variant === 'drawer' ? 'env(safe-area-inset-bottom)' : undefined, paddingLeft: variant === 'drawer' ? 'env(safe-area-inset-left)' : undefined }}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
@@ -58,6 +63,11 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
           <p className="font-bold tracking-wider" style={{ fontSize: 14, color: 'var(--foreground)' }}>FORECAST</p>
           <p className="text-muted-foreground" style={{ fontSize: 10 }}>Esports Markets</p>
         </div>
+        {variant === 'drawer' && onClose && (
+          <button onClick={onClose} aria-label="Close menu" className="ml-auto p-2 -mr-2 rounded-xl hover:bg-white/5 text-muted-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Nav */}
@@ -69,7 +79,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal }: Sid
             <button
               key={item.id}
               onClick={() => navigate(item.id)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left"
+              className={`w-full flex items-center gap-3 px-3 rounded-xl transition-all text-left ${variant === 'drawer' ? 'py-3' : 'py-2.5'}`}
               style={{
                 background: active ? 'rgba(0,200,255,0.1)' : 'transparent',
                 color: active ? 'var(--primary)' : 'var(--muted-foreground)',

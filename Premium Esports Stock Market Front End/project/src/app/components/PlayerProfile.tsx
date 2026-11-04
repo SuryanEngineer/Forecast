@@ -52,7 +52,7 @@ export function PlayerProfile({ playerId, navigate }: Props) {
   const relevantNews = MARKET_NEWS.filter(n => n.playerId === player.id).slice(0, 2);
 
   return (
-    <div className="p-6 max-w-[900px] mx-auto space-y-5">
+    <div className="p-6 page-pad max-w-[900px] mx-auto space-y-5">
       {/* Back */}
       <button
         onClick={() => navigate('markets')}
@@ -73,7 +73,7 @@ export function PlayerProfile({ playerId, navigate }: Props) {
           <div className="flex-1">
             <div className="flex items-start justify-between">
               <div>
-                <h1 className="text-foreground font-bold" style={{ fontSize: 28 }}>{player.name}</h1>
+                <h1 className="text-foreground font-bold" style={{ fontSize: 'clamp(22px, 6.5vw, 28px)' }}>{player.name}</h1>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="px-2.5 py-0.5 rounded-lg" style={{ fontSize: 12, background: player.teamColor + '22', color: player.teamColor, fontWeight: 500 }}>
                     {player.team}
@@ -88,7 +88,7 @@ export function PlayerProfile({ playerId, navigate }: Props) {
 
             <div className="flex items-end gap-4 mt-3">
               <div>
-                <p className="font-mono font-bold" style={{ fontSize: 36, color: 'var(--foreground)', letterSpacing: '-1px' }}>
+                <p className="font-mono font-bold" style={{ fontSize: 'clamp(26px, 8vw, 36px)', color: 'var(--foreground)', letterSpacing: '-1px' }}>
                   {formatCurrency(player.price)}
                 </p>
                 <span

@@ -430,12 +430,12 @@ export function IntroTour({ onClose, initialStep = 0, storageKey, onNavigate, on
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) finish(); }}
     >
       <motion.div
-        className="w-full rounded-2xl border border-border overflow-hidden flex flex-col"
+        className="w-full rounded-2xl border border-border overflow-hidden flex flex-col modal-panel"
         style={{ background: 'var(--card)', maxWidth: 480, maxHeight: '94vh' }}
         initial={{ opacity: 0, scale: 0.95, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -446,7 +446,7 @@ export function IntroTour({ onClose, initialStep = 0, storageKey, onNavigate, on
           <motion.div className="h-1" animate={{ width: `${((step + 1) / SLIDES.length) * 100}%` }} transition={{ duration: 0.25 }} style={{ background: 'linear-gradient(90deg, var(--primary), var(--accent))' }} />
         </div>
 
-        <div className="px-6 pt-4 pb-1 flex items-center justify-between shrink-0">
+        <div className="px-4 sm:px-6 pt-4 pb-1 flex items-center justify-between shrink-0">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(0,200,255,0.12)', color: 'var(--primary)' }}>
             <Sparkles className="w-3 h-3" /> Quick tour · {step + 1}/{SLIDES.length}
           </span>
@@ -462,7 +462,7 @@ export function IntroTour({ onClose, initialStep = 0, storageKey, onNavigate, on
           </div>
         </div>
 
-        <div className="overflow-y-auto">
+        <div className="overflow-y-auto flex-1 min-h-0">
           <AnimatePresence mode="wait">
             <motion.div
               key={step}
@@ -470,7 +470,7 @@ export function IntroTour({ onClose, initialStep = 0, storageKey, onNavigate, on
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -12 }}
               transition={{ duration: 0.15 }}
-              className="px-6 pb-2"
+              className="px-4 sm:px-6 pb-2"
             >
               <p style={{ fontSize: 32 }}>{slide.emoji}</p>
               <h2 className="text-foreground font-bold mt-1" style={{ fontSize: 19 }}>{slide.title}</h2>
@@ -480,7 +480,7 @@ export function IntroTour({ onClose, initialStep = 0, storageKey, onNavigate, on
           </AnimatePresence>
         </div>
 
-        <div className="px-6 pt-3 pb-5 shrink-0">
+        <div className="px-4 sm:px-6 pt-3 pb-5 shrink-0">
           <div className="flex items-center gap-2">
             {step > 0 && (
               <button

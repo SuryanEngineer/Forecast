@@ -1,4 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Menu } from 'lucide-react';
+import { useCompact } from './lib/useCompact';
+import { toNumber } from './lib/types';
+import { useOpenOrderCount } from './components/OpenOrders';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuthScreen } from './components/AuthScreen';
 import { Sidebar } from './components/Sidebar';
@@ -20,7 +24,17 @@ import type { TournamentResponse } from './lib/types';
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
 
 function AuthenticatedApp() {
-  const { user, justRegistered } = useAuth();
+  const { user, justRegistered, wallet } = useAuth();
+  const compact = useCompact();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const openOrders = useOpenOrderCount();
+  useEffect(() => { if (!compact) setMenuOpen(false); }, [compact]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [playerModalId, setPlayerModalId] = useState<string | null>(null);
   const [teamModalUserId, setTeamModalUserId] = useState<string | null>(null);
@@ -55,14 +69,53 @@ function AuthenticatedApp() {
     setCurrentPage(page as Page);
   }
 
+  const PAGE_TITLES: Record<string, string> = { dashboard: 'Home', markets: 'Market', portfolio: 'My Portfolio', leaderboards: 'Leaderboard', stats: 'My Stats', tournaments: 'Events', settings: 'Settings' };
+  const cash = wallet ? toNumber(wallet.cash_balance) : null;
+  const goTo = (page: string) => { setCurrentPage(page as Page); setMenuOpen(false); };
+
   return (
     <div
-      className="dark h-screen overflow-hidden flex font-sans"
-      style={{ background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
+      className={`dark overflow-hidden flex font-sans ${compact ? 'flex-col' : ''}`}
+      style={{ height: '100dvh', background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
     >
-      <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => setShowGuide(true)} onShowLegal={setLegalDoc} />
+      {compact ? (
+        <>
+          {/* Phone top bar: menu button, current page, cash */}
+          <header
+            className="shrink-0 flex items-center gap-2 border-b border-border px-2"
+            style={{ background: 'var(--sidebar)', minHeight: 52, paddingTop: 'env(safe-area-inset-top)', paddingLeft: 'max(8px, env(safe-area-inset-left))', paddingRight: 'max(8px, env(safe-area-inset-right))' }}
+          >
+            <button onClick={() => setMenuOpen(true)} aria-label="Open menu" className="relative p-2.5 rounded-xl hover:bg-white/5 text-foreground">
+              <Menu className="w-6 h-6" />
+              {openOrders > 0 && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full" style={{ background: '#fbbf24' }} />}
+            </button>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}>
+                <span className="font-mono font-bold" style={{ fontSize: 12, color: '#020610' }}>F</span>
+              </div>
+              <p className="font-bold text-foreground truncate" style={{ fontSize: 15 }}>{PAGE_TITLES[currentPage] ?? 'Forecast'}</p>
+            </div>
+            {cash !== null && (
+              <div className="ml-auto text-right shrink-0 pr-1">
+                <p className="text-muted-foreground leading-none" style={{ fontSize: 9.5 }}>Cash</p>
+                <p className="font-mono font-bold text-foreground leading-tight" style={{ fontSize: 14 }}>${cash.toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+              </div>
+            )}
+          </header>
+          {menuOpen && (
+            <div className="fixed inset-0 z-[80] flex" role="dialog" aria-modal="true" aria-label="Menu">
+              <div className="mobile-drawer h-full">
+                <Sidebar variant="drawer" currentPage={currentPage} navigate={goTo} onShowIntro={() => { setMenuOpen(false); setShowGuide(true); }} onShowLegal={doc => { setMenuOpen(false); setLegalDoc(doc); }} onClose={() => setMenuOpen(false)} />
+              </div>
+              <div className="flex-1 mobile-scrim" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setMenuOpen(false)} />
+            </div>
+          )}
+        </>
+      ) : (
+        <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => setShowGuide(true)} onShowLegal={setLegalDoc} />
+      )}
 
-      <main className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}>
+      <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent', paddingBottom: compact ? 'env(safe-area-inset-bottom)' : undefined, paddingLeft: compact ? 'env(safe-area-inset-left)' : undefined, paddingRight: compact ? 'env(safe-area-inset-right)' : undefined }}>
         {currentPage === 'dashboard' && (
           <Dashboard navigate={navigate} openPlayer={setPlayerModalId} goToMarketWithSearch={term => { setMarketSearch(term); setCurrentPage('markets'); }} />
         )}

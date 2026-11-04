@@ -734,18 +734,18 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        className="w-full rounded-2xl border border-border flex flex-col"
+        className="w-full rounded-2xl border border-border flex flex-col modal-panel"
         style={{ background: 'var(--card)', maxWidth: 720, maxHeight: '90vh' }}
         initial={{ opacity: 0, scale: 0.95, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
-        <div className="px-6 pt-5 pb-3 flex items-start justify-between shrink-0">
+        <div className="px-4 sm:px-6 pt-5 pb-3 flex items-start justify-between shrink-0">
           <div className="flex items-center gap-3">
             <span style={{ fontSize: 28 }}>{topic.emoji}</span>
             <div>
@@ -759,7 +759,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
         </div>
 
         {/* topic buttons: a fixed 3-column grid, never a sideways scroll */}
-        <div className="px-6 pb-3 shrink-0 border-b border-border">
+        <div className="px-4 sm:px-6 pb-3 shrink-0 border-b border-border">
           <div className="grid grid-cols-3 gap-1.5">
             {HELP_TOPIC_ORDER.map(id => {
               const t = HELP_TOPICS[id];
@@ -783,7 +783,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
           </div>
         </div>
 
-        <div key={current} className="px-6 py-5 overflow-y-auto space-y-5">
+        <div key={current} className="px-4 sm:px-6 py-5 overflow-y-auto space-y-5 flex-1 min-h-0">
           {topic.sections.map((section, i) => (
             <div key={i}>
               <p className="font-bold uppercase tracking-wide" style={{ fontSize: 10.5, color: 'var(--primary)' }}>{section.heading}</p>
@@ -792,7 +792,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
           ))}
         </div>
 
-        <div className="px-6 py-4 border-t border-border shrink-0 flex items-center gap-2">
+        <div className="px-4 sm:px-6 py-4 border-t border-border shrink-0 flex items-center gap-2">
           {onReplayTour && (
             <button
               onClick={onReplayTour}

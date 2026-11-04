@@ -56,7 +56,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const loading = marketsLoading || positionsLoading;
 
   return (
-    <div className="p-6 max-w-[900px] mx-auto space-y-6">
+    <div className="p-6 page-pad max-w-[900px] mx-auto space-y-6">
       <div>
         <div className="flex items-center gap-1.5">
           <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>My Portfolio</h1>
@@ -70,7 +70,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
         style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.07), rgba(155,111,255,0.05)), var(--card)' }}
       >
         <p className="text-muted-foreground" style={{ fontSize: 14 }}>Portfolio Value</p>
-        <p className="font-mono font-bold" style={{ fontSize: 42, color: 'var(--foreground)', letterSpacing: '-1px' }}>
+        <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', color: 'var(--foreground)', letterSpacing: '-1px' }}>
           ${grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </p>
         <div className="flex items-center gap-3 mt-2 flex-wrap">

@@ -1,3 +1,4 @@
+import { MobileClose } from './MobileClose';
 import { timeAgo } from '../lib/timeAgo';
 import { useEffect, useRef, useState } from 'react';
 import { X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -391,18 +392,19 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        className="w-full overflow-y-auto rounded-2xl border border-border"
+        className="w-full overflow-y-auto rounded-2xl border border-border modal-panel modal-scroll"
         style={{ background: 'var(--card)', maxWidth: 920, maxHeight: '90vh', overflowX: 'hidden', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
         initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
-        <div className="px-6 pt-5 pb-4 flex items-start gap-4" style={{ background: `linear-gradient(135deg, ${color}14, transparent 60%)` }}>
+        <MobileClose onClose={onClose} />
+        <div className="px-4 sm:px-6 pt-5 pb-4 flex items-start gap-4" style={{ background: `linear-gradient(135deg, ${color}14, transparent 60%)` }}>
           <PlayerAvatar name={playerName(market)} color={color} size={60} />
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
@@ -420,7 +422,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
               </button>
             </div>
             <div className="flex items-center gap-3 mt-2">
-              <span className="font-mono font-bold" style={{ fontSize: 28, color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
+              <span className="font-mono font-bold" style={{ fontSize: 'clamp(22px, 6.5vw, 28px)', color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
                 ${price.toFixed(2)}
               </span>
               <span
@@ -447,10 +449,10 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
         </div>
 
         <div className="grid grid-cols-1 gap-0 md:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="px-6 pb-6 border-r border-border space-y-5 min-w-0">
+          <div className="px-4 sm:px-6 pb-6 md:border-r border-border space-y-5 min-w-0">
             <PriceChart playerId={playerId} color={color} latestTradeId={recentTrades[0]?.id} tournaments={tournamentHistory?.entries} />
 
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 { label: '24h Volume', value: market.volume_24h.toLocaleString(), emoji: '📊' },
                 { label: 'Market Cap', value: `$${(toNumber(market.market_cap) / 1000).toFixed(0)}k`, emoji: '💵' },

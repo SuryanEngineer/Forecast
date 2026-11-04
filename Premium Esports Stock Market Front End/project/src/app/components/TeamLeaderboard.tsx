@@ -1,3 +1,4 @@
+import { useCompact } from '../lib/useCompact';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Coins } from 'lucide-react';
 import { api } from '../lib/api';
@@ -79,7 +80,7 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
         <div className="grid items-center px-3 py-1.5 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Damage Dealt</span><span>Damage Taken</span>
+          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Dealt</span><span>Taken</span>
         </div>
         {data.games.map(g => {
           const alive = statNum(g.stats, 'TIME_ALIVE_STAT');
@@ -158,7 +159,7 @@ function TeamCard({
           boxShadow: focused ? '0 0 0 1px rgba(0,200,255,0.25)' : hasStake ? '0 0 0 1px rgba(251,191,36,0.15)' : undefined,
         }}
       >
-        <div className="flex items-center gap-3 px-3 py-1.5">
+        <div className="flex items-center gap-2 sm:gap-3 px-3 py-1.5">
           <div
             className="rounded-lg flex items-center justify-center font-mono font-bold shrink-0"
             style={{ width: 40, height: 26, fontSize: 12, ...placementBadgeStyle(team.placement) }}
@@ -179,7 +180,7 @@ function TeamCard({
           <span className="hidden md:block text-muted-foreground text-right shrink-0" style={{ fontSize: 11.5, minWidth: 96 }}>{stats}</span>
           <span
             className="font-mono font-bold text-right shrink-0"
-            style={{ fontSize: 12.5, minWidth: 74, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}
+            style={{ fontSize: 12.5, minWidth: 56, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}
             title={estimate ? 'estimated total payout' : 'total payout'}
           >
             {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
@@ -187,7 +188,7 @@ function TeamCard({
           <span className="hidden sm:block font-mono text-foreground text-right shrink-0" style={{ fontSize: 12, minWidth: 74 }} title="per share">
             {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}/sh` : '–'}
           </span>
-          <span className="text-right shrink-0" style={{ minWidth: 92 }}>
+          <span className="text-right shrink-0 sm:min-w-[92px]">
             {myPay !== null && myPay > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono font-bold" style={{ fontSize: 12, background: 'rgba(251,191,36,0.16)', color: GOLD }}>
                 <Coins className="w-3 h-3" /> +{money(myPay)}
@@ -228,7 +229,7 @@ function TeamCard({
           : hasStake ? '0 0 0 1px rgba(251,191,36,0.15), 0 0 18px rgba(251,191,36,0.10)' : undefined,
       }}
     >
-      <div className="flex items-stretch gap-4 p-3.5">
+      <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-3 sm:gap-4 p-3.5">
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
           style={{ fontSize: 13, ...placementBadgeStyle(team.placement) }}
@@ -255,10 +256,10 @@ function TeamCard({
               const perShare = m.per_share_amount !== null ? toNumber(m.per_share_amount) : null;
               const myPay = m.my_payout !== null ? toNumber(m.my_payout) : null;
               return (
-                <div key={m.player_id} className="flex items-center gap-3">
+                <div key={m.player_id} className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1">
                   <button
                     onClick={() => onOpenPlayer(m.player_id)}
-                    className="flex items-center gap-2 text-left min-w-0 flex-1 hover:opacity-80 transition-opacity"
+                    className="flex items-center gap-2 text-left min-w-0 basis-full sm:basis-0 sm:flex-1 hover:opacity-80 transition-opacity"
                   >
                     <span className="text-foreground font-semibold truncate" style={{ fontSize: 14 }}>
                       {m.gamertag}
@@ -270,19 +271,19 @@ function TeamCard({
                       </span>
                     )}
                   </button>
-                  <div className="text-right shrink-0" style={{ minWidth: 96 }}>
+                  <div className="text-left sm:text-right shrink-0 sm:min-w-[96px]">
                     <p className="font-mono font-bold" style={{ fontSize: 13, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}>
                       {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
                     </p>
                     <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>{estimate ? 'est. total payout' : 'total payout'}</p>
                   </div>
-                  <div className="text-right shrink-0" style={{ minWidth: 84 }}>
+                  <div className="text-left sm:text-right shrink-0 sm:min-w-[84px]">
                     <p className="font-mono font-semibold text-foreground" style={{ fontSize: 13 }}>
                       {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '–'}
                     </p>
                     <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>per share</p>
                   </div>
-                  <div className="text-right shrink-0" style={{ minWidth: 96 }}>
+                  <div className="text-left sm:text-right shrink-0 sm:min-w-[96px] ml-auto sm:ml-0">
                     {myPay !== null && myPay > 0 ? (
                       <div className="rounded-lg px-2 py-1" style={{ background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.5)' }}>
                         <p className="font-mono font-bold flex items-center justify-end gap-1" style={{ fontSize: 13, color: GOLD }}>
@@ -303,7 +304,7 @@ function TeamCard({
         </div>
 
         {team.members.length > 1 && (
-          <div className="text-right shrink-0 self-center pl-3" style={{ borderLeft: '1px solid rgba(255,255,255,0.07)', minWidth: 104 }}>
+          <div className="shrink-0 self-center basis-full sm:basis-auto sm:min-w-[104px] flex sm:block items-center justify-between sm:text-right sm:pl-3 border-t sm:border-t-0 sm:border-l pt-2 sm:pt-0" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
             <p className="font-mono font-bold" style={{ fontSize: 15, color: 'var(--gain)' }}>{pool !== null ? money(pool) : '$0'}</p>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>team total</p>
             {mine !== null && mine > 0 && (
@@ -457,7 +458,9 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
   }
 
   const game = data.games.find(g => g.game === selected) ?? data.games[0];
-  const COLS = '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
+  const compact = useCompact();
+  // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
+  const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
   return (
     <div className="space-y-3">
@@ -487,7 +490,7 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
         <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Place</span><span>Team</span><span className="text-right">Elims</span><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span><span className="text-right">Final</span>
+          <span>Place</span><span>Team</span><span className="text-right">Elims</span>{!compact && <><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span></>}<span className="text-right">Final</span>
         </div>
         {game.teams.map((t, i) => (
           <div
@@ -510,9 +513,13 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
               ))}
             </div>
             <span className="font-mono font-bold text-foreground text-right" style={{ fontSize: 13 }}>{t.eliminations ?? '–'}</span>
-            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.time_alive !== null ? mmss(t.time_alive) : '–'}</span>
-            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_dealt !== null ? t.damage_dealt.toLocaleString() : '–'}</span>
-            <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_received !== null ? t.damage_received.toLocaleString() : '–'}</span>
+            {!compact && (
+              <>
+                <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.time_alive !== null ? mmss(t.time_alive) : '–'}</span>
+                <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_dealt !== null ? t.damage_dealt.toLocaleString() : '–'}</span>
+                <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_received !== null ? t.damage_received.toLocaleString() : '–'}</span>
+              </>
+            )}
             <span className="font-mono text-muted-foreground text-right" style={{ fontSize: 12 }}>#{t.final_placement}</span>
           </div>
         ))}
@@ -536,7 +543,7 @@ export function TeamLeaderboard({
   const [tab, setTab] = useState<'standings' | 'games'>('standings');
   return (
     <div className="space-y-3">
-      <div className="flex gap-1.5 p-1 rounded-xl w-fit" style={{ background: 'var(--muted)' }}>
+      <div className="flex gap-1.5 p-1 rounded-xl w-full sm:w-fit" style={{ background: 'var(--muted)' }}>
         {([['standings', 'Standings & payouts'], ['games', 'Game Results']] as const).map(([id, label]) => (
           <button
             key={id}
@@ -544,7 +551,7 @@ export function TeamLeaderboard({
             className="rounded-lg font-semibold transition-colors"
             style={{
               fontSize: 12.5,
-              padding: '6px 14px',
+              padding: '8px 12px', flex: 1,
               background: tab === id ? 'var(--card)' : 'transparent',
               color: tab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}

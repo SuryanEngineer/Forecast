@@ -73,13 +73,13 @@ function Privacy() {
 
 export function LegalModal({ doc, onClose }: { doc: LegalDoc; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(2,6,16,0.78)' }} onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 modal-overlay" style={{ background: 'rgba(2,6,16,0.78)' }} onClick={onClose}>
       <div
-        className="w-full max-w-[640px] max-h-[85vh] rounded-2xl border border-border flex flex-col"
+        className="w-full max-w-[640px] max-h-[85vh] rounded-2xl border border-border flex flex-col modal-panel"
         style={{ background: 'var(--card)' }}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border">
           <div>
             <p className="font-bold" style={{ fontSize: 17, color: 'var(--foreground)' }}>
               {doc === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
@@ -90,7 +90,7 @@ export function LegalModal({ doc, onClose }: { doc: LegalDoc; onClose: () => voi
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="px-6 py-5 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+        <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1 min-h-0" style={{ scrollbarWidth: 'thin' }}>
           {doc === 'terms' ? <Terms /> : <Privacy />}
         </div>
       </div>

@@ -168,13 +168,13 @@ export function SettingsPage() {
   }
 
   if (!profile) {
-    return <div className="p-6 max-w-[760px] mx-auto"><h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Settings</h1><p className="text-muted-foreground mt-3" style={{ fontSize: 14 }}>Loading…</p></div>;
+    return <div className="p-6 page-pad max-w-[760px] mx-auto"><h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Settings</h1><p className="text-muted-foreground mt-3" style={{ fontSize: 14 }}>Loading…</p></div>;
   }
 
   const nameLocked = profile.name_change_available_at !== null;
 
   return (
-    <div className="p-6 max-w-[760px] mx-auto space-y-5">
+    <div className="p-6 page-pad max-w-[760px] mx-auto space-y-5">
       <div>
         <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Settings</h1>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>Manage your profile, security and account.</p>

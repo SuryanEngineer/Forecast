@@ -1,3 +1,4 @@
+import { MobileClose } from './MobileClose';
 import { useEffect, useMemo, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Trophy, X } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -190,18 +191,19 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        className="w-full overflow-y-auto rounded-2xl border border-border"
+        className="w-full overflow-y-auto rounded-2xl border border-border modal-panel modal-scroll"
         style={{ background: 'var(--card)', maxWidth: 1080, maxHeight: '92vh', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
         initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
-        <div className="px-6 pt-5 pb-4" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.08), rgba(155,111,255,0.06))' }}>
+        <MobileClose onClose={onClose} />
+        <div className="px-4 sm:px-6 pt-5 pb-4" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.08), rgba(155,111,255,0.06))' }}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>

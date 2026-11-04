@@ -33,7 +33,7 @@ export function StatsPage() {
 
   if (!stats) {
     return (
-      <div className="p-6 max-w-[1000px] mx-auto">
+      <div className="p-6 page-pad max-w-[1000px] mx-auto">
         <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Stats</h1>
         <p className="text-muted-foreground mt-3" style={{ fontSize: 14 }}>{error ? `Couldn't load your stats (${error}).` : loading ? 'Loading your stats…' : 'No stats yet.'}</p>
       </div>
@@ -48,7 +48,7 @@ export function StatsPage() {
     .filter((m): m is { label: string; day: string; first: boolean } => !!m.day && !m.first);
 
   return (
-    <div className="p-6 max-w-[1000px] mx-auto space-y-6">
+    <div className="p-6 page-pad max-w-[1000px] mx-auto space-y-6">
       <div>
         <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Your Stats</h1>
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>

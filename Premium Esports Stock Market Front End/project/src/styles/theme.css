@@ -187,3 +187,79 @@
     line-height: 1.5;
   }
 }
+
+/* ------------------------------------------------------------------------------------------------------------------
+   Phones / small tablets (portrait and landscape). Matches useCompact() in app/lib/useCompact.ts.
+   ------------------------------------------------------------------------------------------------------------------ */
+@keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+.mobile-drawer { animation: drawer-in 0.22s ease-out; }
+.mobile-scrim { animation: scrim-in 0.22s ease-out; }
+
+html { -webkit-text-size-adjust: 100%; }
+body { overscroll-behavior-y: none; }
+
+@media (max-width: 899px), (max-height: 519px) and (max-width: 1199px) {
+  /* Inputs at 16px+ stop iOS Safari from zooming the page when one is tapped. */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Pop-ups fill the screen instead of floating, so there is room to read and tap. */
+  .modal-overlay { padding: 0 !important; align-items: stretch !important; justify-content: stretch !important; }
+  .modal-panel {
+    max-width: none !important;
+    width: 100% !important;
+    max-height: none !important;
+    height: 100dvh !important;
+    border-radius: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    overscroll-behavior: contain;
+  }
+  /* A pop-up that is a flex column keeps its header/footer pinned while the middle scrolls. */
+  .modal-panel.flex { overflow: hidden; }
+
+  /* Comfortable tap targets for small icon buttons. */
+  button { touch-action: manipulation; }
+
+  /* Page padding is tighter on small screens. */
+  .page-pad { padding: 14px !important; }
+}
+
+/* Very narrow phones */
+@media (max-width: 380px) {
+  .page-pad { padding: 10px !important; }
+}
+
+/* Landscape phone: the screen is short, so keep vertical padding small. */
+@media (max-height: 519px) and (orientation: landscape) {
+  .page-pad { padding-top: 10px !important; padding-bottom: 10px !important; }
+}
+
+.mobile-only { display: none; }
+@media (max-width: 899px), (max-height: 519px) and (max-width: 1199px) {
+  .mobile-only { display: block; }
+  /* The pop-up's own header X scrolls away; the pinned one (MobileClose) replaces it. */
+  .modal-scroll button:not(.mobile-close):has(> svg.lucide-x) { display: none; }
+  /* Room for the pinned X so it never covers header text. */
+  .modal-scroll > :nth-child(2) { padding-right: 44px; }
+}
+
+@media (max-width: 899px), (max-height: 519px) and (max-width: 1199px) {
+  /* Little (i) popovers become a centred card, so they can never run off the edge of a narrow screen. */
+  .info-pop {
+    position: fixed !important;
+    left: 16px !important;
+    right: 16px !important;
+    top: 28% !important;
+    width: auto !important;
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+    font-size: 13.5px !important;
+    z-index: 90 !important;
+  }
+}

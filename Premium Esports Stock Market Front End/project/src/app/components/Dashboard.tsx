@@ -81,11 +81,11 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
     .slice(0, 3);
 
   return (
-    <div className="p-6 space-y-7 max-w-[1100px] mx-auto">
+    <div className="p-6 page-pad space-y-7 max-w-[1100px] mx-auto">
 
       {/* Hero */}
       <div
-        className="rounded-2xl p-6 border border-border"
+        className="rounded-2xl p-4 sm:p-6 border border-border"
         style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.08), rgba(155,111,255,0.06))' }}
       >
         <div className="flex items-start justify-between gap-4">
@@ -96,7 +96,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
             <p className="text-foreground font-bold" style={{ fontSize: 20, letterSpacing: '-0.3px' }}>
               {user ? `${user.display_name.split(' ')[0]}'s Portfolio Value` : 'Portfolio Value'}
             </p>
-            <p className="font-mono font-bold" style={{ fontSize: 46, letterSpacing: '-1.5px', color: 'var(--foreground)', lineHeight: 1.1, marginTop: 4 }}>
+            <p className="font-mono font-bold" style={{ fontSize: 'clamp(30px, 9.5vw, 46px)', letterSpacing: '-1.5px', color: 'var(--foreground)', lineHeight: 1.1, marginTop: 4 }}>
               ${totalPortfolio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <div className="flex items-center gap-2 mt-3 flex-wrap">

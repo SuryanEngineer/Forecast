@@ -1,4 +1,5 @@
 import { timeAgo } from '../lib/timeAgo';
+import { useCompact } from '../lib/useCompact';
 import { useState, useEffect, useRef } from 'react';
 import { Search, TrendingUp, TrendingDown, X, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -210,16 +211,21 @@ function LiveTradeFeed({ trades, navigate }: { trades: FeedTrade[]; navigate: Pr
  * shrinks the content column to make room. Independently toggleable from
  * Market Overview below (separate piece of UI, separate state). */
 function LiveActivityPanel({ trades, navigate, onClose }: { trades: FeedTrade[]; navigate: Props['navigate']; onClose: () => void }) {
+  const compact = useCompact();
+  // Phones: a full-screen sheet (a 340px side dock would leave no room for the page). Desktop: the docked side panel.
+  const shell = compact
+    ? { className: 'fixed inset-0 z-[60] overflow-hidden', style: { background: 'var(--card)', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }, initial: { opacity: 0, y: 24 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 24 } }
+    : { className: 'sticky top-0 self-start shrink-0 h-screen overflow-hidden border-l border-border', style: { background: 'var(--card)' }, initial: { width: 0 }, animate: { width: 340 }, exit: { width: 0 } };
   return (
     <motion.div
-      className="sticky top-0 self-start shrink-0 h-screen overflow-hidden border-l border-border"
-      style={{ background: 'var(--card)' }}
-      initial={{ width: 0 }}
-      animate={{ width: 340 }}
-      exit={{ width: 0 }}
+      className={shell.className}
+      style={shell.style}
+      initial={shell.initial}
+      animate={shell.animate}
+      exit={shell.exit}
       transition={{ duration: 0.25, ease: 'easeOut' }}
     >
-      <div className="h-full flex flex-col" style={{ width: 340 }}>
+      <div className="h-full flex flex-col" style={{ width: compact ? '100%' : 340 }}>
         <div className="px-4 py-4 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <MessageCircle className="w-4 h-4" style={{ color: 'var(--primary)' }} />
@@ -324,8 +330,8 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
 
   return (
     <div className="flex items-start">
-      <div className="flex-1 min-w-0 p-6 max-w-[1100px] mx-auto space-y-6">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex-1 min-w-0 p-6 page-pad max-w-[1100px] mx-auto space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-1.5">
             <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Player Market</h1>

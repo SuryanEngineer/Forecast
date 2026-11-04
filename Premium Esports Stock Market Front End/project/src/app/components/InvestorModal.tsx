@@ -1,3 +1,4 @@
+import { MobileClose } from './MobileClose';
 import { X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { INVESTOR_PORTFOLIOS, LeaderboardEntry, formatCurrency, getPlayer } from './mockData';
@@ -37,12 +38,12 @@ export function InvestorModal({ investor, onClose, onViewPlayer }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        className="w-full overflow-y-auto rounded-2xl border border-border"
+        className="w-full overflow-y-auto rounded-2xl border border-border modal-panel modal-scroll"
         style={{
           background: 'var(--card)',
           maxWidth: 560,
@@ -54,9 +55,10 @@ export function InvestorModal({ investor, onClose, onViewPlayer }: Props) {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
+        <MobileClose onClose={onClose} />
         {/* Header */}
         <div
-          className="px-6 pt-5 pb-4 flex items-center gap-4"
+          className="px-4 sm:px-6 pt-5 pb-4 flex items-center gap-4"
           style={{ background: `linear-gradient(135deg, ${investor.color}12, transparent 60%)` }}
         >
           <div
@@ -89,7 +91,7 @@ export function InvestorModal({ investor, onClose, onViewPlayer }: Props) {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 px-6 pb-4">
+        <div className="grid grid-cols-3 gap-3 px-4 sm:px-6 pb-4">
           <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
             <p className="text-muted-foreground" style={{ fontSize: 11 }}>Portfolio Value</p>
             <p className="font-mono font-bold text-foreground" style={{ fontSize: 15, marginTop: 2 }}>{formatCurrency(investor.portfolioValue, 0)}</p>
@@ -108,7 +110,7 @@ export function InvestorModal({ investor, onClose, onViewPlayer }: Props) {
         <div className="border-t border-border" />
 
         {/* Holdings */}
-        <div className="px-6 py-4">
+        <div className="px-4 sm:px-6 py-4">
           <p className="text-muted-foreground font-semibold mb-3" style={{ fontSize: 12, letterSpacing: '0.06em' }}>
             {enriched.length > 0 ? `${investor.username.split(' ')[0]}'s Pro Picks` : 'No public holdings'}
           </p>
@@ -168,7 +170,7 @@ export function InvestorModal({ investor, onClose, onViewPlayer }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 pb-5">
+        <div className="px-4 sm:px-6 pb-5">
           <div className="rounded-xl p-3 text-center" style={{ background: 'rgba(155,111,255,0.08)', border: '1px solid rgba(155,111,255,0.2)' }}>
             <p className="text-muted-foreground" style={{ fontSize: 12 }}>
               💡 See a player you like? Click <span style={{ color: 'var(--accent)' }}>View &amp; Trade</span> to check their price and buy shares!

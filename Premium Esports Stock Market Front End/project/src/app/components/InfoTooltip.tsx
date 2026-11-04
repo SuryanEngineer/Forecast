@@ -34,7 +34,7 @@ export function InfoDot({ text, size = 13, align = 'left' }: Props) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute z-50 top-full mt-1.5 rounded-xl border border-border p-3"
+            className="info-pop absolute z-50 top-full mt-1.5 rounded-xl border border-border p-3"
             style={{
               background: 'var(--popover)',
               width: 220,

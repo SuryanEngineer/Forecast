@@ -38,3 +38,4 @@ forecast-backend/analytics/
 
 # --- Local database backups (contain user data) ---
 forecast-backend/backups/
+forecast-backend/users.csv

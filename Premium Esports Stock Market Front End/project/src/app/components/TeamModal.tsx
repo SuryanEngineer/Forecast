@@ -1,3 +1,4 @@
+import { MobileClose } from './MobileClose';
 import { X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useLeaderboard } from '../lib/hooks';
@@ -40,17 +41,18 @@ export function TeamModal({ userId, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay"
       style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        className="w-full overflow-y-auto rounded-2xl border border-border"
+        className="w-full overflow-y-auto rounded-2xl border border-border modal-panel modal-scroll"
         style={{ background: 'var(--card)', maxWidth: 460, maxHeight: '85vh', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
         initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
       >
+        <MobileClose onClose={onClose} />
         {loading && !entry ? (
           <p className="text-muted-foreground text-center py-16" style={{ fontSize: 14 }}>Loading investor…</p>
         ) : !entry ? (
@@ -66,7 +68,7 @@ export function TeamModal({ userId, onClose }: Props) {
           </div>
         ) : (
           <>
-            <div className="px-6 pt-5 pb-4 flex items-start gap-4" style={{ background: `linear-gradient(135deg, ${color}14, transparent 60%)` }}>
+            <div className="px-4 sm:px-6 pt-5 pb-4 flex items-start gap-4" style={{ background: `linear-gradient(135deg, ${color}14, transparent 60%)` }}>
               <div
                 className="rounded-2xl flex items-center justify-center shrink-0 font-mono font-bold select-none"
                 style={{ width: 56, height: 56, background: color + '25', border: `2px solid ${color}50`, color, fontSize: 20 }}
@@ -90,7 +92,7 @@ export function TeamModal({ userId, onClose }: Props) {
               </div>
             </div>
 
-            <div className="px-6 py-5 grid grid-cols-2 gap-3">
+            <div className="px-4 sm:px-6 py-5 grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <p className="text-muted-foreground" style={{ fontSize: 11 }}>Cash Balance</p>
                 <p className="font-mono font-bold mt-0.5" style={{ fontSize: 17, color: 'var(--foreground)' }}>
@@ -105,7 +107,7 @@ export function TeamModal({ userId, onClose }: Props) {
               </div>
             </div>
 
-            <div className="px-6 pb-6">
+            <div className="px-4 sm:px-6 pb-6">
               <p className="text-muted-foreground text-center" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
                 A per-player holdings breakdown, value history, and trade history for other investors isn't available yet --
                 only your own "My Portfolio" page shows that level of detail right now.

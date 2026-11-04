@@ -442,7 +442,7 @@ export function Tournaments({ openTournament }: Props) {
   const [featured, ...otherUpcoming] = upcomingFromCalendar.map(toTournamentResponse);
 
   return (
-    <div className="p-6 max-w-[900px] mx-auto space-y-6">
+    <div className="p-6 page-pad max-w-[900px] mx-auto space-y-6">
       <div>
         <div className="flex items-center gap-1.5">
           <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Tournaments</h1>
