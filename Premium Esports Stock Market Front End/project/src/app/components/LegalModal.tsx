@@ -2,9 +2,9 @@ import { X } from 'lucide-react';
 
 export type LegalDoc = 'terms' | 'privacy';
 
-export const SUPPORT_EMAIL: string = (import.meta as any).env?.VITE_SUPPORT_EMAIL || 'forecastesm@gmail.com';
+export const SUPPORT_EMAIL: string = 'forecastesm@gmail.com';
 
-const UPDATED = 'October 26, 2026';
+const UPDATED = 'November 4, 2026';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -38,7 +38,7 @@ function Terms() {
         <p>You can delete your account at any time from Settings. Your personal data is removed; anonymized trade records may be kept so the game's market history stays consistent.</p>
       </Section>
       <Section title="7. Contact">
-        <p>Questions about these terms: {SUPPORT_EMAIL}.</p>
+        <p>Questions about these terms, or feedback on the game: {SUPPORT_EMAIL}.</p>
       </Section>
     </>
   );
@@ -59,7 +59,7 @@ function Privacy() {
         <p>Your username, tag, rank, and portfolio standings appear on public leaderboards and may be viewable by other players. Your email is never shown to other users.</p>
       </Section>
       <Section title="Email">
-        <p>Account emails come from a no-reply address. If you didn't request a code, you can ignore it. Replies to the no-reply address aren't monitored; contact {SUPPORT_EMAIL} for help.</p>
+        <p>Account emails (such as password-reset codes) are sent automatically from Forecast's email account. If you didn't request one, you can ignore it. For help or feedback, email {SUPPORT_EMAIL}.</p>
       </Section>
       <Section title="Storage, retention and your choices">
         <p>Data is stored with our hosting and database providers. You can change your username, email, and password in Settings, and delete your account there too; deletion removes your personal data (email, name, session details) and anonymizes your remaining game history.</p>

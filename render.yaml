@@ -79,7 +79,8 @@ services:
       # "resend" and add RESEND_API_KEY -- see the deployment guide's
       # "Turning on real password-reset emails" section. ---
       # Managed in the Render dashboard (not here) so a Blueprint re-sync never resets it: "console" (default; codes only
-      # appear in the logs), "smtp" (Gmail etc. -- needs a paid Render plan) or "resend". See EMAIL_SETUP.md.
+      # appear in the logs), "webhook" (Google Apps Script relay -- works on the free plan), "smtp" (Gmail etc. -- needs a paid
+      # Render plan) or "resend". See EMAIL_SETUP.md.
       - key: EMAIL_PROVIDER
         sync: false
       - key: RESEND_API_KEY
@@ -87,10 +88,16 @@ services:
       # Sender shown in inboxes, e.g.  Forecast <no-reply@yourdomain.com>
       - key: EMAIL_FROM_ADDRESS
         sync: false
-      # A real inbox people can write to (shown in email footers, set as Reply-To), e.g. support@yourdomain.com
+      # A real inbox people can write to (shown in email footers, set as Reply-To), e.g. forecastesm@gmail.com
       - key: EMAIL_REPLY_TO
         sync: false
       - key: SUPPORT_EMAIL
+        sync: false
+      # Email relay / SMTP settings (set in the dashboard; they are secrets): EMAIL_WEBHOOK_URL, EMAIL_WEBHOOK_SECRET,
+      # SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD -- see EMAIL_SETUP.md.
+      - key: EMAIL_WEBHOOK_URL
+        sync: false
+      - key: EMAIL_WEBHOOK_SECRET
         sync: false
       # --- Set this to your frontend's real URL once you know it (see
       # the deployment guide) -- used to build the link inside reset
@@ -117,22 +124,6 @@ services:
         value: "true"
       - key: OSIRION_SYNC_INTERVAL_SECONDS
         value: "45"
-
-      # --- Email (forgot password). Gmail SMTP: needs a PAID Render plan (free web services block SMTP ports). ---
-      - key: EMAIL_PROVIDER
-        value: "smtp"
-      - key: SMTP_HOST
-        value: "smtp.gmail.com"
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USERNAME
-        value: "forecastesm@gmail.com"
-      - key: SMTP_PASSWORD
-        sync: false   # a Google "App password" (16 characters), NOT the account password
-      - key: EMAIL_FROM_ADDRESS
-        value: "Forecast <forecastesm@gmail.com>"
-      - key: EMAIL_REPLY_TO
-        value: "forecastesm@gmail.com"
 
       - key: DEFAULT_TREASURY_ANNUAL_RATE
         value: "0.01"

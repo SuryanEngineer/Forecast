@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     EMAIL_FROM_ADDRESS: str = "Forecast <onboarding@resend.dev>"
     # Where replies go (a real, monitored inbox). Shown in every email footer too.
     EMAIL_REPLY_TO: str | None = None
-    SUPPORT_EMAIL: str | None = None
+    SUPPORT_EMAIL: str | None = "forecastesm@gmail.com"
     # SMTP (EMAIL_PROVIDER=smtp): works with Zoho, Google Workspace, Brevo, Mailgun, SES, etc.
     SMTP_HOST: str | None = None
     SMTP_PORT: int = 587

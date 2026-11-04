@@ -150,7 +150,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <List
             items={[
               'Price chart over different ranges, with tournament and season markers so you can see what moved it.',
-              'The Buy price, Sell price, and order book (resting buy and sell orders).',
+              'The Buy price, Sell price, and order book: resting orders from other traders plus the House’s own levels (shown as House, with no individual order behind them).',
               'The trade panel: quick buy/sell or a limit order at your own price.',
               'Their tournament history, with links into the exact placement, and the dividends they have paid.',
               'The recent trades in them, and a note on how dividends work.',
@@ -180,6 +180,12 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Settings',
         body: <p>Your profile, a cosmetic tag shown next to your name (pick its color), password, and email.</p>,
+      },
+      {
+        heading: 'Feedback and phones',
+        body: <p>Feedback in the sidebar shows our email address; we would love to hear what you think. On a phone the sidebar is
+        tucked away: tap the menu button (three lines) at the top to open it. Everything works the same on a small screen, in
+        either orientation.</p>,
       },
     ],
   },
@@ -380,6 +386,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             <Term name="Per-share payout">A player’s dividend divided by their total shares. You receive this times your shares.</Term>
             <Term name="Record date">The moment a tournament starts. Whoever holds shares then gets paid.</Term>
             <Term name="Cost basis">What you paid for shares you hold. Gain or loss compares today’s value to it.</Term>
+            <Term name="Market cap">What it would take to buy a player’s entire supply right now: resting bids first, then the House’s size-dependent sell price for the rest. It is not simply the listed price times every share.</Term>
             <Term name="Net worth">Cash plus what selling everything you own would pay right now. This ranks the leaderboard.</Term>
             <Term name="Market return">The growth the market gets from dividends alone. Beat it and you are outperforming.</Term>
           </div>
