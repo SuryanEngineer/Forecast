@@ -39,7 +39,13 @@ else:
     # from free-tier Postgres providers (Supabase/Neon) that idle-timeout
     # connections after a few minutes.
     # pool_recycle retires connections before the provider's idle/lifetime cut-off does.
-    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=240, future=True)
+    # Supabase's session pooler allows only ~15 client connections IN TOTAL (shared with scripts, deploy migrations and any
+    # other copy of the backend). SQLAlchemy's default of 5 + 10 overflow could take all of them on its own and lock out the
+    # next deploy's migration, so keep this process to a small, fixed number.
+    engine = create_engine(
+        settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=240, future=True,
+        pool_size=settings.DB_POOL_SIZE, max_overflow=settings.DB_MAX_OVERFLOW, pool_timeout=30,
+    )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
