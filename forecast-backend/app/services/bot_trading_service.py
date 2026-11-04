@@ -1366,6 +1366,7 @@ def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
 
     # Plain copies: committing after each bot expires ORM objects, and re-reading every bot row after every commit is waste.
     bots = [SimpleNamespace(user_id=b.user_id, strategy=b.strategy, mm_player_ids=list(b.mm_player_ids or [])) for b in bots]
+    db.commit()  # ends the read transaction so the connection goes back to the pool while the tick computes
     makers = [b for b in bots if b.strategy == "liquidity_provider"]
     agents = [b for b in bots if b.strategy != "liquidity_provider"]
     n_active = max(1, int(len(agents) * float(params["participation_rate"]))) if agents else 0
