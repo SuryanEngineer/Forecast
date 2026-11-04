@@ -1302,6 +1302,45 @@ def _load_params(db: Session) -> dict[str, Decimal]:
     return {key.split(".", 1)[1]: economic_params_service.get_param(db, key) for key in keys}
 
 
+_MEM_META: dict = {"last": 0.0}
+MEMORY_LOG_SECONDS = 600
+
+
+def _rss_mb() -> float | None:
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _memory_watch(db: Session) -> None:
+    """Every ~10 minutes: free whatever Python can, drop the SQLAlchemy identity map, and log the process size plus the
+    size of the in-process caches, so a Render "exceeded its memory limit" restart can be traced to a cause."""
+    now = time.monotonic()
+    if now - _MEM_META["last"] < MEMORY_LOG_SECONDS:
+        return
+    _MEM_META["last"] = now
+    try:
+        import gc
+        import logging
+
+        db.expire_all()
+        before = _rss_mb()
+        gc.collect()
+        after = _rss_mb()
+        logging.getLogger("uvicorn.error").warning(
+            "memory: rss %s MB (was %s before gc) | bot_state=%d slow_cache=%d recent=%d hist_buckets=%d player_rows=%d",
+            f"{after:.0f}" if after else "?", f"{before:.0f}" if before else "?",
+            len(_BOT_STATE), len(_SLOW_CACHE), len(_RECENT), len(_HIST.get("buckets") or {}), len(_PLAYER_CACHE.get("rows") or []),
+        )
+    except Exception:  # diagnostics must never break a tick
+        pass
+
+
 def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
     """One full tick: top up the population, make sure every player has market-maker coverage, let a random subset of
     directional bots act, and let (most) market makers refresh quotes. Commits per bot so one failure can't roll back
@@ -1379,4 +1418,5 @@ def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
         flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK))
     except Exception:  # noqa: BLE001 -- background flow must never break the tick
         db.rollback()
+    _memory_watch(db)
     return {"population": len(bots), "active": len(active), "actions": actions + flow, "flow": flow, "errors": errors}
