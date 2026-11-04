@@ -32,7 +32,9 @@ export function FeedbackModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="px-4 sm:px-6 py-6 text-center">
-          <p style={{ fontSize: 34 }}>💬</p>
+          <div className="mx-auto w-14 h-14 rounded-full flex items-center justify-center" style={{ background: 'rgba(0,200,255,0.12)' }}>
+            <MessageSquare className="w-7 h-7" style={{ color: 'var(--primary)' }} />
+          </div>
           <p className="text-foreground font-semibold mt-2" style={{ fontSize: 16 }}>We'd love to hear your feedback</p>
           <p className="text-muted-foreground mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>
             Ideas, bugs, things that felt confusing, anything you'd change. Email us at
