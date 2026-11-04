@@ -300,7 +300,25 @@ def list_market_snapshots_page(
     return page_items, total
 
 
+_SUMMARY_CACHE: dict = {}
+SUMMARY_TTL = 15.0
+
+
 def get_market_summary(db: Session, active_only: bool = True) -> dict:
+    """Cached for a few seconds: it values every player's whole float, which is several queries, and many visitors ask for it."""
+    import time as _t
+
+    key = bool(active_only)
+    hit = _SUMMARY_CACHE.get(key)
+    now = _t.monotonic()
+    if hit is not None and now - hit[0] < SUMMARY_TTL:
+        return hit[1]
+    value = _get_market_summary_uncached(db, active_only)
+    _SUMMARY_CACHE[key] = (now, value)
+    return value
+
+
+def _get_market_summary_uncached(db: Session, active_only: bool = True) -> dict:
     """Market-wide totals. Total market cap is the sum of each player's float value (what all of its shares would fetch
     if sold now -- see get_market_snapshot); the other numbers are real SQL aggregates, not sums over a client's page."""
     player_query = db.query(Player)
