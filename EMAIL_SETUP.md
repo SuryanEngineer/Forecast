@@ -119,3 +119,19 @@ new account: a verification email should arrive.
 
 ### Later: move to your own domain
 Once you buy a domain, switch to Option A above (Resend) so mail comes from `no-reply@yourdomain.com` with proper SPF/DKIM/DMARC.
+
+
+## Free plan: send through a Google Apps Script (no SMTP needed)
+
+Render's free web services block the SMTP ports, so Gmail SMTP won't work there. This sends through the Gmail account over
+HTTPS instead (EMAIL_PROVIDER=webhook). About 100 emails a day for a normal Gmail account.
+
+1. Sign in to forecastesm@gmail.com, open https://script.google.com, **New project**.
+2. Delete the sample code, paste in `forecast-backend/gmail_relay.gs`, and replace `PASTE_A_LONG_RANDOM_STRING_HERE` with a
+   long random string (30+ characters). Save.
+3. **Deploy > New deployment > Web app**. Execute as: **Me**. Who has access: **Anyone**. Deploy, and approve the permission
+   prompt ("Advanced" > "Go to ... (unsafe)" > Allow; it only needs to send mail as you). Copy the web app URL.
+4. In Render (`forecast-backend` > Environment) set: `EMAIL_PROVIDER=webhook`, `EMAIL_WEBHOOK_URL` = the URL,
+   `EMAIL_WEBHOOK_SECRET` = the same random string, `EMAIL_FROM_ADDRESS=Forecast <forecastesm@gmail.com>`,
+   `EMAIL_REPLY_TO=forecastesm@gmail.com`.
+5. Use "Forgot password" on the site and check the inbox (and Spam).

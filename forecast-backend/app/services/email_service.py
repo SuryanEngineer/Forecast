@@ -5,6 +5,8 @@ Transactional email. Providers (settings.EMAIL_PROVIDER):
   (read the code in the uvicorn terminal). Never use for real users.
 - "smtp": any SMTP server (Zoho, Google Workspace, Brevo, Mailgun, Amazon SES...). Set SMTP_HOST/PORT/USERNAME/PASSWORD.
 - "resend": resend.com HTTP API (RESEND_API_KEY).
+- "webhook": a Google Apps Script web app (gmail_relay.gs) that sends from a Gmail account over HTTPS. Works where SMTP
+  ports are blocked (Render free plan). Set EMAIL_WEBHOOK_URL and EMAIL_WEBHOOK_SECRET.
 
 Every email is multipart (plain text + branded HTML), has a From of EMAIL_FROM_ADDRESS (use a no-reply address on your
 own domain), a Reply-To of EMAIL_REPLY_TO/SUPPORT_EMAIL when set, and a footer telling the reader why they got it.
@@ -73,6 +75,11 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str | Non
                 logger.error("EMAIL_PROVIDER=smtp but SMTP_HOST is not set -- logging instead.")
                 return _console(to_email, subject, text_body)
             return _smtp(to_email, subject, text_body, html_body)
+        if provider == "webhook":
+            if not settings.EMAIL_WEBHOOK_URL or not settings.EMAIL_WEBHOOK_SECRET:
+                logger.error("EMAIL_PROVIDER=webhook but EMAIL_WEBHOOK_URL / EMAIL_WEBHOOK_SECRET is not set -- logging instead.")
+                return _console(to_email, subject, text_body)
+            return _webhook(to_email, subject, text_body, html_body)
         if provider == "resend":
             if not settings.RESEND_API_KEY:
                 logger.error("EMAIL_PROVIDER=resend but RESEND_API_KEY is not set -- logging instead.")
@@ -116,6 +123,25 @@ def _smtp(to_email: str, subject: str, text_body: str, html_body: str | None) ->
             if settings.SMTP_USERNAME:
                 s.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD or "")
             s.send_message(msg, from_addr=sender)
+    return True
+
+
+def _webhook(to_email: str, subject: str, text_body: str, html_body: str | None) -> bool:
+    payload = {
+        "secret": settings.EMAIL_WEBHOOK_SECRET,
+        "to": to_email,
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+        "from_name": parseaddr(settings.EMAIL_FROM_ADDRESS)[0] or BRAND,
+        "reply_to": _reply_to(),
+    }
+    # Apps Script answers through a redirect, so follow it. The email has already been sent by then.
+    r = httpx.post(settings.EMAIL_WEBHOOK_URL, json=payload, timeout=30.0, follow_redirects=True)
+    r.raise_for_status()
+    data = r.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"email webhook refused the message: {data.get('error')}")
     return True
 
 

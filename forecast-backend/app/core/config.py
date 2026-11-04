@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USERNAME: str | None = None
     SMTP_PASSWORD: str | None = None
+    # "webhook" (EMAIL_PROVIDER=webhook): a Google Apps Script that sends through the Gmail account over HTTPS --
+    # works on Render's free plan, where SMTP ports are blocked. See gmail_relay.gs and EMAIL_SETUP.md.
+    EMAIL_WEBHOOK_URL: str | None = None
+    EMAIL_WEBHOOK_SECRET: str | None = None
     SMTP_USE_SSL: bool = False  # true = implicit TLS (port 465); false = STARTTLS (port 587)
     # The public URL of the deployed FRONTEND (not the API), e.g. "https://forecast-app.onrender.com".
     FRONTEND_BASE_URL: str = "http://localhost:5173"
