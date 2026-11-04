@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 
 export type LegalDoc = 'terms' | 'privacy';
 
-export const SUPPORT_EMAIL: string = (import.meta as any).env?.VITE_SUPPORT_EMAIL || 'support@forecast.gg';
+export const SUPPORT_EMAIL: string = (import.meta as any).env?.VITE_SUPPORT_EMAIL || 'forecastesm@gmail.com';
 
 const UPDATED = 'October 26, 2026';
 

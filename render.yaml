@@ -118,6 +118,22 @@ services:
       - key: OSIRION_SYNC_INTERVAL_SECONDS
         value: "45"
 
+      # --- Email (forgot password). Gmail SMTP: needs a PAID Render plan (free web services block SMTP ports). ---
+      - key: EMAIL_PROVIDER
+        value: "smtp"
+      - key: SMTP_HOST
+        value: "smtp.gmail.com"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        value: "forecastesm@gmail.com"
+      - key: SMTP_PASSWORD
+        sync: false   # a Google "App password" (16 characters), NOT the account password
+      - key: EMAIL_FROM_ADDRESS
+        value: "Forecast <forecastesm@gmail.com>"
+      - key: EMAIL_REPLY_TO
+        value: "forecastesm@gmail.com"
+
       - key: DEFAULT_TREASURY_ANNUAL_RATE
         value: "0.01"
 

@@ -19,6 +19,7 @@ import { HelpCenter } from './components/HelpModal';
 import { StatsPage } from './components/StatsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { LegalModal, type LegalDoc } from './components/LegalModal';
+import { FeedbackModal } from './components/FeedbackModal';
 import type { TournamentResponse } from './lib/types';
 
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
@@ -43,6 +44,7 @@ function AuthenticatedApp() {
   const [tournamentFocusPlayerId, setTournamentFocusPlayerId] = useState<string | null>(null);
   const [marketSearch, setMarketSearch] = useState('');
   const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
 
   // Keyed per-account (introSeenKey(user.id)), not one global flag -- see
   // IntroTour.tsx. `justRegistered` (see lib/auth.tsx) is what actually
@@ -105,14 +107,14 @@ function AuthenticatedApp() {
           {menuOpen && (
             <div className="fixed inset-0 z-[80] flex" role="dialog" aria-modal="true" aria-label="Menu">
               <div className="mobile-drawer h-full">
-                <Sidebar variant="drawer" currentPage={currentPage} navigate={goTo} onShowIntro={() => { setMenuOpen(false); setShowGuide(true); }} onShowLegal={doc => { setMenuOpen(false); setLegalDoc(doc); }} onClose={() => setMenuOpen(false)} />
+                <Sidebar variant="drawer" currentPage={currentPage} navigate={goTo} onShowIntro={() => { setMenuOpen(false); setShowGuide(true); }} onShowLegal={doc => { setMenuOpen(false); setLegalDoc(doc); }} onShowFeedback={() => { setMenuOpen(false); setShowFeedback(true); }} onClose={() => setMenuOpen(false)} />
               </div>
               <div className="flex-1 mobile-scrim" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setMenuOpen(false)} />
             </div>
           )}
         </>
       ) : (
-        <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => setShowGuide(true)} onShowLegal={setLegalDoc} />
+        <Sidebar currentPage={currentPage} navigate={page => setCurrentPage(page as Page)} onShowIntro={() => setShowGuide(true)} onShowLegal={setLegalDoc} onShowFeedback={() => setShowFeedback(true)} />
       )}
 
       <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent', paddingBottom: compact ? 'env(safe-area-inset-bottom)' : undefined, paddingLeft: compact ? 'env(safe-area-inset-left)' : undefined, paddingRight: compact ? 'env(safe-area-inset-right)' : undefined }}>
@@ -152,6 +154,7 @@ function AuthenticatedApp() {
         />
       )}
       {legalDoc && <LegalModal doc={legalDoc} onClose={() => setLegalDoc(null)} />}
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       {showIntro && (
         <IntroTour
           initialStep={introStep}

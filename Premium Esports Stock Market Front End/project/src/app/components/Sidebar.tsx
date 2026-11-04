@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X } from 'lucide-react';
+import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X, MessageSquare } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
@@ -27,6 +27,7 @@ interface SidebarProps {
   navigate: (page: Page) => void;
   onShowIntro: () => void;
   onShowLegal: (doc: 'terms' | 'privacy') => void;
+  onShowFeedback: () => void;
   /** 'rail' = the fixed desktop column; 'drawer' = the slide-out menu used on phones (scrolls, fits any height). */
   variant?: 'rail' | 'drawer';
   onClose?: () => void;
@@ -38,7 +39,7 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, variant = 'rail', onClose }: SidebarProps) {
+export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onShowFeedback, variant = 'rail', onClose }: SidebarProps) {
   const { user, wallet, logout } = useAuth();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
@@ -112,6 +113,14 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, varia
         >
           <HelpCircle className="w-5 h-5 shrink-0" />
           <span className="flex-1">Guide</span>
+        </button>
+        <button
+          onClick={onShowFeedback}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left hover:bg-white/5"
+          style={{ color: 'var(--muted-foreground)', fontSize: 14 }}
+        >
+          <MessageSquare className="w-5 h-5 shrink-0" />
+          <span className="flex-1">Feedback</span>
         </button>
       </div>
 
