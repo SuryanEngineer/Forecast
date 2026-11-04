@@ -8,6 +8,7 @@ reporting layer on top of it.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -90,6 +91,7 @@ def get_market(player_id: uuid.UUID, db: Session = Depends(get_db)) -> MarketSna
 def get_order_book(player_id: uuid.UUID, depth: int = Query(8, ge=1, le=25), db: Session = Depends(get_db)) -> OrderBookResponse:
     """Resting buy / sell orders for one player, aggregated by price. The listed price is the last trade pulled into the
     best bid / best ask (see book_price_service)."""
+    depth_limit = depth
     player = db.get(Player, player_id)
     if player is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found")
@@ -98,11 +100,18 @@ def get_order_book(player_id: uuid.UUID, depth: int = Query(8, ge=1, le=25), db:
     # The House always stands ready to buy and sell, so show it as a level on each side (orders = 0 marks it). Without
     # this, a stock nobody holds has no asks, and a stock nobody wants has no bids, even though quick trades still work.
     try:
-        depth_shares = max(int(player.total_shares_outstanding * 0.01), 100)
-        for side, key, reverse in (("buy", "asks", False), ("sell", "bids", True)):
-            q = order_service.quote_quick_order(db, player_id, OrderSide.BUY if side == "buy" else OrderSide.SELL, 1)
-            if q.get("feasible") and q.get("average_price") is not None:
-                book[key] = sorted(book[key] + [{"price": q["average_price"], "quantity": depth_shares, "orders": 0}], key=lambda r: r["price"], reverse=reverse)[:depth]
+        from app.engine import market_policy as mp
+        from app.services import valuation_service
+
+        v = valuation_service.Valuer(db, [player_id])
+        ref = v.reference(player_id)
+        if ref > 0:
+            depth = v.depth[player_id]
+            depth_shares = max(int(depth), 1)
+            house_ask = mp.house_buy_price(ref, Decimal(1), depth, v.k, v.max_impact).quantize(Decimal("0.01"))
+            house_bid = mp.house_sell_price(ref, Decimal(1), depth, v.k, v.max_impact).quantize(Decimal("0.01"))
+            for key, price, reverse in (("asks", house_ask, False), ("bids", house_bid, True)):
+                book[key] = sorted(book[key] + [{"price": price, "quantity": depth_shares, "orders": 0}], key=lambda r: r["price"], reverse=reverse)[:depth_limit]
     except Exception:  # the book itself is still useful without the House level
         pass
     return OrderBookResponse(**book)

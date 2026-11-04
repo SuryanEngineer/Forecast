@@ -188,8 +188,8 @@ class Settings(BaseSettings):
     # without a restart. These two are here instead because changing them
     # DOES require restarting the process (they control the background
     # asyncio task started in main.py's lifespan).
-    DB_POOL_SIZE: int = 4  # connections this process keeps open (Supabase session pooler allows ~15 in total)
-    DB_MAX_OVERFLOW: int = 2  # extra connections it may open briefly under load
+    DB_POOL_SIZE: int = 8  # connections this process keeps open (Supabase session pooler allows ~15 in total)
+    DB_MAX_OVERFLOW: int = 3  # extra connections it may open briefly under load
     BOT_TRADING_ENABLED: bool = True
     # Only the web-server process holding the 'market' lease matches orders / runs bots / pays dividends (see
     # app/services/lease_service.py). Turn off only for single-process local debugging.
