@@ -87,6 +87,14 @@ class _MarketContext:
         # The reference can sit outside the band after a result moved the fair price; price off the clamped value.
         self.reference = market_policy.clamp_to_band(raw, self.fair, self.low, self.high)
 
+    def reference_for(self, book: OrderBook, engine_side: EngineSide) -> Decimal:
+        """The reference the House prices the leg of a quick order off: for a BUY (the House sells), it drops toward the
+        best real bid when no real seller is left (see market_policy.house_ask_reference); a SELL uses the plain reference."""
+        if engine_side != EngineSide.BUY:
+            return self.reference
+        bid, ask = book.best_bid, book.best_ask
+        return market_policy.house_ask_reference(self.reference, bid.price if bid else None, ask is not None)
+
     def band(self) -> tuple[Decimal, Decimal] | None:
         if self.fair is None or self.fair <= 0:
             return None
@@ -417,7 +425,7 @@ def _place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, si
             fallback_reference_price=fallback_price,
             market_impact_coefficient=market_impact_coefficient,
             synthetic_liquidity_depth=synthetic_liquidity_depth,
-            reference_price_override=ctx.reference,
+            reference_price_override=ctx.reference_for(book, engine_side),
         )
         if side == OrderSide.BUY:
             house_position = position_service.get_or_create_position(db, house.id, player_id)
@@ -449,7 +457,7 @@ def _place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, si
             market_impact_coefficient=market_impact_coefficient,
             synthetic_liquidity_depth=synthetic_liquidity_depth,
             max_synthetic_quantity=max_synthetic_quantity,
-            reference_price_override=ctx.reference,
+            reference_price_override=ctx.reference_for(book, engine_side),
         )
         if estimated_notional is None:
             raise NoLiquidityError(
@@ -502,7 +510,7 @@ def _place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, si
             market_impact_coefficient=market_impact_coefficient,
             synthetic_liquidity_depth=synthetic_liquidity_depth,
             max_synthetic_quantity=max_synthetic_quantity,
-            reference_price_override=ctx.reference,
+            reference_price_override=ctx.reference_for(book, engine_side),
         )
         if result.unfilled_quantity > 0:
             # Should not happen given the pre-check above (same book, same
@@ -543,7 +551,7 @@ def quote_quick_order(db: Session, player_id: uuid.UUID, side: OrderSide, quanti
         notional = estimate_quick_order_cost(
             book, engine_side, Decimal(quantity), shares_outstanding,
             fallback_reference_price=ctx.reference, market_impact_coefficient=k, synthetic_liquidity_depth=depth,
-            max_synthetic_quantity=max_synthetic, reference_price_override=ctx.reference,
+            max_synthetic_quantity=max_synthetic, reference_price_override=ctx.reference_for(book, engine_side),
         )
     out = {"side": side.value, "quantity": quantity, "feasible": notional is not None, "reason": None}
     if notional is None:

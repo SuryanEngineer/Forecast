@@ -116,6 +116,20 @@ def house_sell_price(ref: Decimal, qty: Decimal, depth: Decimal, k: Decimal, max
     return max(ref * (D("1") - house_impact(qty, depth, k, max_impact)), MIN_PRICE)
 
 
+# When nobody is selling except the House, the House does not sit far above the people who want to buy: its ask is held
+# to within this fraction of the best real bid. (Real sellers, when there are any, are always hit first.)
+HOUSE_ASK_GAP = D("0.03")
+
+
+def house_ask_reference(ref: Decimal, best_bid: Optional[Decimal], has_real_ask: bool) -> Decimal:
+    """The reference the House prices its SELL side off. Normally the market reference, but with no real asks and a real
+    bid standing, it drops toward that bid (best bid + HOUSE_ASK_GAP) so the House doesn't hold the price high above
+    where buyers actually are."""
+    if has_real_ask or best_bid is None or best_bid <= 0:
+        return ref
+    return max(MIN_PRICE, min(ref, best_bid * (D("1") + HOUSE_ASK_GAP)))
+
+
 # --- reference price -------------------------------------------------------------------------------------------------
 
 

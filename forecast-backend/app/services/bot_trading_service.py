@@ -1130,7 +1130,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
                     budget["orders"] -= 1
                     placed = True
             if need_ask and pos is not None:
-                qty = min(pos.available_quantity, max(1, int(pos.available_quantity * rng.uniform(0.2, 0.5))))
+                qty = min(pos.available_quantity, max(1, int(pos.available_quantity * rng.uniform(0.35, 0.8))))
                 if _submit(db, bot_user.id, pid, OrderSide.SELL, qty, ask):
                     acted = True
                     budget["orders"] -= 1

@@ -111,7 +111,8 @@ class Valuer:
             return ZERO, ZERO
         depth = self.depth[pid]
         bid, ask = self.quotes.get(pid, (None, None))
-        buy = mp.house_buy_price(ref, Decimal(qty), depth, self.k, self.max_impact)
+        best_bid = self.bids.get(pid, [(None, 0)])[0][0] if self.bids.get(pid) else None
+        buy = mp.house_buy_price(mp.house_ask_reference(ref, best_bid, ask is not None), Decimal(qty), depth, self.k, self.max_impact)
         sell = mp.house_sell_price(ref, Decimal(qty), depth, self.k, self.max_impact)
         if ask is not None:
             buy = min(buy, ask)
