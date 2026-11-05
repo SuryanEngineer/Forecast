@@ -340,6 +340,9 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   }
 
   const price = toNumber(market.last_price);
+  // Selling is limited to shares you own and haven't already listed in another sell order; buying to MAX_ORDER_SHARES.
+  const sellCap = Math.max(0, position?.available_quantity ?? 0);
+  const orderCap = orderSide === 'sell' ? Math.max(1, sellCap) : MAX_ORDER_SHARES;
   const changePct = toNumber(market.change_pct);
   const isUp = changePct >= 0;
   const color = colorForId(market.id);
@@ -364,6 +367,10 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
     if (!priceVal || !shares || priceVal <= 0 || shares <= 0) return;
     if (priceVal < 0.5) {
       setMessage({ kind: 'error', text: 'The minimum share price is $0.50.' });
+      return;
+    }
+    if (orderSide === 'sell' && shares > sellCap) {
+      setMessage({ kind: 'error', text: sellCap > 0 ? `You can only sell up to ${sellCap.toLocaleString('en-US')} share${sellCap === 1 ? '' : 's'}.` : "You don't have any shares available to sell." });
       return;
     }
     setSubmitting(true);
@@ -558,7 +565,10 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16, fontWeight: 700 }}
                   />
-                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>Up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order</p>
+                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>
+                    Buy up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order
+                    {sellCap > 0 ? ` · sell up to ${sellCap.toLocaleString('en-US')} (what you own)` : ' · you have no shares to sell'}
+                  </p>
                 </div>
                 <div className="rounded-xl p-3 border border-border" style={{ background: 'var(--muted)' }}>
                   <div className="flex flex-col gap-3">
@@ -618,6 +628,11 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                 >
                   ⚡ Quick Sell {quickQty} Share{quickQty !== 1 ? 's' : ''}
                 </button>
+                {position && position.available_quantity < quickQty && (
+                  <p className="text-center" style={{ fontSize: 11, color: 'var(--loss)' }}>
+                    {sellCap > 0 ? `You can only sell up to ${sellCap.toLocaleString('en-US')} share${sellCap === 1 ? '' : 's'}; lower the amount to sell.` : "You don't have any shares to sell."}
+                  </p>
+                )}
                 <p className="text-muted-foreground text-center" style={{ fontSize: 11 }}>
                   ⚡ Quick trades execute instantly at market price
                 </p>
@@ -631,7 +646,13 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                   {(['buy', 'sell'] as const).map(t => (
                     <button
                       key={t}
-                      onClick={() => setOrderSide(t)}
+                      onClick={() => {
+                        setOrderSide(t);
+                        // Keep the typed share count inside what this side allows.
+                        const cap = t === 'sell' ? Math.max(1, sellCap) : MAX_ORDER_SHARES;
+                        const n = parseInt(orderShares, 10);
+                        if (Number.isFinite(n) && n > cap) setOrderShares(String(cap));
+                      }}
                       className="flex-1 py-2.5 font-bold capitalize transition-all"
                       style={{
                         fontSize: 14,
@@ -667,19 +688,23 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                   <input
                     type="number"
                     min={1}
-                    max={MAX_ORDER_SHARES}
+                    max={orderCap}
                     placeholder="1"
                     value={orderShares}
                     onChange={e => {
                       const raw = e.target.value;
                       if (raw === '') { setOrderShares(''); return; }
                       const n = parseInt(raw, 10);
-                      setOrderShares(Number.isFinite(n) ? String(Math.min(MAX_ORDER_SHARES, Math.max(1, n))) : '');
+                      setOrderShares(Number.isFinite(n) ? String(Math.min(orderCap, Math.max(1, n))) : '');
                     }}
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16 }}
                   />
-                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>Up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order</p>
+                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>
+                    {orderSide === 'sell'
+                      ? (sellCap > 0 ? `You can sell up to ${sellCap.toLocaleString('en-US')} share${sellCap === 1 ? '' : 's'} (the ones you own and haven't already listed)` : "You don't have any shares available to sell")
+                      : `Up to ${MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order`}
+                  </p>
                 </div>
 
                 <div>
