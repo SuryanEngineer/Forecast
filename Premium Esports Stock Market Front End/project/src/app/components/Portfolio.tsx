@@ -34,7 +34,9 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'name', label: 'Name' },
 ];
 
-type Range = '7D' | '30D' | 'ALL';
+type Range = '1D' | '7D' | '1M' | 'ALL';
+const RANGE_LABEL: Record<Range, string> = { '1D': '1 Day', '7D': '7 Days', '1M': '1 Month', ALL: 'All' };
+const RANGE_POINTS: Record<Range, number> = { '1D': 2, '7D': 7, '1M': 30, ALL: Infinity };
 
 function Kpi({ label, value, sub, color, hint }: { label: string; value: string; sub?: string; color?: string; hint?: string }) {
   return (
@@ -52,7 +54,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const { data: positions, loading: positionsLoading } = useMyPositions();
   const { data: stats } = useMyStats();
   const [sort, setSort] = useState<SortKey>('value');
-  const [range, setRange] = useState<Range>('30D');
+  const [range, setRange] = useState<Range>('1M');
   const [focusId, setFocusId] = useState<string | null>(null);
 
   // Looks up each held player by id, not from a ranked page of the market -- see useMarketsByIds' docstring in
@@ -108,8 +110,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   // Net worth history (one point per day) from the stats endpoint, trimmed to the chosen range, ending on today's live value.
   const chart = useMemo(() => {
     const hist = (stats?.history ?? []).map(h => ({ day: h.day, label: h.day.slice(5), value: h.net_worth }));
-    const keep = range === '7D' ? 7 : range === '30D' ? 30 : hist.length;
-    return hist.slice(-keep);
+    return Number.isFinite(RANGE_POINTS[range]) ? hist.slice(-RANGE_POINTS[range]) : hist;
   }, [stats, range]);
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
@@ -153,14 +154,14 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           <div className="flex items-center justify-between px-2 mb-1">
             <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: '0.04em' }}>NET WORTH</p>
             <div className="flex gap-1">
-              {(['7D', '30D', 'ALL'] as Range[]).map(r => (
+              {(['1D', '7D', '1M', 'ALL'] as Range[]).map(r => (
                 <button
                   key={r}
                   onClick={() => setRange(r)}
                   className="px-2.5 py-1 rounded-lg font-semibold transition-colors"
                   style={{ fontSize: 11.5, background: range === r ? 'rgba(0,200,255,0.15)' : 'transparent', color: range === r ? 'var(--primary)' : 'var(--muted-foreground)' }}
                 >
-                  {r === 'ALL' ? 'All' : r}
+                  {RANGE_LABEL[r]}
                 </button>
               ))}
             </div>
@@ -271,10 +272,10 @@ export function Portfolio({ navigate, openPlayer }: Props) {
               <div className="grid items-center px-5 py-2 text-muted-foreground border-b border-border" style={{ gridTemplateColumns: 'minmax(0,2.2fr) 0.8fr 1fr 1fr 1.1fr 1.2fr 20px', fontSize: 11, letterSpacing: '0.04em' }}>
                 <span>PLAYER</span>
                 <span className="text-right">SHARES</span>
-                <span className="text-right">PRICE</span>
+                <span className="text-right">PRICE (TODAY %)</span>
                 <span className="text-right">AVG COST</span>
                 <span className="text-right">VALUE</span>
-                <span className="text-right">GAIN / LOSS</span>
+                <span className="text-right">GAIN / LOSS (SINCE BOUGHT)</span>
                 <span />
               </div>
             )}
@@ -314,7 +315,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                   <div className="flex items-center justify-between mt-2 text-muted-foreground font-mono" style={{ fontSize: 11.5 }}>
                     <span>{h.shares.toLocaleString()} sh · avg {usd(h.avgCost)}</span>
                     <span>
-                      {usd(h.price)} <span style={{ color: tone(h.dayPct) }}>{pctText(h.dayPct)}</span>
+                      {usd(h.price)} <span style={{ color: tone(h.dayPct) }}>{pctText(h.dayPct)} today</span>
                     </span>
                   </div>
                   {lockNote && <div className="mt-1">{lockNote}</div>}
@@ -333,7 +334,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                   </div>
                   <div className="text-right font-mono">
                     <p className="text-foreground" style={{ fontSize: 13.5 }}>{usd(h.price)}</p>
-                    <p style={{ fontSize: 11.5, color: tone(h.dayPct) }}>{pctText(h.dayPct)}</p>
+                    <p style={{ fontSize: 11.5, color: tone(h.dayPct) }}>{pctText(h.dayPct)} today</p>
                   </div>
                   <div className="text-right font-mono text-muted-foreground" style={{ fontSize: 13.5 }}>{usd(h.avgCost)}</div>
                   <div className="text-right font-mono font-bold text-foreground" style={{ fontSize: 14 }}>{usd(h.value)}</div>
@@ -359,7 +360,8 @@ export function Portfolio({ navigate, openPlayer }: Props) {
 
           <p className="text-muted-foreground px-1" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
             Value is what selling the whole position right now would pay (real buy orders first, then the House), so a large position is worth slightly less per share than the listed price.
-            Gain / loss compares that value with what you paid. Today's change uses each player's 24-hour price move.
+            Gain / loss is since you bought: that value compared with your average cost, so a stock can be up today and still be down overall.
+            The small % under each price is today's change (the last 24 hours).
           </p>
         </>
       )}

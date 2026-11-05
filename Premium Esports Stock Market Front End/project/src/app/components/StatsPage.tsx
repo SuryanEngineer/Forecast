@@ -99,7 +99,7 @@ export function StatsPage() {
         <Tile label="Total trades" value={stats.total_trades.toLocaleString()} sub={`${stats.buy_trades} buys · ${stats.sell_trades} sells`} />
         <Tile label="Trading volume" value={money0(stats.trade_volume)} sub="Total value traded" />
         <Tile label="Fees paid" value={money0(stats.fees_paid)} sub="Transaction fees" />
-        <Tile label="Interest earned" value={signed(stats.interest_earnings)} sub="Treasury" color={tone(stats.interest_earnings)} />
+        <Tile label="Dividends earned" value={signed(stats.dividend_earnings)} sub={`${stats.dividend_payouts} payouts`} color={tone(stats.interest_earnings)} />
         <Tile
           label="Biggest trade"
           value={stats.biggest_trade ? money0(stats.biggest_trade.value) : '—'}
