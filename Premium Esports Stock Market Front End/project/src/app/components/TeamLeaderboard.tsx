@@ -442,6 +442,7 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
   const [data, setData] = useState<TournamentGamesResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState(1);
+  const compact = useCompact(); // a hook: must run on every render, before any early return below
 
   useEffect(() => {
     let cancelled = false;
@@ -459,7 +460,6 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
   }
 
   const game = data.games.find(g => g.game === selected) ?? data.games[0];
-  const compact = useCompact();
   // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
   const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
