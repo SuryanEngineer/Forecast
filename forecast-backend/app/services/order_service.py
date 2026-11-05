@@ -162,6 +162,62 @@ def _update_reference(db: Session, player: Player, ctx: _MarketContext, fill_pri
         reference_service.set_ref(db, player.id, new)
 
 
+_CONSENSUS_STATE: dict[str, float] = {"last": 0.0}
+CONSENSUS_INTERVAL_SECONDS = 300.0
+CONSENSUS_WINDOW_HOURS = 6
+
+
+def drift_references_to_trades(db: Session, force: bool = False) -> int:
+    """Every few minutes, nudge each stock's slow reference toward what its recent REAL trades say it is worth (see
+    market_policy.trade_consensus), so the House's quotes keep tracking actual transactions. The nudge obeys the same
+    hourly drift cap and fair-value band as trade-driven updates. Run by the lease holder. Returns stocks moved."""
+    now_m = time.monotonic()
+    if not force and now_m - _CONSENSUS_STATE["last"] < CONSENSUS_INTERVAL_SECONDS:
+        return 0
+    _CONSENSUS_STATE["last"] = now_m
+    house_id = get_or_create_house_user(db).id
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=CONSENSUS_WINDOW_HOURS)
+    rows = (
+        db.query(Trade.player_id, Trade.price, Trade.quantity, Trade.buyer_user_id, Trade.seller_user_id)
+        .filter(
+            Trade.executed_at >= cutoff,
+            Trade.buyer_user_id.isnot(None),
+            Trade.seller_user_id.isnot(None),
+            Trade.buyer_user_id != house_id,
+            Trade.seller_user_id != house_id,
+        )
+        .order_by(Trade.executed_at.desc())
+        .limit(20000)
+        .all()
+    )
+    by_player: dict[uuid.UUID, list] = {}
+    for pid, price, qty, buyer, seller in rows:
+        by_player.setdefault(pid, []).append((Decimal(price), int(qty), buyer, seller))
+    if not by_player:
+        return 0
+    cap = economic_params_service.get_param(
+        db, "market.event_hourly_move" if _event_window_active(db) else "market.calm_hourly_move"
+    )
+    moved = 0
+    from app.services import fair_price_service
+
+    for player in db.query(Player).filter(Player.id.in_(list(by_player)), Player.is_active.is_(True)).all():
+        target = market_policy.trade_consensus(by_player[player.id])
+        if target is None:
+            continue
+        current = reference_service.get_ref(db, player.id, fallback=player.ipo_price)
+        low = economic_params_service.get_param(db, "market.band_low")
+        high = economic_params_service.get_param(db, "market.band_high")
+        new = market_policy.step_toward(current, target)
+        new = market_policy.clamp_to_band(new, fair_price_service.fair_for(db, player.id), low, high)
+        new = max(market_policy.MIN_PRICE, market_policy.limit_drift(new, reference_service.anchor_price(player.id, current), cap))
+        if abs(new - current) >= current * Decimal("0.001"):
+            reference_service.set_ref(db, player.id, new)
+            moved += 1
+    db.commit()
+    return moved
+
+
 def _check_self_trade(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, reach: Decimal | None) -> None:
     """Refuse an order that would trade against the same user's own resting order (wash trades fake volume and move the
     reference price). `reach` is the worst price the new order can trade at (its limit price, or the last real level a

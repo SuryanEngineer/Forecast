@@ -181,6 +181,48 @@ def reference_after_trade(
     return max(MIN_PRICE, clamp_to_band(moved, fair, low, high))
 
 
+# What recent REAL trades say the stock is worth. Used to nudge the slow reference (and so the House's quotes) toward
+# the market on a timer, so quotes keep following actual transactions even when no single trade is big enough to move it.
+# Built to resist manipulation:
+#   * only trades between two different accounts, neither of them the House (the House's own prices are not evidence);
+#   * a MEDIAN weighted by shares, each trade's weight capped, so one huge trade or a few odd-priced ones cannot swing it;
+#   * silent unless there are enough trades from enough distinct accounts;
+#   * the caller still applies the hourly drift cap and the fair-value band, and the House estimate is held within
+#     HOUSE_ESTIMATE_BAND of the reference -- so even a ring of colluding accounts can only creep it a bounded amount.
+CONSENSUS_MIN_TRADES = 4
+CONSENSUS_MIN_ACCOUNTS = 3
+CONSENSUS_WEIGHT_CAP = 200
+CONSENSUS_PULL = D("0.25")         # fraction of the gap closed per pass
+
+
+def trade_consensus(
+    trades: Sequence[tuple[Decimal, int, object, object]],
+    min_trades: int = CONSENSUS_MIN_TRADES, min_accounts: int = CONSENSUS_MIN_ACCOUNTS, weight_cap: int = CONSENSUS_WEIGHT_CAP,
+) -> Optional[Decimal]:
+    """Share-weighted median price of (price, quantity, buyer_id, seller_id) trades; None when the evidence is thin.
+    Trades with a missing or identical buyer and seller are ignored."""
+    usable = [(p, q, b, s) for p, q, b, s in trades if p and p > 0 and q and q > 0 and b is not None and s is not None and b != s]
+    if len(usable) < min_trades:
+        return None
+    accounts = {x for _p, _q, b, s in usable for x in (b, s)}
+    if len(accounts) < min_accounts:
+        return None
+    qtys = sorted(int(q) for _p, q, _b, _s in usable)
+    cap = max(1, min(weight_cap, 3 * qtys[len(qtys) // 2]))  # no trade counts for more than 3x the typical trade
+    weighted = sorted(((p, min(int(q), cap)) for p, q, _b, _s in usable), key=lambda t: t[0])
+    half = sum(w for _p, w in weighted) / 2
+    run = 0
+    for p, w in weighted:
+        run += w
+        if run >= half:
+            return D(p)
+    return D(weighted[-1][0])
+
+
+def step_toward(ref: Decimal, target: Decimal, pull: Decimal = CONSENSUS_PULL) -> Decimal:
+    return ref + pull * (target - ref)
+
+
 def limit_drift(new: Decimal, anchor: Decimal, max_move: Decimal) -> Decimal:
     """Keep `new` within +/- max_move (a fraction) of `anchor`. Used to stop a quiet market drifting fast: trades may
     still happen at any price, but the REFERENCE only follows them this far per window."""

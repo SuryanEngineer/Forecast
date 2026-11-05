@@ -442,3 +442,36 @@ class HouseQuoteTests(unittest.TestCase):
         self.assertEqual(mp.inventory_lean(D("0.97")), D("-0.0188"))
         self.assertEqual(mp.inventory_lean(D("1")), D("-0.02"))
         self.assertEqual(mp.inventory_lean(None), D("0"))
+
+
+class TradeConsensusTests(unittest.TestCase):
+    def setUp(self):
+        from decimal import Decimal as D
+        from app.engine import market_policy as mp
+        self.D, self.mp = D, mp
+
+    def _t(self, price, qty, b, s):
+        return (self.D(price), qty, b, s)
+
+    def test_median_of_real_trades(self):
+        trades = [self._t("100", 10, "a", "b"), self._t("102", 10, "c", "b"), self._t("101", 10, "a", "d"), self._t("99", 10, "c", "d")]
+        self.assertEqual(self.mp.trade_consensus(trades), self.D("100"))
+
+    def test_thin_evidence_returns_none(self):
+        trades = [self._t("100", 10, "a", "b")] * 3
+        self.assertIsNone(self.mp.trade_consensus(trades))
+        two_accounts = [self._t("100", 10, "a", "b")] * 6
+        self.assertIsNone(self.mp.trade_consensus(two_accounts))
+
+    def test_self_and_missing_account_trades_ignored(self):
+        trades = [self._t("500", 10, "a", "a"), self._t("500", 10, None, "b")] * 4
+        self.assertIsNone(self.mp.trade_consensus(trades))
+
+    def test_one_huge_outlier_cannot_swing_it(self):
+        trades = [self._t("100", 10, "a", "b"), self._t("101", 10, "c", "b"), self._t("99", 10, "a", "d"), self._t("100", 10, "c", "d"),
+                  self._t("900", 100000, "e", "f")]
+        # the outlier's weight is capped at 200 shares, so the median stays at the ordinary trades
+        self.assertLess(self.mp.trade_consensus(trades), self.D("105"))
+
+    def test_step_is_partial(self):
+        self.assertEqual(self.mp.step_toward(self.D("100"), self.D("120")), self.D("105.00"))

@@ -153,6 +153,11 @@ def _expire_orders_once() -> int:
     try:
         n = order_service.expire_due_orders(db)
         n += order_service.heal_crossed_books(db)
+        try:
+            order_service.drift_references_to_trades(db)
+        except Exception:
+            db.rollback()
+            maintenance_logger.exception("Reference drift pass failed -- will retry")
         return n
     finally:
         db.close()
