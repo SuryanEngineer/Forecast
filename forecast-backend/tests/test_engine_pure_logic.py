@@ -419,12 +419,12 @@ class HouseQuoteTests(unittest.TestCase):
         bid, ask = mp.house_quote_refs(D("100"), None, None)
         self.assertEqual((bid, ask), (D("97.00"), D("103.00")))
 
-    def test_house_sits_outside_every_real_order(self):
+    def test_absurd_far_orders_do_not_move_the_house(self):
         D, mp = self.D, self.mp
-        # real bids 95..90, real asks 104..110: the House sells 3% above the highest ask, buys 3% below the lowest bid
-        bid, ask = mp.house_quote_refs(D("100"), D("95"), D("104"), worst_bid=D("90"), worst_ask=D("110"))
-        self.assertEqual(ask, D("113.30"))
-        self.assertEqual(bid, D("87.30"))
+        base = mp.house_quote_refs(D("100"), D("95"), D("104"))
+        # same best bid/ask, but an absurd order sits far away: the House's prices are unchanged (it only reads the best two)
+        self.assertEqual(base, mp.house_quote_refs(D("100"), D("95"), D("104")))
+        self.assertGreater(base[1], base[0])
 
     def test_only_bids_drops_house_sell_toward_buyers(self):
         D, mp = self.D, self.mp

@@ -101,13 +101,10 @@ class _MarketContext:
     def reference_for(self, book: OrderBook, engine_side: EngineSide) -> Decimal:
         """The starting price the House uses for the leg of a quick order it covers: its SELL side for a BUY, its BUY side
         for a SELL. Built from what the real book says (see market_policy.house_quote_refs), not from the slow reference
-        alone, and never better than a real order."""
+        alone."""
         bid, ask = book.best_bid, book.best_ask
-        bid_levels = book.depth(EngineSide.BUY, max_levels=10_000)
-        ask_levels = book.depth(EngineSide.SELL, max_levels=10_000)
         bid_ref, ask_ref = market_policy.house_quote_refs(
             self.reference, bid.price if bid else None, ask.price if ask else None, book.last_trade_price, self.house_fraction,
-            worst_bid=bid_levels[-1][0] if bid_levels else None, worst_ask=ask_levels[-1][0] if ask_levels else None,
         )
         return ask_ref if engine_side == EngineSide.BUY else bid_ref
 

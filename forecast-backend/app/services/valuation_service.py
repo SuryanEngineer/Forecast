@@ -105,24 +105,11 @@ class Valuer:
         for pid, price, qty in bq.all():
             bids.setdefault(pid, []).append((price, int(qty)))
         self.bids = {pid: sorted(levels, key=lambda r: r[0], reverse=True) for pid, levels in bids.items()}
-        # the highest resting ask per player (the House sells above it)
-        aq = (
-            db.query(Order.player_id, func.max(Order.limit_price))
-            .filter(Order.status.in_(_OPEN), Order.order_kind == OrderKind.LIMIT, Order.side == OrderSide.SELL, Order.limit_price.isnot(None), rem > 0)
-            .group_by(Order.player_id)
-        )
-        if player_ids is not None:
-            aq = aq.filter(Order.player_id.in_(ids))
-        self.worst_ask: dict[uuid.UUID, Decimal] = {pid: Decimal(px) for pid, px in aq.all()}
 
     def _quote_refs(self, pid: uuid.UUID) -> tuple[Decimal, Decimal]:
         """Where the House's BUY and SELL sides start (see market_policy.house_quote_refs)."""
         bid, ask = self.quotes.get(pid, (None, None))
-        levels = self.bids.get(pid)
-        return mp.house_quote_refs(
-            self.ref[pid], bid, ask, self.last_trade.get(pid), self.house_fraction.get(pid),
-            worst_bid=levels[-1][0] if levels else None, worst_ask=self.worst_ask.get(pid),
-        )
+        return mp.house_quote_refs(self.ref[pid], bid, ask, self.last_trade.get(pid), self.house_fraction.get(pid))
 
     def reference(self, pid: uuid.UUID) -> Decimal:
         return self.ref.get(pid, ZERO)
