@@ -22,6 +22,9 @@ import { HelpButton, VerifiedBadge } from './HelpModal';
 import { OpenOrders, notifyOrdersChanged } from './OpenOrders';
 
 // Optional time limit for a limit order: one tap, "until cancelled" is the default.
+// Largest order the form accepts (the backend enforces the same cap).
+const MAX_ORDER_SHARES = 10000;
+
 const EXPIRY_OPTIONS: { label: string; minutes: number | null }[] = [
   { label: 'Until I cancel', minutes: null },
   { label: '1 hour', minutes: 60 },
@@ -248,8 +251,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const [orderShares, setOrderShares] = useState('1');
   // null = good until cancelled (the default). One tap picks a time limit.
   const [expiryMinutes, setExpiryMinutes] = useState<number | null>(null);
-  const [quickQty, setQuickQty] = useState(1);
-  const [buyQuote, setBuyQuote] = useState<QuickQuote | null>(null);
+  const [quickQty, setQuickQty] = useState(1);  const [buyQuote, setBuyQuote] = useState<QuickQuote | null>(null);
   const [sellQuote, setSellQuote] = useState<QuickQuote | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -553,11 +555,13 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                   <input
                     type="number"
                     min={1}
+                    max={MAX_ORDER_SHARES}
                     value={quickQty}
-                    onChange={e => setQuickQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    onChange={e => setQuickQty(Math.min(MAX_ORDER_SHARES, Math.max(1, parseInt(e.target.value, 10) || 1)))}
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16, fontWeight: 700 }}
                   />
+                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>Up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order</p>
                 </div>
                 <div className="rounded-xl p-3 border border-border" style={{ background: 'var(--muted)' }}>
                   <div className="flex flex-col gap-3">
@@ -666,12 +670,19 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                   <input
                     type="number"
                     min={1}
+                    max={MAX_ORDER_SHARES}
                     placeholder="1"
                     value={orderShares}
-                    onChange={e => setOrderShares(e.target.value)}
+                    onChange={e => {
+                      const raw = e.target.value;
+                      if (raw === '') { setOrderShares(''); return; }
+                      const n = parseInt(raw, 10);
+                      setOrderShares(Number.isFinite(n) ? String(Math.min(MAX_ORDER_SHARES, Math.max(1, n))) : '');
+                    }}
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16 }}
                   />
+                  <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>Up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order</p>
                 </div>
 
                 <div>

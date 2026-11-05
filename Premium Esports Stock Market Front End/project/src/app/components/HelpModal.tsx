@@ -29,6 +29,25 @@ export const HELP_TOPIC_ORDER: HelpTopicId[] = [
   'bots', 'tips', 'costs', 'glossary', 'faq', 'verified',
 ];
 
+// Short names for the topic buttons and the Next button (the full title still heads each topic).
+const TAB_LABEL: Record<HelpTopicId, string> = {
+  start: 'Getting Started',
+  pages: 'Pages',
+  market: 'Market',
+  orders: 'Trading',
+  pricing: 'Pricing',
+  dividends: 'Dividends',
+  tournaments: 'Tournaments',
+  portfolio: 'Portfolio',
+  rankings: 'Leaderboard',
+  bots: 'Bots',
+  tips: 'Tips',
+  costs: 'Fees',
+  glossary: 'Glossary',
+  faq: 'FAQ',
+  verified: 'Verified',
+};
+
 interface HelpSection {
   heading: string;
   body: ReactNode;
@@ -603,11 +622,11 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         ),
       },
       {
-        heading: 'Why a single trade barely moves it',
+        heading: 'Why small trades barely move the price',
         body: (
-          <p>The House quotes around the market’s running price, and each trade moves that price in proportion to its size. A
-          small trade carries little weight, so it barely moves the price, while steady buying or selling adds up and can move it
-          a long way, within the band around fair price (see How Prices Are Set).</p>
+          <p>Each trade moves the market’s running price in proportion to its size, so a small trade barely moves the price.
+          Steady buying or selling adds up and can move it a long way, and if a price drifts too far, traders stop buying
+          or selling at it and it settles.</p>
         ),
       },
       {
@@ -730,7 +749,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
                     border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                   }}
                 >
-                  {t.emoji} {t.title.replace(/^(How |A |The |Understanding |Reading )/, '')}
+                  {t.emoji} {TAB_LABEL[id]}
                 </button>
               );
             })}
@@ -771,7 +790,7 @@ function HelpModal({ topicId, onClose, onReplayTour }: { topicId: HelpTopicId; o
               className="flex-1 py-2.5 rounded-xl font-bold transition-opacity hover:opacity-90"
               style={{ fontSize: 14, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
             >
-              Next: {HELP_TOPICS[HELP_TOPIC_ORDER[idx + 1]].title.replace(/^(How |A |The |Understanding |Reading )/, '')}
+              Next: {TAB_LABEL[HELP_TOPIC_ORDER[idx + 1]]}
             </button>
           ) : (
             <button

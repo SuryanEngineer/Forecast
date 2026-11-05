@@ -196,7 +196,15 @@
 .mobile-drawer { animation: drawer-in 0.22s ease-out; }
 .mobile-scrim { animation: scrim-in 0.22s ease-out; }
 
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; color-scheme: dark; }
+
+/* Thin scrollbars: just a subtle grey thumb on whatever background is behind it, never a white track. */
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 body { overscroll-behavior-y: none; }
 
 @media (max-width: 899px), (max-height: 519px) and (max-width: 1199px) {

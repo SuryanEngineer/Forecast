@@ -11,7 +11,7 @@ class LimitOrderRequest(BaseModel):
     player_id: uuid.UUID
     side: OrderSide
     price: Decimal = Field(gt=0)
-    quantity: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=10_000)  # same cap as the order form
     # Optional: cancel automatically after this many minutes (1 minute to 90 days). Omit for "until cancelled".
     expires_in_minutes: int | None = Field(default=None, ge=1, le=90 * 24 * 60)
 
@@ -19,7 +19,7 @@ class LimitOrderRequest(BaseModel):
 class QuickOrderRequest(BaseModel):
     player_id: uuid.UUID
     side: OrderSide
-    quantity: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=10_000)
 
 
 class OrderResponse(BaseModel):
