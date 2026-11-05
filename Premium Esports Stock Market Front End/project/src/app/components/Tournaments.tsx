@@ -298,6 +298,23 @@ export function Tournaments({ openTournament }: Props) {
 
   const empty = !loading && calendar.length === 0 && announced.length === 0;
 
+  // Search: matches name, region or event type across every phase, shown as one flat list (live, then upcoming by date, then completed).
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const matches = (name: string, region: string | null, type: string) =>
+    [tournamentDisplayName(name, region), name, region ?? '', TIER_LABELS[type] ?? type].some(s => s.toLowerCase().includes(q));
+  const searchResults: React.ReactNode[] = q
+    ? [
+        ...live.filter(t => matches(t.name, t.region, t.tournament_type)),
+        ...upcoming.filter(u => (u.tracked ? matches(u.tracked.name, u.tracked.region, u.tracked.tournament_type) : matches(u.announced!.name, u.announced!.region, u.announced!.tournament_type))),
+        ...completed.filter(t => matches(t.name, t.region, t.tournament_type)),
+      ].map(item =>
+        'key' in item
+          ? rowFor(item as Upcoming)
+          : <CalendarRow key={(item as CalendarTournamentResponse).id} tournament={item as CalendarTournamentResponse} onOpen={() => openTournament(toTournament(item as CalendarTournamentResponse))} />
+      )
+    : [];
+
   return (
     <div className="p-6 page-pad max-w-[900px] mx-auto space-y-4">
       <div>
@@ -313,6 +330,16 @@ export function Tournaments({ openTournament }: Props) {
         </p>
       </div>
 
+      <input
+        type="search"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search tournaments by name, region or type"
+        aria-label="Search tournaments"
+        className="w-full px-4 py-2.5 rounded-xl border border-border text-foreground outline-none transition-colors focus:border-primary/50"
+        style={{ background: 'var(--card)', fontSize: 14 }}
+      />
+
       {loading && calendar.length === 0 && (
         <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>
       )}
@@ -320,6 +347,11 @@ export function Tournaments({ openTournament }: Props) {
         <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments announced yet — new ones are picked up automatically.</p>
       )}
 
+      {q ? (
+        searchResults.length > 0
+          ? <div className="space-y-2.5">{searchResults}</div>
+          : <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments match “{query.trim()}”.</p>
+      ) : (<>
       {live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
 
       {next && (
@@ -353,6 +385,7 @@ export function Tournaments({ openTournament }: Props) {
           {completed.map(t => <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
         </div>
       )}
+      </>)}
     </div>
   );
 }
