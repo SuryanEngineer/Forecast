@@ -1,15 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ChevronDown, ChevronUp } from 'lucide-react';
-import { api } from '../lib/api';
+import { Calendar } from 'lucide-react';
 import { tournamentDisplayName } from '../lib/tournamentName';
-import { useAnnouncedTournaments,
-  useTournamentCalendar, useTournamentsList } from '../lib/hooks';
+import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
 import {
   toNumber,
   type AnnouncedTournament,
   type CalendarTournamentResponse,
-  type PaginatedPlacementResultResponse,
-  type PlacementResultResponse,
   type TournamentResponse,
 } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
@@ -19,13 +15,6 @@ interface Props {
   navigate: (page: string, playerId?: string) => void;
   openTournament: (tournament: TournamentResponse) => void;
 }
-
-// Only a handful of rows are worth showing inline before nudging people to
-// the full per-tournament page -- a big-field Cash Cup can place thousands
-// of competitors, and this card is just a quick-glance preview, not the
-// place to render all of them (see TournamentDetailModal for the real
-// paginated view).
-const INLINE_RESULTS_PREVIEW_COUNT = 10;
 
 function useCountdown(targetDate: string | null) {
   const [t, setT] = useState({ d: 0, h: 0, m: 0, s: 0 });
@@ -59,42 +48,45 @@ function CountdownBox({ value, label }: { value: number; label: string }) {
   );
 }
 
-function FeaturedEvent({ tournament, onOpen }: { tournament: TournamentResponse; onOpen: () => void }) {
-  const cd = useCountdown(tournament.start_time);
-  const prizePool = toNumber(tournament.prize_pool);
+const TYPE_PILL = (type: string) => type.replace(/_/g, ' ');
+
+/** The big card at the top of the calendar: the next event to start, with a countdown. */
+function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
+  name: string; type: string; region: string | null; startTime: string | null; pool: number | null; note?: string; onOpen?: () => void;
+}) {
+  const cd = useCountdown(startTime);
+  const Head = (
+    <div className="flex items-start gap-3 mb-4">
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(0,200,255,0.15)', color: 'var(--primary)' }}>NEXT EVENT</span>
+          <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(type)}</span>
+        </div>
+        <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(name, region)}</h2>
+        {region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{region}</p>}
+      </div>
+      {pool !== null && pool > 0 && (
+        <div className="text-right ml-auto shrink-0">
+          <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+          <p className="text-muted-foreground" style={{ fontSize: 12 }}>total dividend pool</p>
+        </div>
+      )}
+    </div>
+  );
   return (
     <div className="rounded-2xl border p-6" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.07), rgba(155,111,255,0.05)), var(--card)', borderColor: 'rgba(0,200,255,0.25)' }}>
-      <button onClick={onOpen} className="w-full text-left">
-      <div className="flex items-start gap-3 mb-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(0,200,255,0.15)', color: 'var(--primary)' }}>NEXT EVENT</span>
-            <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>
-              {tournament.tournament_type.replace('_', ' ')}
-            </span>
-          </div>
-          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
-          {tournament.region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{tournament.region}</p>}
-        </div>
-        {prizePool > 0 && (
-          <div className="text-right ml-auto shrink-0">
-            <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>${prizePool.toLocaleString()}</p>
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>total prize pool</p>
-          </div>
-        )}
-      </div>
-      </button>
+      {onOpen ? <button onClick={onOpen} className="w-full text-left">{Head}</button> : Head}
 
-      {tournament.start_time && (
+      {startTime && (
         <div className="flex flex-wrap gap-4 mb-5 text-muted-foreground" style={{ fontSize: 13 }}>
           <span className="flex items-center gap-1.5">
             <Calendar className="w-4 h-4" />
-            {new Date(tournament.start_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            {new Date(startTime).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </span>
         </div>
       )}
 
-      {tournament.start_time && (
+      {startTime && (
         <div>
           <p className="text-muted-foreground mb-3" style={{ fontSize: 13 }}>Starts in:</p>
           <div className="flex items-center gap-3">
@@ -108,6 +100,7 @@ function FeaturedEvent({ tournament, onOpen }: { tournament: TournamentResponse;
           </div>
         </div>
       )}
+      {note && <p className="text-muted-foreground mt-3" style={{ fontSize: 12 }}>{note}</p>}
 
       <div className="mt-4 p-3 rounded-xl" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
         <p style={{ fontSize: 13, color: '#fbbf24', lineHeight: 1.6 }}>
@@ -118,116 +111,31 @@ function FeaturedEvent({ tournament, onOpen }: { tournament: TournamentResponse;
   );
 }
 
-function UpcomingSmall({ tournament, onOpen }: { tournament: TournamentResponse; onOpen: () => void }) {
-  const daysLeft = tournament.start_time ? Math.ceil((new Date(tournament.start_time).getTime() - Date.now()) / 86400000) : null;
-  const prizePool = toNumber(tournament.prize_pool);
+/** Same card, in red, for an event that is running right now, with the top of its live leaderboard. */
+function LiveEvent({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
+  const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
   return (
-    <button onClick={onOpen} className="w-full rounded-2xl border border-border p-4 text-left transition-colors hover:bg-white/[0.03]" style={{ background: 'var(--card)' }}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1">
-          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
-          <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
-            {tournament.tournament_type.replace('_', ' ')}
-            {tournament.start_time ? ` · ${new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-          </p>
-        </div>
-        {daysLeft !== null && (
-          <span className="font-mono font-bold px-2.5 py-1 rounded-xl shrink-0" style={{ fontSize: 13, background: daysLeft <= 7 ? 'rgba(251,191,36,0.15)' : 'rgba(0,200,255,0.1)', color: daysLeft <= 7 ? '#fbbf24' : 'var(--primary)' }}>
-            {daysLeft}d
-          </span>
-        )}
-      </div>
-      {prizePool > 0 && (
-        <p className="text-muted-foreground mt-2" style={{ fontSize: 12 }}>${prizePool.toLocaleString()} prize pool</p>
-      )}
-    </button>
-  );
-}
-
-function ResultCard({ tournament, onOpenDetail }: { tournament: TournamentResponse; onOpenDetail: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<PlacementResultResponse[] | null>(null);
-  const [total, setTotal] = useState(0);
-
-  async function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && results === null) {
-      try {
-        // Just the first page -- this card is a quick-glance preview, not
-        // the full paginated leaderboard (that lives behind "Full details").
-        const r = await api.get<PaginatedPlacementResultResponse>(
-          `/tournaments/${tournament.id}/results?page=1&page_size=${INLINE_RESULTS_PREVIEW_COUNT}`
-        );
-        setResults(r.items);
-        setTotal(r.total);
-      } catch {
-        setResults([]);
-        setTotal(0);
-      }
-    }
-  }
-
-  const prizePool = toNumber(tournament.prize_pool);
-  const hiddenCount = Math.max(0, total - (results?.length ?? 0));
-
-  return (
-    <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
-      <button onClick={toggle} className="w-full flex items-center gap-4 p-4 text-left hover:bg-white/[0.03] transition-colors">
-        <div className="flex-1">
-          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
-          <p className="text-muted-foreground mt-0.5" style={{ fontSize: 12 }}>
-            {tournament.tournament_type.replace('_', ' ')}
-            {tournament.start_time ? ` · ${new Date(tournament.start_time).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}
-          </p>
-        </div>
-        {prizePool > 0 && (
-          <p className="font-mono font-bold" style={{ fontSize: 16, color: 'var(--gain)', whiteSpace: 'nowrap' }}>${prizePool.toLocaleString()}</p>
-        )}
-        {open ? <ChevronUp className="w-5 h-5 text-muted-foreground shrink-0" /> : <ChevronDown className="w-5 h-5 text-muted-foreground shrink-0" />}
-      </button>
-
-      {open && (
-        <div className="px-4 pb-4 border-t border-border pt-3 space-y-2">
-          <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>Placements</p>
-          {results === null ? (
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Loading…</p>
-          ) : results.length === 0 ? (
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>No results entered yet.</p>
-          ) : (
-            results.map(r => (
-              <div key={r.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--muted)' }}>
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-                  style={{
-                    fontSize: 12,
-                    background: r.placement === 1 ? 'rgba(251,191,36,0.2)' : r.placement === 2 ? 'rgba(156,163,175,0.15)' : r.placement === 3 ? 'rgba(205,127,50,0.15)' : 'rgba(255,255,255,0.06)',
-                    color: r.placement === 1 ? '#fbbf24' : r.placement === 2 ? '#9ca3af' : r.placement === 3 ? '#cd7f32' : 'var(--muted-foreground)',
-                  }}
-                >
-                  #{r.placement}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-foreground font-semibold truncate" style={{ fontSize: 13 }}>{r.gamertag || 'Unknown player'}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 11 }}>{r.points !== null ? `${toNumber(r.points)} pts` : ''}</p>
-                </div>
-                {r.prize_won !== null && (
-                  <p className="font-mono font-bold" style={{ fontSize: 14, color: 'var(--gain)' }}>${toNumber(r.prize_won).toLocaleString()}</p>
-                )}
-              </div>
-            ))
+    <div className="rounded-2xl border p-6" style={{ background: 'linear-gradient(135deg, rgba(255,71,87,0.09), rgba(155,111,255,0.04)), var(--card)', borderColor: 'rgba(255,71,87,0.4)' }}>
+      <button onClick={onOpen} className="w-full text-left">
+        <div className="flex items-start gap-3 mb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>● LIVE</span>
+              <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(tournament.tournament_type)}</span>
+            </div>
+            <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
+            {tournament.region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{tournament.region}</p>}
+          </div>
+          {pool !== null && pool > 0 && (
+            <div className="text-right ml-auto shrink-0">
+              <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+              <p className="text-muted-foreground" style={{ fontSize: 12 }}>total dividend pool</p>
+            </div>
           )}
-          <button
-            onClick={onOpenDetail}
-            className="w-full text-center py-2 rounded-xl font-semibold transition-colors hover:bg-white/[0.03]"
-            style={{ fontSize: 12.5, color: 'var(--primary)' }}
-          >
-            {hiddenCount > 0
-              ? `See all ${total.toLocaleString()} placements & per-share dividend payouts →`
-              : 'Full details & per-share dividend payouts →'}
-          </button>
         </div>
-      )}
+        <LiveLeaderboard tournamentId={tournament.id} compact />
+        <p className="text-center mt-3" style={{ fontSize: 12, color: 'var(--primary)' }}>View full leaderboard →</p>
+      </button>
     </div>
   );
 }
@@ -351,83 +259,15 @@ function AnnouncedRow({ event }: { event: AnnouncedTournament }) {
   );
 }
 
-function TournamentCalendar({ openTournament }: { openTournament: (t: TournamentResponse) => void }) {
-  // The full calendar: upcoming/live/finalizing first (soonest first), then everything already completed (newest first).
-  const { data: calendar, loading } = useTournamentCalendar(true);
-  const { data: announced } = useAnnouncedTournaments();
-  const upcomingRows = calendar.filter(t => t.phase !== 'completed');
-  const completedRows = calendar.filter(t => t.phase === 'completed').reverse();
-
-  if (loading && calendar.length === 0) {
-    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>;
-  }
-  if (calendar.length === 0 && announced.length === 0) {
-    return <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments announced yet — new ones are picked up automatically.</p>;
-  }
-
-  return (
-    <div className="space-y-2.5">
-      <p className="text-muted-foreground" style={{ fontSize: 12 }}>
-        Updates automatically as tournaments are tracked and results come in.
-      </p>
-      {upcomingRows.length === 0 && announced.length === 0 && (
-        <p className="text-muted-foreground italic" style={{ fontSize: 12.5 }}>No upcoming tournaments announced yet — new ones are picked up automatically.</p>
-      )}
-      {announced.map(e => <AnnouncedRow key={e.event_id} event={e} />)}
-      {[...upcomingRows, ...completedRows].map((t, i) => (
-        <React.Fragment key={t.id}>
-        {i === upcomingRows.length && completedRows.length > 0 && (
-          <p className="font-bold pt-3" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
-        )}
-        <CalendarRow
-          tournament={t}
-          onOpen={() =>
-            openTournament({
-              id: t.id,
-              name: t.name,
-              tournament_type: t.tournament_type,
-              region: t.region,
-              start_time: t.start_time,
-              end_time: t.end_time,
-              prize_pool: null,
-              status: t.status,
-              phase: t.phase,
-              created_at: t.start_time ?? new Date().toISOString(),
-            })
-          }
-        />
-        </React.Fragment>
-      ))}
-    </div>
-  );
-}
+const startMs = (iso: string | null) => (iso ? new Date(iso).getTime() : Number.POSITIVE_INFINITY);
 
 export function Tournaments({ openTournament }: Props) {
-  const { data: tournaments, loading } = useTournamentsList();
-  const { data: calendar } = useTournamentCalendar();
+  // One calendar: live events first (red), then the next event (big card), then everything else still to come in date
+  // order, then events awaiting final results, then completed events (newest first).
+  const { data: calendar, loading } = useTournamentCalendar(true);
   const { data: announced } = useAnnouncedTournaments();
-  const [tab, setTab] = useState<'upcoming' | 'calendar' | 'results'>('upcoming');
 
-  const finalized = tournaments.filter(t => t.status === 'finalized');
-  // phase === 'live', not raw status -- a tournament can sit at
-  // 'results_pending' for its whole life (see CalendarRow's comment), so
-  // "not finalized" alone doesn't mean "happening right now".
-  const inProgress = tournaments.filter(t => t.phase === 'live');
-
-  // The "Upcoming" tab's featured/list cards show a live countdown, which
-  // only makes sense for something that hasn't started yet -- so this
-  // deliberately sources from the calendar endpoint (already filtered to
-  // non-finalized and sorted soonest-first, nulls last) rather than the
-  // raw /tournaments list (ordered by when it was TRACKED, not when it
-  // STARTS, so "the first non-finalized one" could easily be months-old
-  // and stuck, producing a nonsensical negative day count). Anything
-  // whose start_time has already passed isn't "upcoming" any more,
-  // whatever its sync status -- it just doesn't get a countdown card
-  // here; it's still visible with an honest date (no countdown) under the
-  // Calendar tab, and moves to Results once actually finalized.
-  const now = Date.now();
-  const upcomingFromCalendar = calendar.filter(t => !t.start_time || new Date(t.start_time).getTime() >= now);
-  const toTournamentResponse = (t: (typeof calendar)[number]): TournamentResponse => ({
+  const toTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
     id: t.id,
     name: t.name,
     tournament_type: t.tournament_type,
@@ -439,10 +279,26 @@ export function Tournaments({ openTournament }: Props) {
     phase: t.phase,
     created_at: t.start_time ?? new Date().toISOString(),
   });
-  const [featured, ...otherUpcoming] = upcomingFromCalendar.map(toTournamentResponse);
+
+  type Upcoming = { key: string; start: number; tracked?: CalendarTournamentResponse; announced?: AnnouncedTournament };
+  const live = calendar.filter(t => t.phase === 'live').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
+  const finalizing = calendar.filter(t => t.phase === 'finalizing').sort((a, b) => startMs(b.start_time) - startMs(a.start_time));
+  const completed = calendar.filter(t => t.phase === 'completed').sort((a, b) => startMs(b.start_time) - startMs(a.start_time));
+  const upcoming: Upcoming[] = [
+    ...calendar.filter(t => t.phase === 'upcoming').map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })),
+    ...announced.map(e => ({ key: `a-${e.event_id}`, start: startMs(e.start_time), announced: e })),
+  ].sort((a, b) => a.start - b.start);
+  const [next, ...laterUpcoming] = upcoming;
+
+  const rowFor = (u: Upcoming) =>
+    u.tracked
+      ? <CalendarRow key={u.key} tournament={u.tracked} onOpen={() => openTournament(toTournament(u.tracked!))} />
+      : <AnnouncedRow key={u.key} event={u.announced!} />;
+
+  const empty = !loading && calendar.length === 0 && announced.length === 0;
 
   return (
-    <div className="p-6 page-pad max-w-[900px] mx-auto space-y-6">
+    <div className="p-6 page-pad max-w-[900px] mx-auto space-y-4">
       <div>
         <div className="flex items-center gap-1.5">
           <h1 className="text-foreground font-bold" style={{ fontSize: 26 }}>Tournaments</h1>
@@ -451,75 +307,56 @@ export function Tournaments({ openTournament }: Props) {
         <p className="text-muted-foreground mt-0.5" style={{ fontSize: 14 }}>
           Dividends go to whoever owns a player when the tournament starts. Buying or selling after it starts does not change your payout.
         </p>
+        <p className="text-muted-foreground mt-1" style={{ fontSize: 12 }}>
+          Updates automatically as tournaments are tracked and results come in. Times are shown in your local time.
+        </p>
       </div>
 
-      <div className="flex rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
-        {[
-          { key: 'upcoming' as const, label: `⏳ Upcoming (${upcomingFromCalendar.length + announced.length})` },
-          { key: 'calendar' as const, label: `📅 Calendar` },
-          { key: 'results' as const, label: `🏁 Results (${finalized.length})` },
-        ].map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className="flex-1 py-3 font-semibold transition-all"
-            style={{ fontSize: 14, background: tab === t.key ? 'rgba(0,200,255,0.1)' : 'transparent', color: tab === t.key ? 'var(--primary)' : 'var(--muted-foreground)' }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {loading && calendar.length === 0 && (
+        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>
+      )}
+      {empty && (
+        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments announced yet — new ones are picked up automatically.</p>
+      )}
 
-      {inProgress.length > 0 && (
-        <div>
-          <p className="font-bold mb-3" style={{ fontSize: 15, color: '#ff4757' }}>● Happening Now</p>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {inProgress.map(t => (
-              <button
-                key={t.id}
-                onClick={() => openTournament(t)}
-                className="text-left rounded-2xl border border-border p-4 transition-colors hover:bg-white/[0.03]"
-                style={{ background: 'var(--card)' }}
-              >
-                <LiveLeaderboard tournamentId={t.id} compact />
-                <p className="text-center mt-2" style={{ fontSize: 11, color: 'var(--primary)' }}>
-                  View full leaderboard →
-                </p>
-              </button>
-            ))}
-          </div>
+      {live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
+
+      {next && (
+        next.tracked ? (
+          <FeaturedEvent
+            name={next.tracked.name} type={next.tracked.tournament_type} region={next.tracked.region}
+            startTime={next.tracked.start_time}
+            pool={next.tracked.total_dividend_pool !== null ? toNumber(next.tracked.total_dividend_pool) : null}
+            onOpen={() => openTournament(toTournament(next.tracked!))}
+          />
+        ) : (
+          <FeaturedEvent
+            name={next.announced!.name} type={next.announced!.tournament_type} region={next.announced!.region}
+            startTime={next.announced!.start_time}
+            pool={next.announced!.total_dividend_pool !== null ? toNumber(next.announced!.total_dividend_pool) : null}
+            note={!next.announced!.finals_confirmed ? 'Announced: the date may change until the Finals are published.' : undefined}
+          />
+        )
+      )}
+
+      {laterUpcoming.length > 0 && (
+        <div className="space-y-2.5">
+          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Coming up</p>
+          {laterUpcoming.map(rowFor)}
         </div>
       )}
 
-      {tab === 'calendar' ? (
-        <TournamentCalendar openTournament={openTournament} />
-      ) : loading && tournaments.length === 0 ? (
-        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading tournaments…</p>
-      ) : tab === 'upcoming' ? (
-        <div className="space-y-4">
-          {featured && <FeaturedEvent tournament={featured} onOpen={() => openTournament(featured)} />}
-          {!featured && announced.length === 0 && <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No upcoming tournaments announced.</p>}
-          {announced.length > 0 && (
-            <div>
-              <p className="text-muted-foreground font-medium mb-3" style={{ fontSize: 14 }}>Announced</p>
-              <div className="space-y-3">
-                {announced.map(e => <AnnouncedRow key={e.event_id} event={e} />)}
-              </div>
-            </div>
-          )}
-          {otherUpcoming.length > 0 && (
-            <div>
-              <p className="text-muted-foreground font-medium mb-3" style={{ fontSize: 14 }}>Also coming up</p>
-              <div className="space-y-3">
-                {otherUpcoming.map(t => <UpcomingSmall key={t.id} tournament={t} onOpen={() => openTournament(t)} />)}
-              </div>
-            </div>
-          )}
+      {finalizing.length > 0 && (
+        <div className="space-y-2.5">
+          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Awaiting final results</p>
+          {finalizing.map(t => <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
         </div>
-      ) : (
-        <div className="space-y-3">
-          {finalized.length === 0 && <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No finalized tournaments yet.</p>}
-          {finalized.map(t => <ResultCard key={t.id} tournament={t} onOpenDetail={() => openTournament(t)} />)}
+      )}
+
+      {completed.length > 0 && (
+        <div className="space-y-2.5">
+          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
+          {completed.map(t => <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
         </div>
       )}
     </div>
