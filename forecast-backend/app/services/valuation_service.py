@@ -75,6 +75,22 @@ class Valuer:
             self.depth[pid] = max(Decimal(shares) * depth_frac, depth_min)
             self.ref[pid] = mp.clamp_to_band(raw_refs.get(pid, ipo), fair.get(pid), self.low, self.high)
         self.quotes = book_price_service.bulk_best_quotes(db, ids)
+        # share of each player's supply the House holds (its inventory lean)
+        self.house_fraction: dict[uuid.UUID, Decimal] = {}
+        try:
+            from app.models.player import Position
+            from app.services.house_account import get_or_create_house_user
+
+            house_id = get_or_create_house_user(db).id
+            shares_by = {pid: Decimal(int(sh)) for pid, sh, _i in rows}
+            hq = db.query(Position.player_id, Position.quantity).filter(Position.user_id == house_id)
+            if player_ids is not None:
+                hq = hq.filter(Position.player_id.in_(ids))
+            for pid, qty in hq.all():
+                if shares_by.get(pid):
+                    self.house_fraction[pid] = Decimal(int(qty)) / shares_by[pid]
+        except Exception:
+            self.house_fraction = {}
         self.last_trade = last_trade_prices(db)
         # resting bid levels per player, best price first: [(price, remaining quantity)]
         rem = Order.quantity - Order.filled_quantity
@@ -89,6 +105,24 @@ class Valuer:
         for pid, price, qty in bq.all():
             bids.setdefault(pid, []).append((price, int(qty)))
         self.bids = {pid: sorted(levels, key=lambda r: r[0], reverse=True) for pid, levels in bids.items()}
+        # the highest resting ask per player (the House sells above it)
+        aq = (
+            db.query(Order.player_id, func.max(Order.limit_price))
+            .filter(Order.status.in_(_OPEN), Order.order_kind == OrderKind.LIMIT, Order.side == OrderSide.SELL, Order.limit_price.isnot(None), rem > 0)
+            .group_by(Order.player_id)
+        )
+        if player_ids is not None:
+            aq = aq.filter(Order.player_id.in_(ids))
+        self.worst_ask: dict[uuid.UUID, Decimal] = {pid: Decimal(px) for pid, px in aq.all()}
+
+    def _quote_refs(self, pid: uuid.UUID) -> tuple[Decimal, Decimal]:
+        """Where the House's BUY and SELL sides start (see market_policy.house_quote_refs)."""
+        bid, ask = self.quotes.get(pid, (None, None))
+        levels = self.bids.get(pid)
+        return mp.house_quote_refs(
+            self.ref[pid], bid, ask, self.last_trade.get(pid), self.house_fraction.get(pid),
+            worst_bid=levels[-1][0] if levels else None, worst_ask=self.worst_ask.get(pid),
+        )
 
     def reference(self, pid: uuid.UUID) -> Decimal:
         return self.ref.get(pid, ZERO)
@@ -111,9 +145,9 @@ class Valuer:
             return ZERO, ZERO
         depth = self.depth[pid]
         bid, ask = self.quotes.get(pid, (None, None))
-        best_bid = self.bids.get(pid, [(None, 0)])[0][0] if self.bids.get(pid) else None
-        buy = mp.house_buy_price(mp.house_ask_reference(ref, best_bid, ask is not None), Decimal(qty), depth, self.k, self.max_impact)
-        sell = mp.house_sell_price(ref, Decimal(qty), depth, self.k, self.max_impact)
+        bid_ref, ask_ref = self._quote_refs(pid)
+        buy = mp.house_buy_price(ask_ref, Decimal(qty), depth, self.k, self.max_impact)
+        sell = mp.house_sell_price(bid_ref, Decimal(qty), depth, self.k, self.max_impact)
         if ask is not None:
             buy = min(buy, ask)
         if bid is not None:
@@ -125,7 +159,10 @@ class Valuer:
         ref = self.ref.get(pid)
         if ref is None or qty <= 0:
             return ZERO
-        return mp.liquidation_value(qty, ref, self.bids.get(pid, []), self.depth[pid], self.k, self.max_impact)
+        # Resting bids count up to the slow reference (nobody lifts their own value by posting a high bid); what is left is
+        # priced at the House's buy side, never above that same reference.
+        house_ref = min(self._quote_refs(pid)[0], ref)
+        return mp.liquidation_value(qty, ref, self.bids.get(pid, []), self.depth[pid], self.k, self.max_impact, house_ref=house_ref)
 
     def haircut(self, pid: uuid.UUID, qty: int) -> Decimal:
         """liquidation value / (qty x listed price): how much of the headline price a position this size really fetches."""

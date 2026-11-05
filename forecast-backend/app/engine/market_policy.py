@@ -116,18 +116,63 @@ def house_sell_price(ref: Decimal, qty: Decimal, depth: Decimal, k: Decimal, max
     return max(ref * (D("1") - house_impact(qty, depth, k, max_impact)), MIN_PRICE)
 
 
-# When nobody is selling except the House, the House does not sit far above the people who want to buy: its ask is held
-# to within this fraction of the best real bid. (Real sellers, when there are any, are always hit first.)
-HOUSE_ASK_GAP = D("0.03")
+# --- how the House quotes ---------------------------------------------------------------------------------------------
+#
+# The House is a dealer of last resort: real orders always fill first, and the House only covers what they cannot. It
+# quotes a BUY price below, and a SELL price above, an estimate of what the stock is worth right now:
+#   * real bids and asks both standing  -> the middle of the best two;
+#   * only bids (or only asks)          -> the best one (that is the market's evidence of value);
+#   * no real orders at all             -> the last trade, else the slow reference price;
+# kept within HOUSE_ESTIMATE_BAND of the slow reference so one oddly-priced order cannot drag the House's prices far.
+# Each side then sits HOUSE_GAP away from that estimate, nudged by a small inventory lean, and never beats a real order.
+HOUSE_GAP = D("0.03")              # each side of the estimate
+HOUSE_ESTIMATE_BAND = D("0.12")    # the estimate stays within this fraction of the slow reference
+INVENTORY_LEAN_MAX = D("0.02")     # the most both quotes shift for the House's inventory
 
 
-def house_ask_reference(ref: Decimal, best_bid: Optional[Decimal], has_real_ask: bool) -> Decimal:
-    """The reference the House prices its SELL side off. Normally the market reference, but with no real asks and a real
-    bid standing, it drops toward that bid (best bid + HOUSE_ASK_GAP) so the House doesn't hold the price high above
-    where buyers actually are."""
-    if has_real_ask or best_bid is None or best_bid <= 0:
-        return ref
-    return max(MIN_PRICE, min(ref, best_bid * (D("1") + HOUSE_ASK_GAP)))
+def inventory_lean(house_fraction: Optional[Decimal]) -> Decimal:
+    """Fraction both House quotes shift by. The House holds most of the shares, so it leans toward selling (lower quotes
+    to attract buyers); if it ever holds little, it leans the other way. Zero at half the supply, capped at +/-2%."""
+    if house_fraction is None:
+        return D("0")
+    lean = -(house_fraction - D("0.5")) * D("0.04")
+    return max(-INVENTORY_LEAN_MAX, min(INVENTORY_LEAN_MAX, lean))
+
+
+def house_estimate(ref: Decimal, best_bid: Optional[Decimal], best_ask: Optional[Decimal], last_trade: Optional[Decimal] = None) -> Decimal:
+    if best_bid and best_ask:
+        est = (best_bid + best_ask) / 2
+    elif best_bid:
+        est = best_bid
+    elif best_ask:
+        est = best_ask
+    else:
+        est = last_trade if last_trade and last_trade > 0 else ref
+    lo, hi = ref * (D("1") - HOUSE_ESTIMATE_BAND), ref * (D("1") + HOUSE_ESTIMATE_BAND)
+    return max(MIN_PRICE, min(max(est, lo), hi))
+
+
+def house_quote_refs(
+    ref: Decimal, best_bid: Optional[Decimal], best_ask: Optional[Decimal],
+    last_trade: Optional[Decimal] = None, house_fraction: Optional[Decimal] = None, gap: Decimal = HOUSE_GAP,
+    worst_bid: Optional[Decimal] = None, worst_ask: Optional[Decimal] = None,
+) -> tuple[Decimal, Decimal]:
+    """(bid_ref, ask_ref): the starting prices of the House's BUY and SELL sides (before size slippage). Each side sits
+    `gap` away from the estimate, but if that is not far enough out it goes `gap` beyond the outermost real order instead:
+    the House sells `gap` above the HIGHEST real ask and buys `gap` below the LOWEST real bid, so every real order lies
+    between the House's two prices and the House only ever covers what real orders cannot."""
+    est = house_estimate(ref, best_bid, best_ask, last_trade)
+    lean = D("1") + inventory_lean(house_fraction)
+    ask_ref = est * (D("1") + gap) * lean
+    bid_ref = est * (D("1") - gap) * lean
+    top_ask = worst_ask if worst_ask else best_ask
+    low_bid = worst_bid if worst_bid else best_bid
+    if top_ask:
+        ask_ref = max(ask_ref, top_ask * (D("1") + gap))
+    if low_bid:
+        bid_ref = min(bid_ref, low_bid * (D("1") - gap))
+    bid_ref = max(MIN_PRICE, bid_ref)
+    return bid_ref, max(ask_ref, bid_ref)
 
 
 # --- reference price -------------------------------------------------------------------------------------------------
@@ -171,7 +216,7 @@ def listed_price(ref: Decimal, best_bid: Optional[Decimal], best_ask: Optional[D
 
 def liquidation_value(
     qty: int, ref: Decimal, bid_levels: Sequence[tuple[Decimal, int]],
-    depth: Decimal, k: Decimal, max_impact: Decimal,
+    depth: Decimal, k: Decimal, max_impact: Decimal, house_ref: Optional[Decimal] = None,
 ) -> Decimal:
     """Proceeds of quick-selling `qty` shares right now: resting bids first, best price first (a bid is never counted
     above `ref`, so nobody can lift their own value by posting a high bid), then the House for what is left at its
@@ -189,5 +234,5 @@ def liquidation_value(
         total += D(take) * min(price, ref)
         remaining -= take
     if remaining > 0:
-        total += D(remaining) * house_sell_price(ref, D(remaining), depth, k, max_impact)
+        total += D(remaining) * house_sell_price(house_ref if house_ref is not None else ref, D(remaining), depth, k, max_impact)
     return total

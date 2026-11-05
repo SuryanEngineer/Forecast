@@ -406,3 +406,39 @@ class TestDividendRoundingGuards(unittest.TestCase):
     def test_no_holders_pays_nothing(self):
         per, pays, fee = compute_dividend_distribution(Decimal("1000.00"), Decimal("1000"), [], Decimal("0"))
         self.assertEqual(pays, [])
+
+
+class HouseQuoteTests(unittest.TestCase):
+    def setUp(self):
+        from decimal import Decimal as D
+        from app.engine import market_policy as mp
+        self.D, self.mp = D, mp
+
+    def test_no_orders_quotes_around_reference(self):
+        D, mp = self.D, self.mp
+        bid, ask = mp.house_quote_refs(D("100"), None, None)
+        self.assertEqual((bid, ask), (D("97.00"), D("103.00")))
+
+    def test_house_sits_outside_every_real_order(self):
+        D, mp = self.D, self.mp
+        # real bids 95..90, real asks 104..110: the House sells 3% above the highest ask, buys 3% below the lowest bid
+        bid, ask = mp.house_quote_refs(D("100"), D("95"), D("104"), worst_bid=D("90"), worst_ask=D("110"))
+        self.assertEqual(ask, D("113.30"))
+        self.assertEqual(bid, D("87.30"))
+
+    def test_only_bids_drops_house_sell_toward_buyers(self):
+        D, mp = self.D, self.mp
+        bid, ask = mp.house_quote_refs(D("110"), D("100"), None)
+        self.assertLessEqual(ask, D("103.01"))   # estimate = best bid, clamped to 12% of reference, +3%
+        self.assertGreater(ask, D("100"))
+
+    def test_estimate_cannot_run_away_from_reference(self):
+        D, mp = self.D, self.mp
+        bid, ask = mp.house_quote_refs(D("100"), D("300"), None)  # a silly bid
+        self.assertLessEqual(ask, D("115.4"))
+
+    def test_inventory_lean_is_capped(self):
+        D, mp = self.D, self.mp
+        self.assertEqual(mp.inventory_lean(D("0.97")), D("-0.0188"))
+        self.assertEqual(mp.inventory_lean(D("1")), D("-0.02"))
+        self.assertEqual(mp.inventory_lean(None), D("0"))

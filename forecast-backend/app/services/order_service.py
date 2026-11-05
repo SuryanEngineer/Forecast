@@ -86,14 +86,30 @@ class _MarketContext:
         raw = reference_service.get_ref(db, player.id, fallback=player.ipo_price)
         # The reference can sit outside the band after a result moved the fair price; price off the clamped value.
         self.reference = market_policy.clamp_to_band(raw, self.fair, self.low, self.high)
+        # Share of this player's supply the House holds (drives its small inventory lean). None if it can't be read.
+        self.house_fraction: Decimal | None = None
+        try:
+            from app.models.player import Position
+
+            house_id = get_or_create_house_user(db).id
+            held = db.query(Position.quantity).filter(Position.user_id == house_id, Position.player_id == player.id).scalar()
+            if held is not None and player.total_shares_outstanding:
+                self.house_fraction = Decimal(int(held)) / Decimal(int(player.total_shares_outstanding))
+        except Exception:
+            self.house_fraction = None
 
     def reference_for(self, book: OrderBook, engine_side: EngineSide) -> Decimal:
-        """The reference the House prices the leg of a quick order off: for a BUY (the House sells), it drops toward the
-        best real bid when no real seller is left (see market_policy.house_ask_reference); a SELL uses the plain reference."""
-        if engine_side != EngineSide.BUY:
-            return self.reference
+        """The starting price the House uses for the leg of a quick order it covers: its SELL side for a BUY, its BUY side
+        for a SELL. Built from what the real book says (see market_policy.house_quote_refs), not from the slow reference
+        alone, and never better than a real order."""
         bid, ask = book.best_bid, book.best_ask
-        return market_policy.house_ask_reference(self.reference, bid.price if bid else None, ask is not None)
+        bid_levels = book.depth(EngineSide.BUY, max_levels=10_000)
+        ask_levels = book.depth(EngineSide.SELL, max_levels=10_000)
+        bid_ref, ask_ref = market_policy.house_quote_refs(
+            self.reference, bid.price if bid else None, ask.price if ask else None, book.last_trade_price, self.house_fraction,
+            worst_bid=bid_levels[-1][0] if bid_levels else None, worst_ask=ask_levels[-1][0] if ask_levels else None,
+        )
+        return ask_ref if engine_side == EngineSide.BUY else bid_ref
 
     def band(self) -> tuple[Decimal, Decimal] | None:
         if self.fair is None or self.fair <= 0:

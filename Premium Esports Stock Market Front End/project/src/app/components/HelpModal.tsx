@@ -373,7 +373,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             <Term name="Limit order">An order at your chosen price that waits on the book until it fills or you cancel it.</Term>
             <Term name="Quick trade">An instant order that takes the best available price now.</Term>
             <Term name="Maker / Taker">The maker is the resting order that gets hit; the taker is the order that hits it. Only the taker pays the fee.</Term>
-            <Term name="The House">The exchange’s own account, which fills quick trades when the order book has nothing better. It is not one of the bots.</Term>
+            <Term name="The House">The exchange’s own account, a last resort for quick trades when the real orders run out. It is not one of the bots. It sells about 3% above the highest sell order and buys about 3% below the lowest buy order, so every real order sits between its two prices.</Term>
             <Term name="Liquidity">How easily you can trade without moving the price. Thin markets move more.</Term>
           </div>
         ),
