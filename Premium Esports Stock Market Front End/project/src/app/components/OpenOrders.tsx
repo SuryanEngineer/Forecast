@@ -90,6 +90,9 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
 
   if (!orders || orders.length === 0) return null;
   const many = orders.length > 1;
+  const worth = (o: OrderResponse) => (o.quantity - o.filled_quantity) * toNumber(o.limit_price ?? 0);
+  const buyTotal = orders.filter(o => o.side === 'buy').reduce((s, o) => s + worth(o), 0);
+  const sellTotal = orders.filter(o => o.side === 'sell').reduce((s, o) => s + worth(o), 0);
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(251,191,36,0.06)', border: '1.5px solid rgba(251,191,36,0.55)' }}>
@@ -115,6 +118,10 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
             {busy === 'all' ? 'Cancelling…' : `Cancel all ${orders.length}`}
           </button>
         )}
+      </div>
+      <div className="px-5 py-2.5 flex flex-wrap gap-x-6 gap-y-1 font-mono" style={{ fontSize: 12.5, borderBottom: '1px solid rgba(251,191,36,0.15)' }}>
+        <span className="text-muted-foreground">Total buy orders <strong style={{ color: 'var(--gain)' }}>{usd(buyTotal)}</strong></span>
+        <span className="text-muted-foreground">Total sell orders <strong style={{ color: '#ffb020' }}>{usd(sellTotal)}</strong></span>
       </div>
       {error && <p className="px-5 py-2" style={{ fontSize: 12.5, color: 'var(--loss)' }}>{error}</p>}
       {orders.map((o, i) => {
@@ -144,6 +151,9 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
                 <span style={{ color: o.expires_at ? AMBER : undefined }}>{expiryText(o.expires_at)}</span>
               </p>
             </button>
+            <span className="font-mono font-bold text-foreground shrink-0 text-right" style={{ fontSize: 13.5, minWidth: 96 }} title={buy ? 'Cash this buy order will spend if it fills in full (before fees)' : 'What this sell order will bring in if it fills in full (before fees)'}>
+              {usd(worth(o))}
+            </span>
             <button
               onClick={() => cancel(o.id)}
               disabled={busy !== null}
