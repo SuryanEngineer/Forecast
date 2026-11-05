@@ -447,4 +447,6 @@ export interface ActivityPage {
   items: ActivityItem[];
   total: number;
   next_offset: number | null;
+  /** Signed ledger totals by entry type over every matching entry, e.g. { trade_debit: -5000, trade_credit: 1200 }. */
+  totals?: Record<string, number>;
 }

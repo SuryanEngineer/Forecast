@@ -32,12 +32,17 @@ _HIDDEN = [T.ORDER_HOLD, T.ORDER_RELEASE]
 def user_activity(db: Session, user_id: uuid.UUID, kind: str = "all", limit: int = 50, offset: int = 0) -> dict:
     wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
     if wallet is None:
-        return {"items": [], "total": 0, "next_offset": None}
+        return {"items": [], "total": 0, "next_offset": None, "totals": {}}
 
     q = db.query(LedgerEntry).filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.entry_type.notin_(_HIDDEN))
     if kind in GROUPS:
         q = q.filter(LedgerEntry.entry_type.in_(GROUPS[kind]))
     total = q.with_entities(func.count(LedgerEntry.id)).scalar() or 0
+    # Totals over EVERY matching entry (not just this page), by type: signed ledger amounts (spending is negative).
+    totals = {
+        et.value: float(s or 0)
+        for et, s in q.with_entities(LedgerEntry.entry_type, func.sum(LedgerEntry.amount)).group_by(LedgerEntry.entry_type).all()
+    }
     entries = q.order_by(LedgerEntry.created_at.desc(), LedgerEntry.id.desc()).offset(offset).limit(limit).all()
 
     trade_ids = {e.reference_id for e in entries if e.reference_type == "trade" and e.reference_id}
@@ -113,4 +118,4 @@ def user_activity(db: Session, user_id: uuid.UUID, kind: str = "all", limit: int
         items.append(item)
 
     nxt = offset + limit if offset + limit < total else None
-    return {"items": items, "total": total, "next_offset": nxt}
+    return {"items": items, "total": total, "next_offset": nxt, "totals": totals}

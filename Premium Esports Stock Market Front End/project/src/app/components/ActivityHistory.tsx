@@ -37,7 +37,7 @@ function when(iso: string): string {
  * with the cash balance after each. Comes from the wallet ledger (GET /wallet/activity), so it always adds up. */
 export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => void }) {
   const [tab, setTab] = useState<TabKey>('all');
-  const [data, setData] = useState<{ items: ActivityItem[]; total: number; next: number | null } | null>(null);
+  const [data, setData] = useState<{ items: ActivityItem[]; total: number; next: number | null; totals: Record<string, number> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -55,8 +55,8 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
         .then(r => {
           if (cancelled) return;
           setData(prev => (prev && prev.items.length > PAGE
-            ? { ...prev, total: r.total }
-            : { items: r.items, total: r.total, next: r.next_offset }));
+            ? { ...prev, total: r.total, totals: r.totals ?? {} }
+            : { items: r.items, total: r.total, next: r.next_offset, totals: r.totals ?? {} }));
         })
         .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load activity'); });
     load();
@@ -69,7 +69,7 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
     const offset = data.next;
     setLoadingMore(true);
     fetchPage(tab, offset)
-      .then(r => setData(prev => (prev ? { items: [...prev.items, ...r.items], total: r.total, next: r.next_offset } : prev)))
+      .then(r => setData(prev => (prev ? { items: [...prev.items, ...r.items], total: r.total, next: r.next_offset, totals: r.totals ?? prev.totals } : prev)))
       .catch(e => setError(e instanceof Error ? e.message : 'Could not load more'))
       .finally(() => setLoadingMore(false));
   };
@@ -81,6 +81,25 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
   const total = data?.total ?? 0;
   const nextOffset = data?.next ?? null;
   const hiddenCount = Math.max(0, total - PREVIEW);
+  const t = data?.totals ?? {};
+  const amt = (k: string) => t[k] ?? 0;
+  // What each tab adds up to, over every entry (not just the ones loaded). Spending is shown as a positive "spent" figure.
+  const summary: { label: string; value: number; color?: string; signed?: boolean }[] =
+    tab === 'trades' ? [
+      { label: 'Total bought', value: -amt('trade_debit') },
+      { label: 'Total sold', value: amt('trade_credit') },
+      { label: 'Net', value: amt('trade_debit') + amt('trade_credit'), signed: true },
+    ] : tab === 'dividends' ? [
+      { label: 'Total dividends', value: amt('dividend_credit'), color: 'var(--gain)' },
+    ] : tab === 'fees' ? [
+      { label: 'Total fees paid', value: -amt('fee'), color: 'var(--loss)' },
+    ] : tab === 'treasury' ? [
+      { label: 'Put into treasury', value: -amt('treasury_buy') },
+      { label: 'Taken back out', value: amt('treasury_redeem') },
+    ] : tab === 'cash' ? [
+      { label: 'Total deposited', value: amt('deposit') },
+      { label: 'Total withdrawn', value: -amt('withdrawal') },
+    ] : [];
 
   return (
     <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
@@ -109,6 +128,19 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
           ))}
         </div>
       </div>
+
+      {summary.length > 0 && data && (
+        <div className="px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 border-b border-border font-mono" style={{ fontSize: 13 }}>
+          {summary.map(r => (
+            <span key={r.label} className="text-muted-foreground">
+              {r.label}{' '}
+              <strong style={{ color: r.color ?? (r.signed ? (r.value >= 0 ? 'var(--gain)' : 'var(--loss)') : 'var(--foreground)') }}>
+                {r.signed ? money(r.value) : usd(r.value)}
+              </strong>
+            </span>
+          ))}
+        </div>
+      )}
 
       {error && <p className="px-5 py-3" style={{ fontSize: 13, color: 'var(--loss)' }}>{error}</p>}
 
