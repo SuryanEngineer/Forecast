@@ -281,14 +281,15 @@ export function Tournaments({ openTournament }: Props) {
   });
 
   type Upcoming = { key: string; start: number; tracked?: CalendarTournamentResponse; announced?: AnnouncedTournament };
-  const live = calendar.filter(t => t.phase === 'live').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
-  const finalizing = calendar.filter(t => t.phase === 'finalizing').sort((a, b) => startMs(b.start_time) - startMs(a.start_time));
+  // "Finalizing" (started, results still being confirmed) counts as live: same card, blank leaderboard until results arrive.
+  const live = calendar.filter(t => t.phase === 'live' || t.phase === 'finalizing').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
   const completed = calendar.filter(t => t.phase === 'completed').sort((a, b) => startMs(b.start_time) - startMs(a.start_time));
   const upcoming: Upcoming[] = [
     ...calendar.filter(t => t.phase === 'upcoming').map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })),
     ...announced.map(e => ({ key: `a-${e.event_id}`, start: startMs(e.start_time), announced: e })),
   ].sort((a, b) => a.start - b.start);
-  const [next, ...laterUpcoming] = upcoming;
+  // A live event IS the current "next event", so the Next Event card only appears when nothing is live.
+  const [next, laterUpcoming] = live.length > 0 ? [undefined, upcoming] : [upcoming[0], upcoming.slice(1)];
 
   const rowFor = (u: Upcoming) =>
     u.tracked
@@ -343,13 +344,6 @@ export function Tournaments({ openTournament }: Props) {
         <div className="space-y-2.5">
           <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Coming up</p>
           {laterUpcoming.map(rowFor)}
-        </div>
-      )}
-
-      {finalizing.length > 0 && (
-        <div className="space-y-2.5">
-          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Awaiting final results</p>
-          {finalizing.map(t => <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
         </div>
       )}
 
