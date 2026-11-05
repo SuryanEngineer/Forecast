@@ -209,35 +209,28 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       },
       {
         heading: 'One lucky result does not set the price',
-        body: <p>A player with only one or two results is priced partly like a typical player, because a single big finish may be a
-        fluke. As their record grows, their own results count for more. Established stars are barely affected. A player with no
-        results yet has no fair price and is not limited by the band below.</p>,
+        body: <p>A player with only a result or two is priced partly like a typical player, since one big finish may be a fluke.
+        Their own results count for more as their record grows.</p>,
       },
       {
         heading: 'The band',
         body: (
           <div className="space-y-1.5">
-            <p>Trading can move a price a long way from fair, but not without limit: limit orders outside a wide band are
-            refused (this also protects against typos), and the running price never leaves it.</p>
-            <Fact label="Lowest allowed" value={<><BandLow /> fair price</>} />
-            <Fact label="Highest allowed" value={<><BandHigh /> fair price</>} />
-            <Fact label="Absolute minimum price" value="$0.50 a share" />
-            <p>No stock can trade below $0.50, whatever its fair price, so nobody can buy up the cheapest players for next to
-            nothing.</p>
+            <p>Prices stay between <BandLow /> and <BandHigh /> of fair price (and never below $0.50). It is a guardrail
+            against typos and against one trader dragging a thin market somewhere the player’s results can’t justify. Limit
+            orders outside it are refused.</p>
           </div>
         ),
       },
       {
         heading: 'How trades move the price',
-        body: <p>Each trade nudges the running price toward the trade’s price, in proportion to its size, so a tiny trade at a silly
-        price moves almost nothing and a large trade moves it more. The listed price is the price of the last trade,
-        kept between the Sell and Buy prices: if the last trade was above today’s Buy price it shows the Buy price, and if it
-        was below the Sell price it shows the Sell price.</p>,
+        body: <p>Each trade nudges the running price toward the trade’s price, in proportion to its size. The listed price is
+        the last trade, kept between the Sell and Buy prices.</p>,
       },
       {
         heading: 'When results come in',
-        body: <p>When a tournament finalizes, the player’s fair price is recomputed with the new result and their price moves toward
-        it. Strong finishes lift it, weak ones lower it, and the change is smoothed instead of instant.</p>,
+        body: <p>When a tournament finalizes, fair price is recomputed with the new result and the price drifts toward it:
+        strong finishes lift it, weak ones lower it.</p>,
       },
     ],
   },
@@ -254,19 +247,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'How they decide',
         body: (
-          <>
-            <p>Each bot estimates what a player is worth from public data, with its own spin so they do not all agree:</p>
-            <List
-              items={[
-                'What the player earned in tournaments over the past 12 months (their dividend record).',
-                'How they have placed recently, which separates hot streaks from slumps.',
-                'Upcoming events, since only holders at the start are paid, and missed qualifiers.',
-                'Qualifier results and how those have historically translated into finals results.',
-              ]}
-            />
-            <p className="mt-1.5">They then buy what looks cheap and sell what looks expensive, mostly with limit orders and
-            sometimes quick trades, and they sell when a player keeps placing poorly.</p>
-          </>
+          <p>Each bot values a player from public data (12 months of tournament earnings, recent placements, upcoming events and
+          qualifier results), with its own spin so they don’t all agree. They buy what looks cheap and sell what looks expensive.</p>
         ),
       },
       {
@@ -274,9 +256,9 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <List
             items={[
-              'They are not on the leaderboard and never compete for rank.',
-              'They have no secret information: nothing they know is hidden from you, and they use the same order book, fees, and limits.',
-              'They are not always right. Their view is built from past results, so you can win by anticipating what the record does not show yet.',
+              'Not on the leaderboard, and never competing for rank.',
+              'Not insiders: same order book, fees and limits as you, and nothing hidden.',
+              'Not always right. They work from past results, so you can win by anticipating what the record doesn’t show yet.',
             ]}
           />
         ),
@@ -435,12 +417,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Prices and orders',
         body: (
           <div>
-            <QA q="Why is the Buy price higher than the listed price?">The listed price is the last trade, kept between Sell and Buy. If the last trade was above today’s Buy price, the listed price shows the Buy price. You always buy at the Buy price and sell at the Sell price.</QA>
-            <QA q="Why did my portfolio dip right after I bought?">You paid the Buy price plus the 0.25% fee, while your value counts what selling all your shares would pay. See Fees &amp; Costs.</QA>
-            <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it from the Open orders list on My Portfolio whenever you like.</QA>
-            <QA q="How long does a limit order stay open?">Until it fills or you cancel it, unless you chose a time limit (1 hour, 1 day, or 1 week) when placing it. Timed orders cancel themselves within about 20 seconds of expiring and release your cash or shares.</QA>
-            <QA q="It says the House can’t buy or sell that many.">The exchange’s own liquidity has limits. Try a smaller size or use a limit order.</QA>
-            <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price (<BandLow /> to <BandHigh />). See How Prices Are Set.</QA>
+            <QA q="Why did my portfolio dip right after I bought?">You paid the Buy price plus the fee, while your value counts what selling would pay. See Fees &amp; Costs.</QA>
+            <QA q="My limit order has not filled.">Normal. It fills only if the market reaches your price. Cancel it any time from My Portfolio.</QA>
+            <QA q="It says the House can’t buy or sell that many.">The House’s liquidity has limits. Try a smaller size or a limit order.</QA>
+            <QA q="It says my price is outside the allowed range.">Limit orders must sit inside the band around fair price. See How Prices Are Set.</QA>
             <QA q="Why can’t I trade with myself?">Orders that would match your own are blocked, so nobody can move a price by trading with themselves.</QA>
           </div>
         ),
@@ -471,11 +451,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             up. At the same price, the order placed first is filled first.</p>
             <List
               items={[
-                'You can cancel an open or partially filled limit order at any time before it completes. Open orders are listed in amber on My Portfolio (with Cancel and Cancel all), on that player’s page, as a banner on Home, and as a count on the My Portfolio link, so you never lose track of one.',
-                'An open order locks up the cash (buy) or shares (sell) it needs until it fills or you cancel it.',
-                'Optional time limit: when you place a limit order you can tap “Keep it open” for 1 hour, 1 day, or 1 week and it cancels itself if it has not filled by then, freeing the cash or shares. Leave it on “Until I cancel” and it stays open until it fills or you cancel it.',
-                'A limit order is not guaranteed to fill. If the market never reaches your price, it will remain open.',
-                'The trader whose resting order is matched (the “maker”) pays no transaction fee.',
+                'Cancel any time from My Portfolio, or from that player’s page. An open order locks up the cash (buy) or shares (sell) it needs.',
+                'Optional time limit (1 hour, 1 day, or 1 week): it cancels itself if unfilled and frees the cash or shares. Otherwise it stays open until it fills or you cancel.',
+                'It may never fill if the market doesn’t reach your price.',
+                'A resting order that gets filled pays no fee. See Fees & Costs.',
               ]}
             />
           </>
@@ -485,27 +464,9 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Quick trades',
         body: (
           <>
-            <p>A quick trade executes immediately. It first takes the best prices available on the order book, and any
-            remaining quantity is filled against the exchange’s own liquidity. The larger your order relative to a player’s
-            available liquidity, the further the average fill price moves against you.</p>
-            <List
-              items={[
-                'Small quick trades in an active market barely move the price; large trades in a thin market move it more.',
-                'Choose a quick trade when speed matters more than securing a specific price.',
-              ]}
-            />
+            <p>A quick trade fills immediately: first against the best orders on the book, then against the House. The larger
+            the order, the worse the average price. Use it when speed matters more than the exact price.</p>
           </>
-        ),
-      },
-      {
-        heading: 'Fees',
-        body: (
-          <div className="space-y-1.5">
-            <p>Only the “taker” pays a fee: the trader whose order executes against the book, whether through a limit order
-            that crosses it or a quick trade. The fee is charged once, on the total value of that order’s fills.</p>
-            <Fact label="Transaction fee (taker only)" value="0.25%" />
-            <Fact label="Minimum share price" value="$0.50" />
-          </div>
         ),
       },
     ],
@@ -597,18 +558,13 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Net worth',
         body: (
-          <p><strong>Net worth = cash + what selling every share you hold would pay right now</strong> (real bids first, then
-          the House at its size-dependent price) plus any treasury holdings. It never resets, so everyone is simply racing to build the most money.</p>
+          <p><strong>Net worth = cash + what selling every share you hold would pay right now.</strong> It never resets, so
+          everyone is simply racing to build the most money.</p>
         ),
       },
       {
-        heading: 'View any investor’s team',
-        body: <p>Select any row on the leaderboard to see that investor’s holdings and portfolio value.</p>,
-      },
-      {
-        heading: 'Bots are not on the board',
-        body: <p>The automated bot traders that keep the market liquid never appear on the leaderboard: they are the market, not
-        competitors. Everyone you see ranked is a real person.</p>,
+        heading: 'Who is on it',
+        body: <p>Real people only; bots never appear. Select any row to see that investor’s holdings.</p>,
       },
     ],
   },
@@ -620,10 +576,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       {
         heading: 'Portfolio value',
         body: (
-          <p><strong>Cash balance + holdings value</strong>, where each holding is what selling <em>all</em> of those shares
-          right now would pay (so a very large position is worth slightly less per share than the listed price). This is the
-          figure used for your ranking. Buying shares costs you the small gap between the buy and sell price and the
-          transaction fee; otherwise only price movement and dividends change your portfolio value.</p>
+          <p><strong>Cash + holdings value</strong>, the same figure used for your ranking. Only price moves and dividends
+          change it, apart from the small cost of trading.</p>
         ),
       },
       {
@@ -644,30 +598,23 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'Where prices come from',
         body: (
           <p>The <strong>Buy price</strong> is what one share costs right now (the cheapest seller, or the House if nobody is
-          selling cheaper) and the <strong>Sell price</strong> is what one share fetches right now (the best bidder, or the
-          House). The listed price is the last trade, kept between the Sell and Buy prices. The House always quotes around the market’s running price, which moves
-          with trades in proportion to their size, so a single tiny trade at a silly price cannot move anything but sustained
-          buying or selling can move it a long way. It stays inside a wide band around the player’s fair price (see How Prices Are Set).</p>
+          selling cheaper). The <strong>Sell price</strong> is what one share fetches right now (the best bidder, or the
+          House). The listed price is the last trade, kept between the two.</p>
         ),
       },
       {
-        heading: 'Who else is trading? Bots.',
+        heading: 'Why a single trade barely moves it',
         body: (
-          <p>Besides real investors, automated <strong>bot traders</strong> trade around the clock so there is always someone to
-          buy from or sell to. They stimulate the market by posting bids and asks and trading, and they decide based on recent and
-          historical performance: what a player has earned in tournaments over the past year, how they have been playing lately,
-          upcoming events (only holders at the start are paid) and missed qualifying events. They never see anything you can’t.
-          They are not on the leaderboard. Treat them as the market to beat: spot a player they are undervaluing before the
-          results show it, and outperform them. <BenchmarkText /></p>
+          <p>The House quotes around the market’s running price, and each trade moves that price in proportion to its size. A
+          small trade carries little weight, so it barely moves the price, while steady buying or selling adds up and can move it
+          a long way, within the band around fair price (see How Prices Are Set).</p>
         ),
       },
       {
         heading: 'Big orders cost more per share',
         body: (
-          <p>The House’s price gets worse the more shares you buy or sell in one go. That is also how your portfolio is valued:
-          a position is worth what selling <em>all</em> of it right now would pay, so large positions are worth a little less
-          per share than the listed price. If the House can’t take on a very large order it will tell you; a limit order lets
-          you wait for another trader instead.</p>
+          <p>The House’s price gets worse the more you buy or sell at once, and your holdings are valued the same way (what
+          selling all of them would pay). For a large order, a limit order lets you wait for another trader instead.</p>
         ),
       },
       {
