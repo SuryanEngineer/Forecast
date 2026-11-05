@@ -14,6 +14,7 @@ const TABS = [
 type TabKey = (typeof TABS)[number]['key'];
 
 const PAGE = 25;
+const PREVIEW = 5; // entries shown until the card is expanded
 
 const BADGE: Record<string, { label: string; color: string; bg: string }> = {
   buy: { label: 'BUY', color: 'var(--gain)', bg: 'rgba(16,217,160,0.12)' },
@@ -73,9 +74,13 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
       .finally(() => setLoadingMore(false));
   };
 
-  const items = data?.items ?? null;
+  const [expanded, setExpanded] = useState(false);
+  const allItems = data?.items ?? null;
+  // Collapsed: just the latest few entries, so this card doesn't push everything else down the page.
+  const items = allItems === null ? null : expanded ? allItems : allItems.slice(0, PREVIEW);
   const total = data?.total ?? 0;
   const nextOffset = data?.next ?? null;
+  const hiddenCount = Math.max(0, total - PREVIEW);
 
   return (
     <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--card)' }}>
@@ -115,6 +120,7 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
         </p>
       ) : (
         <div>
+          <div style={expanded ? { maxHeight: 560, overflowY: 'auto' } : undefined}>
           {(items ?? []).map((it, i) => {
             const b = BADGE[it.type] ?? { label: it.type.toUpperCase(), color: 'var(--muted-foreground)', bg: 'rgba(255,255,255,0.07)' };
             const amount = toNumber(it.amount);
@@ -144,7 +150,7 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
               </div>
             );
           })}
-          {nextOffset !== null && (
+          {expanded && nextOffset !== null && (
             <button
               onClick={loadMore}
               disabled={loadingMore}
@@ -152,6 +158,16 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
               style={{ fontSize: 13, borderTop: '1px solid var(--border)' }}
             >
               {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+          </div>
+          {(hiddenCount > 0 || expanded) && (
+            <button
+              onClick={() => setExpanded(e => !e)}
+              className="w-full py-3 text-primary font-medium hover:bg-white/[0.03] transition-colors"
+              style={{ fontSize: 13, borderTop: '1px solid var(--border)' }}
+            >
+              {expanded ? 'Show less' : `Show all activity (${hiddenCount.toLocaleString()} more)`}
             </button>
           )}
         </div>
