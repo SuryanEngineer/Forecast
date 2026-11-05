@@ -188,6 +188,16 @@ export function useDayChange() {
   return usePolledFetch<DayChange | null>('/wallet/day-change', null, 30_000);
 }
 
+export interface NetWorthPoint { t: string; net_worth: number }
+
+/** The user's net worth at evenly spaced moments over the last `hours`, rebuilt server-side from the ledger. */
+export function useNetWorthSeries(hours: number, points: number, enabled = true) {
+  return usePolledFetch<{ points: NetWorthPoint[] }>(
+    enabled ? `/wallet/net-worth-series?hours=${hours}&points=${points}` : '/wallet/net-worth-series?hours=1&points=2',
+    { points: [] }, 60_000,
+  );
+}
+
 export function useAnnouncedTournaments() {
   return usePolledFetch<AnnouncedTournament[]>('/tournaments/announced', [], 5 * 60_000);
 }

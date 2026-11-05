@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../lib/auth';
-import { useMarketsByIds, useMyPositions, useMyStats } from '../lib/hooks';
+import { useDayChange, useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { useCompact } from '../lib/useCompact';
@@ -30,12 +30,14 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'value', label: 'Value' },
   { key: 'pl', label: 'Gain / loss $' },
   { key: 'plPct', label: 'Gain / loss %' },
-  { key: 'day', label: 'Today' },
+  { key: 'day', label: 'Stock move today' },
   { key: 'name', label: 'Name' },
 ];
 
 type Range = '1D' | '7D' | '1M' | 'ALL';
 const RANGE_LABEL: Record<Range, string> = { '1D': '1 Day', '7D': '7 Days', '1M': '1 Month', ALL: 'All' };
+// 1 Day and 7 Days come from the server's intraday reconstruction; 1 Month and All use the end-of-day history.
+const INTRADAY: Partial<Record<Range, { hours: number; points: number }>> = { '1D': { hours: 24, points: 48 }, '7D': { hours: 168, points: 84 } };
 const RANGE_POINTS: Record<Range, number> = { '1D': 2, '7D': 7, '1M': 30, ALL: Infinity };
 
 function Kpi({ label, value, sub, color, hint }: { label: string; value: string; sub?: string; color?: string; hint?: string }) {
@@ -53,6 +55,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const compact = useCompact();
   const { data: positions, loading: positionsLoading } = useMyPositions();
   const { data: stats } = useMyStats();
+  const { data: serverDay } = useDayChange();
   const [sort, setSort] = useState<SortKey>('value');
   const [range, setRange] = useState<Range>('1M');
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -91,7 +94,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       value: (a, b) => b.value - a.value,
       pl: (a, b) => b.pl - a.pl,
       plPct: (a, b) => b.plPct - a.plPct,
-      day: (a, b) => b.dayDollar - a.dayDollar,
+      day: (a, b) => b.dayPct - a.dayPct,
       name: (a, b) => playerName(a.market).localeCompare(playerName(b.market)),
     };
     return rows.sort(by[sort]);
@@ -101,17 +104,24 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const cost = holdings.reduce((s, h) => s + h.cost, 0);
   const pl = invested - cost;
   const plPct = cost > 0 ? (pl / cost) * 100 : 0;
-  const dayDollar = holdings.reduce((s, h) => s + h.dayDollar, 0);
-  const dayBase = invested - dayDollar;
-  const dayPct = dayBase > 0 ? (dayDollar / dayBase) * 100 : 0;
+  // Past-24h change comes from the server: it rebuilds what you had 24h ago, so shares bought today are not counted as
+  // having moved with the stock's whole-day price change.
+  const dayDollar = serverDay ? serverDay.change : 0;
+  const dayPct = serverDay ? serverDay.change_pct : 0;
   const total = invested + cash;
   const loading = marketsLoading || positionsLoading;
 
   // Net worth history (one point per day) from the stats endpoint, trimmed to the chosen range, ending on today's live value.
+  const intra = INTRADAY[range];
+  const { data: series } = useNetWorthSeries(intra?.hours ?? 24, intra?.points ?? 48, !!intra);
   const chart = useMemo(() => {
+    if (intra) {
+      const dayFmt = range === '1D' ? { hour: 'numeric', minute: '2-digit' } as const : { month: 'numeric', day: 'numeric', hour: 'numeric' } as const;
+      return (series?.points ?? []).map(p => ({ day: p.t, label: new Date(p.t).toLocaleString('en-US', dayFmt), value: p.net_worth }));
+    }
     const hist = (stats?.history ?? []).map(h => ({ day: h.day, label: h.day.slice(5), value: h.net_worth }));
     return Number.isFinite(RANGE_POINTS[range]) ? hist.slice(-RANGE_POINTS[range]) : hist;
-  }, [stats, range]);
+  }, [stats, range, series, intra]);
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
 
@@ -134,17 +144,17 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.06), rgba(155,111,255,0.04)), var(--card)' }}>
         <div className="p-5 sm:p-6 pb-3">
           <p className="text-muted-foreground" style={{ fontSize: 13 }}>Total value</p>
-          <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', letterSpacing: '-1px', lineHeight: 1.1 }}>{usd(total)}</p>
+          <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', letterSpacing: '-1px', lineHeight: 1.1, color: 'var(--foreground)' }}>{usd(total)}</p>
           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
             {holdings.length > 0 && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(dayDollar), color: tone(dayDollar) }}>
                 {dayDollar >= 0 ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
-                {usdSigned(dayDollar)} ({pctText(dayPct)}) today
+                {usdSigned(dayDollar)} ({pctText(dayPct)}) past 24h
               </span>
             )}
             {cost > 0 && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(pl), color: tone(pl) }}>
-                {usdSigned(pl)} ({pctText(plPct)}) all time
+                {usdSigned(pl)} ({pctText(plPct)}) since bought
               </span>
             )}
           </div>
@@ -361,7 +371,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           <p className="text-muted-foreground px-1" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
             Value is what selling the whole position right now would pay (real buy orders first, then the House), so a large position is worth slightly less per share than the listed price.
             Gain / loss is since you bought: that value compared with your average cost, so a stock can be up today and still be down overall.
-            The small % under each price is today's change (the last 24 hours).
+            The small % under each price is how that stock's price moved over the last 24 hours, whatever time you bought it; the "past 24h" figure at the top is what your own portfolio did, counting shares only from when you held them.
           </p>
         </>
       )}

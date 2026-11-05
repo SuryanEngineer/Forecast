@@ -270,3 +270,19 @@ def liquidation_value(
     if remaining > 0:
         total += D(remaining) * house_sell_price(house_ref if house_ref is not None else ref, D(remaining), depth, k, max_impact)
     return total
+
+
+# --- resting-order backing ------------------------------------------------------------------------------------------------
+
+
+def orders_to_cancel(required: Sequence[tuple[object, Decimal]], backing: D) -> list[object]:
+    """`required` = [(order_id, amount that order needs set aside)], oldest first; `backing` = what the owner really has set
+    aside. Returns the ids to cancel -- the NEWEST orders first -- until what is left fits inside the backing."""
+    total = sum((amt for _oid, amt in required), D("0"))
+    out: list[object] = []
+    for oid, amt in reversed(required):
+        if total <= backing:
+            break
+        out.append(oid)
+        total -= amt
+    return out

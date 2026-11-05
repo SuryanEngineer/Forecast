@@ -331,7 +331,10 @@ def _process_fills(
         notional = fill.price * fill_qty
         wallet_service.debit_for_trade(db, buyer_owner, notional, trade.id, held_release_amount=held_release)
         wallet_service.credit_for_trade(db, seller_owner, notional, trade.id)
-        position_service.transfer_shares_for_trade(db, buyer_owner, seller_owner, player.id, fill_qty, fill.price)
+        position_service.transfer_shares_for_trade(
+            db, buyer_owner, seller_owner, player.id, fill_qty, fill.price,
+            release_seller_hold=seller_order is not None and seller_order.order_kind == OrderKind.LIMIT,
+        )
 
         db.add(PriceSnapshot(id=uuid.uuid4(), player_id=player.id, price=fill.price, volume=fill_qty))
         # The reference price follows trades in proportion to their SIZE (a 1-share trade barely moves it) and never
@@ -750,6 +753,163 @@ def heal_crossed_books(db: Session, limit: int = 50) -> int:
                 db.rollback()
         book_registry.drop_book(pid)
     return cancelled
+
+
+_RECONCILE_STATE: dict = {"last": 0.0, "suspect": set()}
+RECONCILE_INTERVAL_SECONDS = 120.0
+_TOL = Decimal("0.05")
+
+
+def _open_limit_orders(db: Session, **filters) -> list[Order]:
+    live = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
+    q = db.query(Order).filter(
+        Order.order_kind == OrderKind.LIMIT, Order.status.in_(live), Order.quantity > Order.filled_quantity, Order.limit_price.isnot(None),
+        *[getattr(Order, k) == v for k, v in filters.items()],
+    )
+    return q.order_by(Order.created_at.asc()).all()
+
+
+def _buy_need(order: Order, fee: Decimal) -> Decimal:
+    return Decimal(order.limit_price) * (order.quantity - order.filled_quantity) * (Decimal("1") + fee)
+
+
+def _buy_problem(db: Session, uid: uuid.UUID, fee: Decimal):
+    """('short'|'excess'|None, orders, need, backing) for one user's resting buys, from fresh database state."""
+    from app.models.wallet import Wallet
+
+    w = db.query(Wallet).filter(Wallet.user_id == uid).one_or_none()
+    orders = _open_limit_orders(db, user_id=uid, side=OrderSide.BUY)
+    need = sum((_buy_need(o, fee) for o in orders), Decimal("0"))
+    if w is None:
+        return ("short" if orders else None), orders, need, Decimal("0")
+    db.refresh(w)
+    backing = min(Decimal(w.held_balance), Decimal(w.cash_balance))  # set aside AND actually still there
+    if need > backing + _TOL:
+        return "short", orders, need, backing
+    if Decimal(w.held_balance) > need + _TOL:
+        return "excess", orders, need, backing
+    return None, orders, need, backing
+
+
+def _sell_problem(db: Session, uid: uuid.UUID, pid: uuid.UUID):
+    from app.models.player import Position
+
+    pos = db.query(Position).filter(Position.user_id == uid, Position.player_id == pid).one_or_none()
+    orders = _open_limit_orders(db, user_id=uid, player_id=pid, side=OrderSide.SELL)
+    need = sum((o.quantity - o.filled_quantity for o in orders), 0)
+    if pos is None:
+        return ("short" if orders else None), orders, need, 0, None
+    db.refresh(pos)
+    backing = min(pos.held_quantity, pos.quantity)
+    if need > backing:
+        return "short", orders, need, backing, pos
+    if pos.held_quantity > need:
+        return "excess", orders, need, backing, pos
+    return None, orders, need, backing, pos
+
+
+def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
+    """Keeps every resting order honest: each open limit BUY must be backed by cash set aside, each open limit SELL by
+    shares set aside, so nothing in the book can fail when someone trades against it.
+
+      * wallet.held_balance    should equal  sum(limit price x remaining x (1 + fee)) over the owner's open buys;
+      * position.held_quantity should equal  sum(remaining) over the owner's open sells.
+
+    Too LITTLE set aside (cash/shares went elsewhere, or a count drifted) -> cancel that owner's newest orders until the
+    rest are fully backed: they leave the book, so nobody sees or trades against an order that cannot be honoured.
+    Too MUCH set aside (a stuck reservation) -> release the excess.
+
+    A problem must show up in two sweeps in a row before anything is changed (an order being placed or filled right now can
+    look briefly out of step), and is re-checked from fresh data before acting. Run by the lease holder."""
+    now_m = time.monotonic()
+    if not force and now_m - _RECONCILE_STATE["last"] < RECONCILE_INTERVAL_SECONDS:
+        return {"cancelled": 0, "released": 0}
+    _RECONCILE_STATE["last"] = now_m
+
+    from app.models.player import Position
+    from app.models.wallet import Wallet
+
+    fee = economic_params_service.get_param(db, "fees.transaction_fee_pct")
+    orders = _open_limit_orders(db)
+    buy_users = {o.user_id for o in orders if o.side == OrderSide.BUY}
+    sell_keys = {(o.user_id, o.player_id) for o in orders if o.side == OrderSide.SELL}
+
+    # Candidates: users/positions with orders, plus anything holding a reservation with no orders behind it.
+    buy_users |= {uid for (uid,) in db.query(Wallet.user_id).filter(Wallet.held_balance > _TOL).all()}
+    sell_keys |= {(u, p) for u, p in db.query(Position.user_id, Position.player_id).filter(Position.held_quantity > 0).all()}
+
+    # Cheap first pass from the rows already loaded (no extra queries) to find who is out of step.
+    need_buy: dict = {}
+    need_sell: dict = {}
+    for o in orders:
+        if o.side == OrderSide.BUY:
+            need_buy[o.user_id] = need_buy.get(o.user_id, Decimal("0")) + _buy_need(o, fee)
+        else:
+            k = (o.user_id, o.player_id)
+            need_sell[k] = need_sell.get(k, 0) + (o.quantity - o.filled_quantity)
+    held_by_user = {u: (Decimal(h), Decimal(c)) for u, h, c in db.query(Wallet.user_id, Wallet.held_balance, Wallet.cash_balance).filter(Wallet.user_id.in_(list(buy_users) or [uuid.uuid4()])).all()}
+    held_by_pos = {(u, p): (h, q) for u, p, h, q in db.query(Position.user_id, Position.player_id, Position.held_quantity, Position.quantity).filter(Position.user_id.in_(list({k[0] for k in sell_keys}) or [uuid.uuid4()])).all()}
+
+    suspects: set = set()
+    for uid in buy_users:
+        held, cash = held_by_user.get(uid, (Decimal("0"), Decimal("0")))
+        need = need_buy.get(uid, Decimal("0"))
+        if need > min(held, cash) + _TOL or held > need + _TOL:
+            suspects.add(("b", uid))
+    for k in sell_keys:
+        held, qty = held_by_pos.get(k, (0, 0))
+        need = need_sell.get(k, 0)
+        if need > min(held, qty) or held > need:
+            suspects.add(("s", k))
+
+    confirmed = suspects & _RECONCILE_STATE["suspect"]
+    _RECONCILE_STATE["suspect"] = suspects - confirmed
+    cancelled = released = 0
+
+    def cancel(pool: list[Order], amounts: list[Decimal], backing) -> int:
+        n = 0
+        for oid in market_policy.orders_to_cancel([(o.id, a) for o, a in zip(pool, amounts)], backing):
+            o = next(x for x in pool if x.id == oid)
+            try:
+                _cancel_resting(db, o)
+                db.commit()
+                n += 1
+            except Exception:
+                db.rollback()
+            book_registry.drop_book(o.player_id)
+        return n
+
+    for kind, key in confirmed:
+        try:
+            if kind == "b":
+                problem, pool, need, backing = _buy_problem(db, key, fee)
+                if problem == "short":
+                    cancelled += cancel(pool, [_buy_need(o, fee) for o in pool], backing + _TOL)
+                    problem, pool, need, backing = _buy_problem(db, key, fee)
+                if problem == "excess":
+                    excess = Decimal(db.query(Wallet.held_balance).filter(Wallet.user_id == key).scalar()) - need
+                    if excess > _TOL:
+                        # Relative update: a hold placed a moment ago is not overwritten.
+                        db.query(Wallet).filter(Wallet.user_id == key, Wallet.held_balance >= excess).update(
+                            {Wallet.held_balance: Wallet.held_balance - excess}, synchronize_session=False)
+                        db.commit()
+                        released += 1
+            else:
+                uid, pid = key
+                problem, pool, need, backing, pos = _sell_problem(db, uid, pid)
+                if problem == "short":
+                    cancelled += cancel(pool, [Decimal(o.quantity - o.filled_quantity) for o in pool], Decimal(backing))
+                    problem, pool, need, backing, pos = _sell_problem(db, uid, pid)
+                if problem == "excess" and pos is not None:
+                    excess = pos.held_quantity - need
+                    if excess > 0:
+                        db.query(Position).filter(Position.user_id == uid, Position.player_id == pid, Position.held_quantity >= excess).update(
+                            {Position.held_quantity: Position.held_quantity - excess}, synchronize_session=False)
+                        db.commit()
+                        released += 1
+        except Exception:
+            db.rollback()
+    return {"cancelled": cancelled, "released": released}
 
 
 def _cancel_resting(db: Session, order: Order) -> Order:

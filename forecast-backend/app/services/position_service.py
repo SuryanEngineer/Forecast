@@ -61,6 +61,7 @@ def transfer_shares_for_trade(
     player_id: uuid.UUID,
     quantity: int,
     trade_price: Decimal,
+    release_seller_hold: bool = True,
 ) -> None:
     """Move `quantity` shares from seller to buyer as part of settling a
     Trade. Seller's held_quantity (reserved at sell-order-placement time)
@@ -72,7 +73,11 @@ def transfer_shares_for_trade(
 
     seller_position = get_or_create_position(db, seller_user_id, player_id)
     seller_position.quantity -= quantity
-    seller_position.held_quantity = max(0, seller_position.held_quantity - quantity)
+    # Only a seller whose shares were RESERVED by a resting limit sell order gives up that reservation. A quick sell (or
+    # the House's synthetic leg) reserved nothing: letting it shrink the reservation would silently un-back the seller's
+    # other resting sell orders, so they could end up listing shares the seller no longer has.
+    if release_seller_hold:
+        seller_position.held_quantity = max(0, seller_position.held_quantity - quantity)
 
     buyer_position = get_or_create_position(db, buyer_user_id, player_id)
     existing_notional = buyer_position.average_cost * buyer_position.quantity

@@ -158,6 +158,13 @@ def _expire_orders_once() -> int:
         except Exception:
             db.rollback()
             maintenance_logger.exception("Reference drift pass failed -- will retry")
+        try:
+            fixed = order_service.reconcile_holds(db)
+            if fixed["cancelled"] or fixed["released"]:
+                maintenance_logger.warning("Resting-order reconcile: %s", fixed)
+        except Exception:
+            db.rollback()
+            maintenance_logger.exception("Resting-order reconcile failed -- will retry")
         return n
     finally:
         db.close()

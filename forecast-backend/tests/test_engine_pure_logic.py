@@ -475,3 +475,14 @@ class TradeConsensusTests(unittest.TestCase):
 
     def test_step_is_partial(self):
         self.assertEqual(self.mp.step_toward(self.D("100"), self.D("120")), self.D("105.00"))
+
+
+class OrdersToCancelTests(unittest.TestCase):
+    def test_cancels_newest_first_until_backed(self):
+        from decimal import Decimal as D
+        from app.engine import market_policy as mp
+        req = [("old", D("100")), ("mid", D("100")), ("new", D("100"))]
+        self.assertEqual(mp.orders_to_cancel(req, D("300")), [])
+        self.assertEqual(mp.orders_to_cancel(req, D("250")), ["new"])
+        self.assertEqual(mp.orders_to_cancel(req, D("100")), ["new", "mid"])
+        self.assertEqual(mp.orders_to_cancel(req, D("0")), ["new", "mid", "old"])

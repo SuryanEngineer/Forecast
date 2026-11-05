@@ -141,3 +141,99 @@ def day_change(db: Session, user_id: uuid.UUID, hours: int = 24) -> dict[str, De
     base = nw_then + max(ZERO, flow)
     pct = (change / base * 100) if base > 0 else ZERO
     return {"net_worth": nw_now["net_worth"], "net_worth_then": nw_then, "change": change, "change_pct": pct, "hours": Decimal(hours)}
+
+
+def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: int = 48) -> list[dict]:
+    """A user's net worth at `points` evenly spaced moments over the last `hours`, rebuilt from the append-only records the
+    same way day_change does (so the chart's end-to-end change agrees with the "past 24h" number):
+      cash then     = cash now - every cash movement after that moment;
+      shares then   = shares now - every share movement after that moment, at the last trade price in force then;
+      treasury then = treasury now, undone for treasury purchases / redemptions after that moment.
+    Buying shares moves cash into shares at (almost) the same value, so it does not show as a jump; only price moves,
+    dividends, fees and deposits do. The final point is the live net worth. Moments before the account existed are skipped.
+    Returns [{"t": iso, "net_worth": float}] oldest first."""
+    from bisect import bisect_right
+
+    from app.models.wallet import LedgerEntry, LedgerEntryType
+    from app.services import market_data_service
+
+    hours = max(1, min(int(hours), 24 * 14))
+    points = max(2, min(int(points), 200))
+    now = datetime.now(timezone.utc)
+    t0 = now - timedelta(hours=hours)
+    nw_now = compute_net_worths(db, [user_id]).get(user_id)
+    if nw_now is None:
+        return []
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).one_or_none()
+
+    def aware(dt: datetime) -> datetime:
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    led: list[tuple[datetime, "LedgerEntryType", Decimal]] = []
+    first_seen = now
+    if wallet is not None:
+        first = db.query(func.min(LedgerEntry.created_at)).filter(LedgerEntry.wallet_id == wallet.id).scalar()
+        if first is not None:
+            first_seen = aware(first)
+        led = [
+            (aware(c), et, Decimal(str(a or 0)))
+            for c, et, a in db.query(LedgerEntry.created_at, LedgerEntry.entry_type, LedgerEntry.amount)
+            .filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.created_at > t0)
+            .order_by(LedgerEntry.created_at.asc())
+            .all()
+        ]
+    now_qty = {pid: q for pid, q in db.query(Position.player_id, Position.quantity).filter(Position.user_id == user_id, Position.quantity > 0).all()}
+    moves = [
+        (aware(at), pid, int(d))
+        for pid, d, at in db.query(ShareTransfer.player_id, ShareTransfer.delta, ShareTransfer.occurred_at)
+        .filter(ShareTransfer.user_id == user_id, ShareTransfer.occurred_at > t0)
+        .order_by(ShareTransfer.occurred_at.asc())
+        .all()
+    ]
+    pids = list(set(now_qty) | {pid for _t, pid, _d in moves})
+    valuer = valuation_service.Valuer(db, pids) if pids else None
+    base_px = market_data_service._bulk_latest_prices(db, pids, before=t0) if pids else {}
+    ticks: dict[uuid.UUID, list[tuple[datetime, Decimal]]] = {pid: [] for pid in pids}
+    if pids:
+        for pid, price, at in (
+            db.query(PriceSnapshot.player_id, PriceSnapshot.price, PriceSnapshot.recorded_at)
+            .filter(PriceSnapshot.player_id.in_(pids), PriceSnapshot.recorded_at > t0)
+            .order_by(PriceSnapshot.recorded_at.asc())
+            .all()
+        ):
+            ticks[pid].append((aware(at), price))
+    tick_times = {pid: [t for t, _p in rows] for pid, rows in ticks.items()}
+    haircut = {pid: valuer.haircut(pid, now_qty.get(pid, 1)) for pid in pids} if valuer else {}
+
+    def price_at(pid: uuid.UUID, t: datetime) -> Decimal:
+        i = bisect_right(tick_times[pid], t)
+        if i > 0:
+            return ticks[pid][i - 1][1]
+        return base_px.get(pid) or (valuer.listed(pid) if valuer else ZERO)
+
+    out: list[dict] = []
+    for i in range(points):
+        t = now - (now - t0) * (points - 1 - i) / (points - 1)
+        if i == points - 1:
+            out.append({"t": now.isoformat(), "net_worth": float(nw_now["net_worth"])})
+            break
+        if t < first_seen:
+            continue
+        cash_then = nw_now["cash"] - sum((a for c, _et, a in led if c > t), ZERO)
+        treasury_moved = ZERO
+        for c, et, a in led:
+            if c > t:
+                if et == LedgerEntryType.TREASURY_BUY:
+                    treasury_moved += -a
+                elif et == LedgerEntryType.TREASURY_REDEEM:
+                    treasury_moved -= a
+        qty_then = dict(now_qty)
+        for c, pid, d in moves:
+            if c > t:
+                qty_then[pid] = qty_then.get(pid, 0) - d
+        holdings = ZERO
+        for pid, q in qty_then.items():
+            if q > 0:
+                holdings += q * price_at(pid, t) * haircut.get(pid, Decimal("1"))
+        out.append({"t": t.isoformat(), "net_worth": float(cash_then + holdings + max(ZERO, nw_now["treasury"] - treasury_moved))})
+    return out
