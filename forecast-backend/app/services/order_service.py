@@ -55,6 +55,7 @@ from app.services.exceptions import (
     PlayerNotFoundError,
     PriceOutOfBandError,
     SelfTradeError,
+    ServiceError,
 )
 from app.services.house_account import get_or_create_house_user
 
@@ -289,7 +290,7 @@ def _process_fills(
     return trades
 
 
-def place_limit_order(
+def _place_limit_order(
     db: Session,
     user_id: uuid.UUID,
     player_id: uuid.UUID,
@@ -372,7 +373,7 @@ def place_limit_order(
     return order
 
 
-def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, quantity: int, is_bot: bool = False) -> Order:
+def _place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, quantity: int, is_bot: bool = False) -> Order:
     if quantity <= 0:
         raise ValueError("quantity must be positive")
     lease_service.require_primary()
@@ -558,6 +559,39 @@ def quote_quick_order(db: Session, player_id: uuid.UUID, side: OrderSide, quanti
     return out
 
 
+def place_limit_order(
+    db: Session,
+    user_id: uuid.UUID,
+    player_id: uuid.UUID,
+    side: OrderSide,
+    price: Decimal,
+    quantity: int,
+    is_bot: bool = False,
+    expires_in_minutes: int | None = None,
+) -> Order:
+    """See _place_limit_order. An unexpected failure (a database error mid-settlement, say) can leave the in-memory
+    book ahead of the rolled-back database, so the cached book is dropped and rebuilt from the database next time.
+    Ordinary refusals (funds, band, self-trade, bad input) happen before the book is touched and keep it."""
+    try:
+        return _place_limit_order(db, user_id, player_id, side, price, quantity, is_bot=is_bot, expires_in_minutes=expires_in_minutes)
+    except (ServiceError, ValueError):
+        raise
+    except Exception:
+        book_registry.drop_book(player_id)
+        raise
+
+
+def place_quick_order(db: Session, user_id: uuid.UUID, player_id: uuid.UUID, side: OrderSide, quantity: int, is_bot: bool = False) -> Order:
+    """See _place_quick_order (same failure handling as place_limit_order)."""
+    try:
+        return _place_quick_order(db, user_id, player_id, side, quantity, is_bot=is_bot)
+    except (ServiceError, ValueError):
+        raise
+    except Exception:
+        book_registry.drop_book(player_id)
+        raise
+
+
 def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
     lease_service.require_primary()
     order = db.get(Order, order_id)
@@ -595,6 +629,50 @@ def expire_due_orders(db: Session, now: datetime | None = None, limit: int = 200
         except Exception:  # one bad order must not block the rest; it is retried next sweep
             db.rollback()
     return done
+
+
+def heal_crossed_books(db: Session, limit: int = 50) -> int:
+    """Self-repair for a book that shows resting orders crossing (best bid at or above best ask), which a working market
+    never has: crossing orders trade immediately. It can only happen when the database and the in-memory book drifted
+    apart (an order failed mid-settlement). For each such player, cancel the bots' crossing orders (releasing their cash
+    / shares; the bots simply re-quote next tick) and drop the cached book so it rebuilds from the database. Returns how
+    many orders were cancelled. Run by the lease holder alongside order expiry."""
+    from sqlalchemy import func
+
+    live = [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
+    base = [Order.order_kind == OrderKind.LIMIT, Order.status.in_(live), Order.quantity > Order.filled_quantity, Order.limit_price.isnot(None)]
+    rows = (
+        db.query(
+            Order.player_id,
+            func.max(Order.limit_price).filter(Order.side == OrderSide.BUY),
+            func.min(Order.limit_price).filter(Order.side == OrderSide.SELL),
+        )
+        .filter(*base)
+        .group_by(Order.player_id)
+        .all()
+    )
+    crossed = [(pid, bid, ask) for pid, bid, ask in rows if bid is not None and ask is not None and bid >= ask][:limit]
+    cancelled = 0
+    for pid, bid, ask in crossed:
+        stale = (
+            db.query(Order)
+            .filter(
+                Order.player_id == pid,
+                Order.is_bot.is_(True),
+                *base,
+                or_(and_(Order.side == OrderSide.BUY, Order.limit_price >= ask), and_(Order.side == OrderSide.SELL, Order.limit_price <= bid)),
+            )
+            .all()
+        )
+        for order in stale:
+            try:
+                _cancel_resting(db, order)
+                db.commit()
+                cancelled += 1
+            except Exception:
+                db.rollback()
+        book_registry.drop_book(pid)
+    return cancelled
 
 
 def _cancel_resting(db: Session, order: Order) -> Order:

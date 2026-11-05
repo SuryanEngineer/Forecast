@@ -77,6 +77,14 @@ def get_book(db: Session, player_id: uuid.UUID) -> OrderBook:
     return book
 
 
+def drop_book(player_id: uuid.UUID) -> None:
+    """Forget one player's cached in-memory book so the next use rebuilds it from the database. Called when an order
+    failed part-way: the in-memory book may already have matched while the database transaction rolled back, and a stale
+    book would otherwise disagree with the database (orders that look resting but are gone from the engine, or the
+    reverse) until the next restart."""
+    _books.pop(_player_key(player_id), None)
+
+
 def reset_book_cache() -> None:
     """Used by tests / the smoke-test script to force a clean rebuild."""
     _books.clear()

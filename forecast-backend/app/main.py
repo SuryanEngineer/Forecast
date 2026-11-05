@@ -151,7 +151,9 @@ def _expire_orders_once() -> int:
 
     db = SessionLocal()
     try:
-        return order_service.expire_due_orders(db)
+        n = order_service.expire_due_orders(db)
+        n += order_service.heal_crossed_books(db)
+        return n
     finally:
         db.close()
 
