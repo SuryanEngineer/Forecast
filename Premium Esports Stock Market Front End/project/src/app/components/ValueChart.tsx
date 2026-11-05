@@ -1,5 +1,6 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { toNumber, type ValueHistoryPoint } from '../lib/types';
+import { usd } from '../lib/format';
 
 interface Props {
   id: string; // unique per instance -- becomes the SVG gradient id, so two charts on the same page never collide
@@ -22,7 +23,7 @@ function makeTooltip(color: string) {
     return (
       <div className="rounded-xl px-3 py-2 border border-border" style={{ background: 'var(--popover)' }}>
         <p className="font-mono font-bold" style={{ fontSize: 13, color }}>
-          ${payload[0].value.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          {usd(payload[0].value)}
         </p>
       </div>
     );

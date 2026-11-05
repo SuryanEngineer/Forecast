@@ -1,9 +1,10 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { useMyStats, useSeasonList } from '../lib/hooks';
 import { shortSeasonName } from '../lib/seasons';
+import { usd, usdSigned } from '../lib/format';
 
-const money0 = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-const signed = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+const money0 = usd;
+const signed = usdSigned;
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
 const tone = (v: number) => (v > 0 ? 'var(--gain)' : v < 0 ? 'var(--loss)' : 'var(--foreground)');
 

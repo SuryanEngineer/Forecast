@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { useLeaderboard } from '../lib/hooks';
 import { toNumber } from '../lib/types';
 import { colorForId } from '../lib/colors';
+import { usd } from '../lib/format';
 
 interface Props {
   userId: string;
@@ -86,7 +87,7 @@ export function TeamModal({ userId, onClose }: Props) {
                   </button>
                 </div>
                 <p className="font-mono font-bold mt-2" style={{ fontSize: 26, color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
-                  ${toNumber(entry.portfolio_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  {usd(toNumber(entry.portfolio_value))}
                 </p>
                 <p className="text-muted-foreground mt-1" style={{ fontSize: 12 }}>Total portfolio value</p>
               </div>
@@ -96,13 +97,13 @@ export function TeamModal({ userId, onClose }: Props) {
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <p className="text-muted-foreground" style={{ fontSize: 11 }}>Cash Balance</p>
                 <p className="font-mono font-bold mt-0.5" style={{ fontSize: 17, color: 'var(--foreground)' }}>
-                  ${toNumber(entry.cash_balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  {usd(toNumber(entry.cash_balance))}
                 </p>
               </div>
               <div className="rounded-xl border border-border p-3 text-center" style={{ background: 'var(--muted)' }}>
                 <p className="text-muted-foreground" style={{ fontSize: 11 }}>Holdings Value</p>
                 <p className="font-mono font-bold mt-0.5" style={{ fontSize: 17, color: 'var(--foreground)' }}>
-                  ${toNumber(entry.holdings_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  {usd(toNumber(entry.holdings_value))}
                 </p>
               </div>
             </div>

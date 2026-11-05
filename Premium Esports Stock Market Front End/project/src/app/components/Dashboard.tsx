@@ -8,6 +8,7 @@ import { tournamentDisplayName } from '../lib/tournamentName';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { VerifiedBadge, HelpButton } from './HelpModal';
 import { OpenOrdersBanner } from './OpenOrders';
+import { usd } from '../lib/format';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -97,7 +98,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
               {user ? `${user.display_name.split(' ')[0]}'s Portfolio Value` : 'Portfolio Value'}
             </p>
             <p className="font-mono font-bold" style={{ fontSize: 'clamp(30px, 9.5vw, 46px)', letterSpacing: '-1.5px', color: 'var(--foreground)', lineHeight: 1.1, marginTop: 4 }}>
-              ${totalPortfolio.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {usd(totalPortfolio)}
             </p>
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               <span
@@ -105,7 +106,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                 style={{ fontSize: 14, background: dayChange >= 0 ? 'rgba(16,217,160,0.15)' : 'rgba(255,61,92,0.15)', color: dayChange >= 0 ? 'var(--gain)' : 'var(--loss)' }}
               >
                 {dayChange >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                {dayChange >= 0 ? '+' : ''}${Math.abs(dayChange).toLocaleString('en-US', { maximumFractionDigits: 2 })} past 24h
+                {dayChange >= 0 ? '+' : ''}{usd(Math.abs(dayChange))} past 24h
               </span>
               <span
                 className="px-3 py-1.5 rounded-full font-mono font-bold"
@@ -119,7 +120,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
             <div className="rounded-2xl p-4 text-center border border-border min-w-[130px]" style={{ background: 'rgba(0,0,0,0.3)' }}>
               <p className="text-muted-foreground" style={{ fontSize: 11 }}>Cash to Invest</p>
               <p className="font-mono font-bold mt-1" style={{ fontSize: 22, color: 'var(--foreground)' }}>
-                ${cashBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                {usd(cashBalance)}
               </p>
             </div>
           </div>
@@ -164,7 +165,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                   </div>
                   <p className="text-foreground font-bold" style={{ fontSize: 16 }}>{playerName(m)}<VerifiedBadge show={m.is_verified} /></p>
                   <p className="text-muted-foreground mb-2" style={{ fontSize: 12 }}>{m.team ?? ' '}</p>
-                  <p className="font-mono font-bold" style={{ fontSize: 20, color: 'var(--foreground)' }}>${toNumber(m.last_price).toFixed(2)}</p>
+                  <p className="font-mono font-bold" style={{ fontSize: 20, color: 'var(--foreground)' }}>{usd(toNumber(m.last_price))}</p>
                 </button>
               );
             })}
@@ -202,10 +203,10 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                 </div>
                 <div className="text-right shrink-0">
                   <p className="font-mono font-bold text-foreground" style={{ fontSize: 15 }}>
-                    ${h.value.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    {usd(h.value)}
                   </p>
                   <p className="font-mono" style={{ fontSize: 12, color: h.allTimePl >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                    {h.allTimePl >= 0 ? '+' : ''}${h.allTimePl.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    {h.allTimePl >= 0 ? '+' : ''}{usd(h.allTimePl)}
                   </p>
                 </div>
               </button>
@@ -256,7 +257,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
                     <div className="flex-1 min-w-0">
                       <p className="text-foreground font-semibold" style={{ fontSize: 13, lineHeight: 1.4 }}>{tournamentDisplayName(t.name, t.region)}</p>
                       <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11 }}>
-                        {t.tournament_type.replace('_', ' ')}{prizePool > 0 ? ` · $${prizePool.toLocaleString()} prize` : ''}
+                        {t.tournament_type.replace('_', ' ')}{prizePool > 0 ? ` · ${usd(prizePool)} prize` : ''}
                       </p>
                     </div>
                     {daysUntil !== null && (

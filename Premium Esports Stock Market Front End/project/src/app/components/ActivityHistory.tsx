@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { toNumber, type ActivityItem, type ActivityPage } from '../lib/types';
+import { usd, usdSigned } from '../lib/format';
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -25,7 +26,7 @@ const BADGE: Record<string, { label: string; color: string; bg: string }> = {
   withdrawal: { label: 'WITHDRAWAL', color: 'var(--muted-foreground)', bg: 'rgba(255,255,255,0.07)' },
 };
 
-const money = (v: number) => `${v < 0 ? '-' : '+'}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = usdSigned;
 
 function when(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -137,7 +138,7 @@ export function ActivityHistory({ openPlayer }: { openPlayer: (id: string) => vo
                 <div className="text-right shrink-0">
                   <p className="font-mono font-bold" style={{ fontSize: 14, color: amount >= 0 ? 'var(--gain)' : 'var(--foreground)' }}>{money(amount)}</p>
                   <p className="text-muted-foreground font-mono" style={{ fontSize: 10.5 }}>
-                    bal ${toNumber(it.balance_after).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    bal {usd(toNumber(it.balance_after))}
                   </p>
                 </div>
               </div>

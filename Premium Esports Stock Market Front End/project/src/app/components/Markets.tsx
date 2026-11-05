@@ -10,6 +10,7 @@ import { colorForId } from '../lib/colors';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
 import { InfoDot } from './InfoTooltip';
+import { usd } from '../lib/format';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -133,12 +134,12 @@ function PlayerCard({ market, navigate }: { market: MarketSnapshot; navigate: Pr
         </div>
 
         <p className="font-mono font-bold mb-2" style={{ fontSize: 26, color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
-          ${price.toFixed(2)}
+          {usd(price)}
         </p>
         {market.buy_price !== undefined && market.sell_price !== undefined && (
           <p className="text-muted-foreground font-mono -mt-1 mb-2" style={{ fontSize: 12 }}>
-            Buy <span style={{ color: 'var(--gain)' }}>${toNumber(market.buy_price).toFixed(2)}</span>
-            {' · '}Sell <span style={{ color: 'var(--loss)' }}>${toNumber(market.sell_price).toFixed(2)}</span>
+            Buy <span style={{ color: 'var(--gain)' }}>{usd(toNumber(market.buy_price))}</span>
+            {' · '}Sell <span style={{ color: 'var(--loss)' }}>{usd(toNumber(market.sell_price))}</span>
           </p>
         )}
 
@@ -197,7 +198,7 @@ function LiveTradeFeed({ trades, navigate }: { trades: FeedTrade[]; navigate: Pr
             <span className="text-foreground font-medium truncate" style={{ fontSize: 12.5 }}>{t.gamertag}</span>
             <span className="text-muted-foreground shrink-0" style={{ fontSize: 11.5 }}>{t.quantity} sh</span>
             <span className="flex-1" />
-            <span className="font-mono font-bold text-foreground shrink-0" style={{ fontSize: 12.5 }}>${toNumber(t.price).toFixed(2)}</span>
+            <span className="font-mono font-bold text-foreground shrink-0" style={{ fontSize: 12.5 }}>{usd(toNumber(t.price))}</span>
             <span className="text-muted-foreground shrink-0" style={{ fontSize: 10.5, minWidth: 42, textAlign: 'right' }}>{timeAgo(t.executed_at)}</span>
           </button>
         );
@@ -512,7 +513,7 @@ export function Markets({ navigate, initialSearch = '', onSearchChange }: Props)
         </div>
       ) : (
         <>
-          <div className="grid gap-4 transition-opacity" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', opacity: loading ? 0.45 : 1 }}>
+          <div className="grid gap-4 transition-opacity" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
             {markets.map(m => (
               <PlayerCard key={m.id} market={m} navigate={navigate} />
             ))}

@@ -11,13 +11,14 @@ import {
 } from '../lib/types';
 import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
+import { usdPerShare } from '../lib/format';
 
 // 100 per page so a full 100-player solo event fits on one page (the API allows up to 200).
 const PAGE_SIZE = 100;
 const COLS = '44px 1fr 1fr 1fr 1fr 1fr';
 
 function money(n: number): string {
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function statNum(stats: Record<string, unknown>, key: string): number | null {
@@ -186,7 +187,7 @@ function TeamCard({
             {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
           </span>
           <span className="hidden sm:block font-mono text-foreground text-right shrink-0" style={{ fontSize: 12, minWidth: 74 }} title="per share">
-            {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}/sh` : '–'}
+            {perShare !== null ? `${usdPerShare(perShare)}/sh` : '–'}
           </span>
           <span className="text-right shrink-0 sm:min-w-[92px]">
             {myPay !== null && myPay > 0 ? (
@@ -279,7 +280,7 @@ function TeamCard({
                   </div>
                   <div className="text-left sm:text-right shrink-0 sm:min-w-[84px]">
                     <p className="font-mono font-semibold text-foreground" style={{ fontSize: 13 }}>
-                      {perShare !== null ? `$${perShare.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '–'}
+                      {perShare !== null ? usdPerShare(perShare) : '–'}
                     </p>
                     <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>per share</p>
                   </div>

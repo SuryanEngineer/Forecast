@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
 import { useOpenOrderCount } from './OpenOrders';
+import { usd } from '../lib/format';
 
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'player';
 
@@ -130,7 +131,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
           <div className="rounded-xl border border-border p-3" style={{ background: 'rgba(0,0,0,0.3)' }}>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>Cash to Invest</p>
             <p className="font-mono font-bold mt-0.5" style={{ fontSize: 16, color: 'var(--foreground)' }}>
-              ${cash.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              {usd(cash)}
             </p>
           </div>
         </div>

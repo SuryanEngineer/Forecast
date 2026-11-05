@@ -10,6 +10,7 @@ import {
 } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { HelpButton } from './HelpModal';
+import { usd } from '../lib/format';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -67,7 +68,7 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
       </div>
       {pool !== null && pool > 0 && (
         <div className="text-right ml-auto shrink-0">
-          <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+          <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>{usd(pool)}</p>
           <p className="text-muted-foreground" style={{ fontSize: 12 }}>total dividend pool</p>
         </div>
       )}
@@ -128,7 +129,7 @@ function LiveEvent({ tournament, onOpen }: { tournament: CalendarTournamentRespo
           </div>
           {pool !== null && pool > 0 && (
             <div className="text-right ml-auto shrink-0">
-              <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+              <p className="font-mono font-bold" style={{ fontSize: 26, color: 'var(--gain)' }}>{usd(pool)}</p>
               <p className="text-muted-foreground" style={{ fontSize: 12 }}>total dividend pool</p>
             </div>
           )}
@@ -208,7 +209,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
       <div className="text-right shrink-0">
         {pool !== null && pool > 0 ? (
           <>
-            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>{usd(pool)}</p>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>total dividend pool</p>
           </>
         ) : (
@@ -248,7 +249,7 @@ function AnnouncedRow({ event }: { event: AnnouncedTournament }) {
       <div className="text-right shrink-0">
         {pool !== null && pool > 0 ? (
           <>
-            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>${pool.toLocaleString()}</p>
+            <p className="font-mono font-bold" style={{ fontSize: 13.5, color: 'var(--gain)' }}>{usd(pool)}</p>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>projected pool</p>
           </>
         ) : (

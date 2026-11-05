@@ -32,16 +32,13 @@ const EXPIRY_OPTIONS: { label: string; minutes: number | null }[] = [
   { label: '1 week', minutes: 7 * 24 * 60 },
 ];
 import { PriceChart } from './PriceChart';
+import { usd } from '../lib/format';
 
 interface Props {
   playerId: string;
   onClose: () => void;
   /** Opens a tournament from this player's history, scrolled to this player's team in the standings. */
   onOpenTournament?: (tournament: TournamentResponse, focusPlayerId: string) => void;
-}
-
-function usd(n: number): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** The real price of a quick order of this size (GET /markets/{id}/quote): the resting orders it would take first, then the
@@ -184,7 +181,7 @@ function OrderBook({ book, onPick }: { book: OrderBookResponse | null; onPick: (
         title={side === 'sell' ? 'Click to buy at this price' : 'Click to sell at this price'}
       >
         <span className="absolute inset-y-0 right-0" style={{ width: `${Math.max(6, (lvl.quantity / maxQty) * 100)}%`, background: color, opacity: 0.12 }} />
-        <span className="relative font-mono font-bold" style={{ color }}>${price.toFixed(2)}</span>
+        <span className="relative font-mono font-bold" style={{ color }}>{usd(price)}</span>
         <span className="relative font-mono text-muted-foreground">{lvl.quantity} sh</span>
       </button>
     );
@@ -201,7 +198,7 @@ function OrderBook({ book, onPick }: { book: OrderBookResponse | null; onPick: (
         <div className="px-1.5 pb-1.5 space-y-0.5">
           {[...asks].reverse().map(a => row(a, 'sell'))}
           <div className="px-2 py-0.5 text-center text-muted-foreground" style={{ fontSize: 10.5 }}>
-            {asks[0] && bids[0] ? `spread $${(toNumber(asks[0].price) - toNumber(bids[0].price)).toFixed(2)}` : '—'}
+            {asks[0] && bids[0] ? `spread ${usd(toNumber(asks[0].price) - toNumber(bids[0].price))}` : '—'}
           </div>
           {bids.map(b => row(b, 'buy'))}
         </div>
@@ -226,7 +223,7 @@ function RecentTrades({ trades }: { trades: TradeResponse[] }) {
       <div className="px-1.5 pb-1.5 space-y-0.5">
         {trades.slice(0, 8).map(t => (
           <div key={t.id} className="w-full flex items-center justify-between px-2 py-1 rounded-lg" style={{ fontSize: 12 }}>
-            <span className="font-mono font-bold text-foreground">${toNumber(t.price).toFixed(2)}</span>
+            <span className="font-mono font-bold text-foreground">{usd(toNumber(t.price))}</span>
             <span className="font-mono text-muted-foreground">{t.quantity} sh</span>
             <span className="text-muted-foreground" style={{ fontSize: 10.5 }}>{timeAgo(t.executed_at)}</span>
           </div>
@@ -378,7 +375,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
       });
       setMessage({
         kind: 'success',
-        text: `Limit ${orderSide} order placed for ${shares} share${shares !== 1 ? 's' : ''} at $${priceVal.toFixed(2)}. ` +
+        text: `Limit ${orderSide} order placed for ${shares} share${shares !== 1 ? 's' : ''} at ${usd(priceVal)}. ` +
           (expiryMinutes === null ? 'It stays open until it fills or you cancel it (see Open orders above).' : 'It cancels itself if it has not filled by then (see Open orders above).'),
       });
       notifyOrdersChanged();
@@ -425,7 +422,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
             </div>
             <div className="flex items-center gap-3 mt-2">
               <span className="font-mono font-bold" style={{ fontSize: 'clamp(22px, 6.5vw, 28px)', color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
-                ${price.toFixed(2)}
+                {usd(price)}
               </span>
               <span
                 className="inline-flex items-center gap-1 font-mono font-bold px-2.5 py-0.5 rounded-full"
@@ -437,14 +434,14 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
             </div>
             {market.buy_price !== undefined && market.sell_price !== undefined && (
               <p className="text-muted-foreground font-mono mt-1" style={{ fontSize: 13 }}>
-                Buy <span style={{ color: 'var(--gain)' }}>${toNumber(market.buy_price).toFixed(2)}</span>
-                {' · '}Sell <span style={{ color: 'var(--loss)' }}>${toNumber(market.sell_price).toFixed(2)}</span>
+                Buy <span style={{ color: 'var(--gain)' }}>{usd(toNumber(market.buy_price))}</span>
+                {' · '}Sell <span style={{ color: 'var(--loss)' }}>{usd(toNumber(market.sell_price))}</span>
                 <span style={{ fontSize: 11 }}> per share · the listed price is the midpoint</span>
               </p>
             )}
             {position && position.quantity > 0 && (
               <p className="text-muted-foreground mt-2" style={{ fontSize: 12 }}>
-                You own {position.quantity} share{position.quantity !== 1 ? 's' : ''} (avg cost ${toNumber(position.average_cost).toFixed(2)})
+                You own {position.quantity} share{position.quantity !== 1 ? 's' : ''} (avg cost {usd(toNumber(position.average_cost))})
               </p>
             )}
           </div>
@@ -457,9 +454,9 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 { label: '24h Volume', value: market.volume_24h.toLocaleString(), emoji: '📊' },
-                { label: 'Market Cap', value: `$${(toNumber(market.market_cap) / 1000).toFixed(0)}k`, emoji: '💵' },
+                { label: 'Market Cap', value: `$${Math.round(toNumber(market.market_cap) / 1000).toLocaleString('en-US')}k`, emoji: '💵' },
                 { label: 'Shares Out', value: market.total_shares_outstanding.toLocaleString(), emoji: '🧾' },
-                { label: 'IPO Price', value: `$${toNumber(market.ipo_price).toFixed(2)}`, emoji: '🚀' },
+                { label: 'IPO Price', value: usd(toNumber(market.ipo_price)), emoji: '🚀' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl border border-border p-2.5 text-center" style={{ background: 'var(--muted)' }}>
                   <p style={{ fontSize: 16 }}>{s.emoji}</p>
@@ -662,7 +659,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                       style={{ background: 'var(--muted)', fontSize: 16 }}
                     />
                   </div>
-                  <p className="text-muted-foreground mt-1" style={{ fontSize: 11 }}>Current price: ${price.toFixed(2)}</p>
+                  <p className="text-muted-foreground mt-1" style={{ fontSize: 11 }}>Current price: {usd(price)}</p>
                 </div>
 
                 <div>

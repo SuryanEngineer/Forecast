@@ -8,6 +8,7 @@ import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
 import { ActivityHistory } from './ActivityHistory';
 import { OpenOrders } from './OpenOrders';
+import { usd } from '../lib/format';
 
 interface Props {
   navigate: (page: string, playerId?: string) => void;
@@ -71,7 +72,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       >
         <p className="text-muted-foreground" style={{ fontSize: 14 }}>Portfolio Value</p>
         <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', color: 'var(--foreground)', letterSpacing: '-1px' }}>
-          ${grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {usd(grandTotal)}
         </p>
         <div className="flex items-center gap-3 mt-2 flex-wrap">
           {totalCost > 0 && (
@@ -79,10 +80,10 @@ export function Portfolio({ navigate, openPlayer }: Props) {
               className="flex items-center gap-1 px-3 py-1 rounded-full font-mono font-bold"
               style={{ fontSize: 14, background: totalPL >= 0 ? 'rgba(16,217,160,0.15)' : 'rgba(255,61,92,0.15)', color: totalPL >= 0 ? 'var(--gain)' : 'var(--loss)' }}
             >
-              {totalPL >= 0 ? '↑' : '↓'} {totalPL >= 0 ? '+' : ''}${totalPL.toFixed(2)} all time ({totalPLPct >= 0 ? '+' : ''}{totalPLPct.toFixed(1)}%)
+              {totalPL >= 0 ? '↑' : '↓'} {totalPL >= 0 ? '+' : ''}{usd(totalPL)} all time ({totalPLPct >= 0 ? '+' : ''}{totalPLPct.toFixed(1)}%)
             </span>
           )}
-          <span className="text-muted-foreground" style={{ fontSize: 13 }}>${cashBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} cash left</span>
+          <span className="text-muted-foreground" style={{ fontSize: 13 }}>{usd(cashBalance)} cash left</span>
         </div>
       </div>
 
@@ -93,7 +94,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
         </div>
         <div className="rounded-2xl border border-border p-4 text-center" style={{ background: 'var(--card)' }}>
           <p className="text-muted-foreground" style={{ fontSize: 12 }}>Cash Available</p>
-          <p className="font-mono font-bold text-foreground" style={{ fontSize: 24, color: 'var(--primary)' }}>${cashBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+          <p className="font-mono font-bold text-foreground" style={{ fontSize: 24, color: 'var(--primary)' }}>{usd(cashBalance)}</p>
         </div>
       </div>
 
@@ -155,9 +156,9 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                     <p className="text-muted-foreground" style={{ fontSize: 12 }}>{activeHolding.shares} shares{activeHolding.market.team ? ` · ${activeHolding.market.team}` : ''}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-mono font-bold text-foreground" style={{ fontSize: 18 }}>${activeHolding.currentVal.toFixed(0)}</p>
+                    <p className="font-mono font-bold text-foreground" style={{ fontSize: 18 }}>{usd(activeHolding.currentVal)}</p>
                     <p className="font-mono font-bold" style={{ fontSize: 13, color: activeHolding.pl >= 0 ? 'var(--gain)' : 'var(--loss)' }}>
-                      {activeHolding.pl >= 0 ? '+' : ''}${activeHolding.pl.toFixed(0)} ({activeHolding.plPct >= 0 ? '+' : ''}{activeHolding.plPct.toFixed(1)}%)
+                      {activeHolding.pl >= 0 ? '+' : ''}{usd(activeHolding.pl)} ({activeHolding.plPct >= 0 ? '+' : ''}{activeHolding.plPct.toFixed(1)}%)
                     </p>
                   </div>
                 </div>
@@ -198,12 +199,12 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                   <p className="text-muted-foreground" style={{ fontSize: 12 }}>{h.shares} shares{h.market.team ? ` · ${h.market.team}` : ''}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>${h.currentVal.toFixed(0)}</p>
+                  <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>{usd(h.currentVal)}</p>
                   <span
                     className="font-mono font-bold px-2 py-0.5 rounded-lg"
                     style={{ fontSize: 12, background: h.pl >= 0 ? 'rgba(16,217,160,0.12)' : 'rgba(255,61,92,0.12)', color: h.pl >= 0 ? 'var(--gain)' : 'var(--loss)' }}
                   >
-                    {h.pl >= 0 ? '+' : ''}${h.pl.toFixed(0)} ({h.plPct >= 0 ? '+' : ''}{h.plPct.toFixed(1)}%)
+                    {h.pl >= 0 ? '+' : ''}{usd(h.pl)} ({h.plPct >= 0 ? '+' : ''}{h.plPct.toFixed(1)}%)
                   </span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -220,7 +221,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                 <p className="text-muted-foreground" style={{ fontSize: 12 }}>Available to invest</p>
               </div>
               <div className="text-right">
-                <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>${cashBalance.toFixed(0)}</p>
+                <p className="font-mono font-bold text-foreground" style={{ fontSize: 16 }}>{usd(cashBalance)}</p>
                 <button onClick={() => navigate('markets')} className="text-primary" style={{ fontSize: 12 }}>Invest it →</button>
               </div>
             </div>

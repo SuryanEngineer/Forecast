@@ -4,6 +4,7 @@ import { toNumber, type LeaderboardEntry } from '../lib/types';
 import { UserTag } from './UserTag';
 import { colorForId } from '../lib/colors';
 import { HelpButton } from './HelpModal';
+import { usd } from '../lib/format';
 
 interface Props {
   openPlayer: (id: string) => void;
@@ -50,12 +51,12 @@ function LeaderRow({ entry, isMe, onOpen }: { entry: LeaderboardEntry; isMe: boo
           )}
         </div>
         <p className="text-muted-foreground truncate" style={{ fontSize: 11 }}>
-          ${toNumber(entry.holdings_value).toLocaleString('en-US', { maximumFractionDigits: 0 })} in holdings
+          {usd(toNumber(entry.holdings_value))} in holdings
         </p>
       </div>
       <div className="text-right shrink-0">
         <p className="font-mono font-bold text-foreground" style={{ fontSize: 13 }}>
-          ${toNumber(entry.portfolio_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          {usd(toNumber(entry.portfolio_value))}
         </p>
       </div>
     </button>
@@ -99,7 +100,7 @@ function AllTimeBoard({ openTeam }: { openTeam: (userId: string) => void }) {
           </div>
           <div className="text-right shrink-0">
             <p className="font-mono font-bold" style={{ fontSize: 22, color: 'var(--foreground)' }}>
-              ${toNumber(myEntry.portfolio_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              {usd(toNumber(myEntry.portfolio_value))}
             </p>
           </div>
         </button>
@@ -125,7 +126,7 @@ function AllTimeBoard({ openTeam }: { openTeam: (userId: string) => void }) {
                 </div>
                 <p className="text-foreground font-semibold" style={{ fontSize: 14 }}><UserTag tag={e.tag} color={e.tag_color} />{e.display_name}</p>
                 <p className="font-mono text-foreground" style={{ fontSize: 13 }}>
-                  ${toNumber(e.portfolio_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  {usd(toNumber(e.portfolio_value))}
                 </p>
               </button>
             );

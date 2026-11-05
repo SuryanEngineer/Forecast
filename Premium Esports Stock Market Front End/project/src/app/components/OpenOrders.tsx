@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useMarketsByIds } from '../lib/hooks';
 import { toNumber, type OrderResponse } from '../lib/types';
+import { usd } from '../lib/format';
 
 // A resting limit order ties up cash (buys) or shares (sells) until it fills or is cancelled, so nobody should be able
 // to leave one open by accident. Open orders are therefore shown in several places (My Portfolio, the player's own page, a
@@ -137,7 +138,7 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
                 {m ? (m.real_name || m.gamertag) : 'Player'}
               </p>
               <p className="text-muted-foreground truncate" style={{ fontSize: 11.5 }}>
-                {left.toLocaleString()} of {o.quantity.toLocaleString()} shares left at ${toNumber(o.limit_price ?? 0).toFixed(2)}
+                {left.toLocaleString()} of {o.quantity.toLocaleString()} shares left at {usd(toNumber(o.limit_price ?? 0))}
                 {o.status === 'partially_filled' ? ' · partly filled' : ''}
                 {' · '}
                 <span style={{ color: o.expires_at ? AMBER : undefined }}>{expiryText(o.expires_at)}</span>
