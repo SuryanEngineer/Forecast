@@ -159,11 +159,20 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
     payout.platform_fee_amount = fee_amount
     db.flush()
 
+    # The money is dated to when the tournament FINISHED, not to when this job happened to run (a retroactive or delayed
+    # payout would otherwise show up as a jump today). Falls back to now when there is no end time or it is in the future.
+    now = datetime.now(timezone.utc)
+    paid_at = now
+    if tournament is not None and tournament.end_time is not None:
+        end = tournament.end_time if tournament.end_time.tzinfo else tournament.end_time.replace(tzinfo=timezone.utc)
+        if end <= now:
+            paid_at = end
+
     for user_id_str, amount in payouts:
         if amount <= 0:
             continue
         user_id = uuid.UUID(user_id_str)
-        ledger_entry = wallet_service.credit_dividend(db, user_id, amount, payout.id)
+        ledger_entry = wallet_service.credit_dividend(db, user_id, amount, payout.id, occurred_at=paid_at)
         db.add(
             DividendLineItem(
                 id=uuid.uuid4(),
@@ -172,6 +181,7 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
                 quantity_held_snapshot=qty_by_user[user_id_str],
                 amount_paid=amount,
                 ledger_entry_id=ledger_entry.id,
+                created_at=paid_at,
             )
         )
 

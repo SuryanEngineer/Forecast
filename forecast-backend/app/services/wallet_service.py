@@ -14,6 +14,7 @@ an entire class of sign-flip bugs.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -39,6 +40,7 @@ def _write_ledger_entry(
     reference_type: str | None = None,
     reference_id: uuid.UUID | None = None,
     memo: str | None = None,
+    occurred_at: datetime | None = None,
 ) -> LedgerEntry:
     entry = LedgerEntry(
         wallet_id=wallet.id,
@@ -49,6 +51,8 @@ def _write_ledger_entry(
         reference_id=reference_id,
         memo=memo,
     )
+    if occurred_at is not None:
+        entry.created_at = occurred_at   # backdated: the money is dated to when it was earned, not when it was processed
     db.add(entry)
     db.flush()
     return entry
@@ -162,14 +166,18 @@ def credit_for_trade(db: Session, user_id: uuid.UUID, amount: Decimal, trade_id:
     return wallet
 
 
-def credit_dividend(db: Session, user_id: uuid.UUID, amount: Decimal, payout_id: uuid.UUID) -> LedgerEntry:
+def credit_dividend(
+    db: Session, user_id: uuid.UUID, amount: Decimal, payout_id: uuid.UUID, occurred_at: datetime | None = None
+) -> LedgerEntry:
+    """`occurred_at` dates the credit (the tournament's end time, see dividend_service.process_payout); None = now."""
     if amount <= 0:
         raise ValueError("dividend amount must be positive")
     wallet = get_or_create_wallet(db, user_id)
     wallet.cash_balance += amount
     db.flush()
     return _write_ledger_entry(
-        db, wallet, LedgerEntryType.DIVIDEND_CREDIT, amount, reference_type="dividend_payout", reference_id=payout_id
+        db, wallet, LedgerEntryType.DIVIDEND_CREDIT, amount, reference_type="dividend_payout", reference_id=payout_id,
+        occurred_at=occurred_at,
     )
 
 
