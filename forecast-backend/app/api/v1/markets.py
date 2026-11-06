@@ -13,6 +13,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.ttl_cache import cached_call
 from app.db.session import get_db
 from app.models.order import OrderSide
 from app.models.player import Player
@@ -50,16 +51,21 @@ def list_markets(
     anything else runs."""
     if sort not in _VALID_SORTS:
         sort = "market_cap"
-    items, total = market_data_service.list_market_snapshots_page(
-        db, page=page, page_size=page_size, sort=sort, search=search
-    )
-    return PaginatedMarketSnapshotResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=max(1, -(-total // page_size)),
-    )
+
+    def build() -> PaginatedMarketSnapshotResponse:
+        items, total = market_data_service.list_market_snapshots_page(
+            db, page=page, page_size=page_size, sort=sort, search=search
+        )
+        return PaginatedMarketSnapshotResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=max(1, -(-total // page_size)),
+        )
+
+    # Everyone polling the market list shares one result for a few seconds instead of each running the queries.
+    return cached_call(("markets", page, page_size, sort, (search or "").strip().lower()), 5, build)
 
 
 @router.get("/summary", response_model=MarketSummaryResponse)
@@ -68,7 +74,7 @@ def get_markets_summary(db: Session = Depends(get_db)) -> MarketSummaryResponse:
     aggregates over every active player, not by summing whatever single
     page of GET /markets the frontend happens to have loaded (which, now
     that the roster is paginated, would only reflect one page's worth)."""
-    return MarketSummaryResponse(**market_data_service.get_market_summary(db))
+    return cached_call(("markets-summary",), 15, lambda: MarketSummaryResponse(**market_data_service.get_market_summary(db)))
 
 
 @router.get("/benchmark")
@@ -76,7 +82,7 @@ def get_benchmark(db: Session = Depends(get_db)) -> dict:
     """The market's projected growth rate from dividends (what an average share earns per year at today's prices)."""
     from app.services import fair_price_service
 
-    return fair_price_service.benchmark(db)
+    return cached_call(("markets-benchmark",), 60, lambda: fair_price_service.benchmark(db))
 
 
 @router.get("/{player_id}", response_model=MarketSnapshotResponse)

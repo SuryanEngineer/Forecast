@@ -16,9 +16,24 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+// Last good response per GET path, so a page you have already seen paints instantly while it refreshes in the
+// background (see usePolledFetch). Wiped whenever the signed-in account changes so one account's data can never show
+// up for another.
+export const responseCache = new Map<string, unknown>();
+
 export function setToken(token: string | null): void {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+  responseCache.clear();
+}
+
+/** Wakes the server up. The free host puts an idle backend to sleep, and the first request after that can take 30+
+ * seconds; pinging it the moment the page opens means it is usually awake by the time anyone clicks anything. */
+export function warmUpBackend(): void {
+  try {
+    const root = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+    void fetch(`${root}/health`, { method: 'GET', mode: 'no-cors', cache: 'no-store' }).catch(() => {});
+  } catch { /* best effort */ }
 }
 
 export class ApiError extends Error {

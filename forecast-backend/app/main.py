@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, notifications, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
@@ -276,6 +277,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Compress anything over 1 KB (market pages, leaderboards and tournament results are large JSON and shrink ~5-10x).
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],

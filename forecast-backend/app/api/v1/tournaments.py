@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, defer
 
 from app.api.deps import get_optional_user
+from app.core.ttl_cache import cached_call
 from app.db.session import get_db
 from app.models.dividend import DividendLineItem, DividendPayout
 from app.models.osirion import OsirionTournamentMapping
@@ -70,7 +71,13 @@ def get_tournament_calendar(
     so the frontend calendar updates on its own as tournaments move from
     scheduled -> in progress -> finalized, with no admin action needed.
     Registered ABOVE /{tournament_id} on purpose -- otherwise FastAPI
-    would try to parse "calendar" as a tournament_id UUID and 422 first."""
+    would try to parse "calendar" as a tournament_id UUID and 422 first.
+
+    Cached for 10 seconds: every open browser polls this, and the answer is the same for all of them."""
+    return cached_call(("calendar", include_completed), 10, lambda: _build_calendar(db, include_completed))
+
+
+def _build_calendar(db: Session, include_completed: bool) -> list[CalendarTournamentResponse]:
     query = db.query(Tournament).filter(Tournament.is_historical_archive.is_(False))  # hidden rows never show
     if not include_completed:
         query = query.filter(Tournament.status != TournamentStatus.FINALIZED)

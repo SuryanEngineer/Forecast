@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, getToken } from './api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, getToken, responseCache } from './api';
 import type {
   AnnouncedTournament,
   CalendarTournamentResponse,
@@ -24,12 +24,25 @@ interface FetchState<T> {
 }
 
 function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number): FetchState<T> {
-  const [data, setData] = useState<T>(initial);
-  const [loading, setLoading] = useState(true);
+  // Stale-while-revalidate: a page you have visited before shows its last data immediately (no spinner, no empty
+  // state) while fresh data loads behind it.
+  const cached = path ? (responseCache.get(path) as T | undefined) : undefined;
+  const [data, setData] = useState<T>(cached !== undefined ? cached : initial);
+  const [loading, setLoading] = useState(cached === undefined);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
   const refetch = useCallback(() => setTick(t => t + 1), []);
+
+  // Switching to a different path: start from whatever we already have for it.
+  const lastPath = useRef(path);
+  useEffect(() => {
+    if (lastPath.current !== path) {
+      lastPath.current = path;
+      const c = path ? (responseCache.get(path) as T | undefined) : undefined;
+      if (c !== undefined) { setData(c); setLoading(false); }
+    }
+  }, [path]);
 
   useEffect(() => {
     if (!path) {
@@ -37,11 +50,12 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    if (responseCache.get(path) === undefined) setLoading(true);
     api
       .get<T>(path)
       .then(res => {
         if (!cancelled) {
+          responseCache.set(path, res);
           setData(res);
           setError(null);
         }
@@ -58,10 +72,14 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, tick]);
 
+  // Poll only while the tab is actually being looked at, and catch up the moment it comes back. (A hidden tab used to keep
+  // hammering the server every few seconds for nobody.)
   useEffect(() => {
     if (!intervalMs) return;
-    const id = setInterval(refetch, intervalMs);
-    return () => clearInterval(id);
+    const id = setInterval(() => { if (document.visibilityState === 'visible') refetch(); }, intervalMs);
+    const onVisible = () => { if (document.visibilityState === 'visible') refetch(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, [intervalMs, refetch]);
 
   return { data, loading, error, refetch };
