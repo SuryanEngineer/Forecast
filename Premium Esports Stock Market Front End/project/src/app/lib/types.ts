@@ -190,7 +190,7 @@ export type TournamentPhase = 'upcoming' | 'live' | 'finalizing' | 'completed';
 export interface TournamentResponse {
   id: string;
   name: string;
-  tournament_type: 'cash_cup' | 'fncs_qualifier' | 'fncs_finals' | 'global_championship' | 'major' | 'other';
+  tournament_type: 'cash_cup' | 'fncs_qualifier' | 'fncs_finals' | 'global_championship' | 'major' | 'performance_eval' | 'other';
   region: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -208,7 +208,7 @@ export interface TournamentResponse {
 export interface CalendarTournamentResponse {
   id: string;
   name: string;
-  tournament_type: 'cash_cup' | 'fncs_qualifier' | 'fncs_finals' | 'global_championship' | 'major' | 'other';
+  tournament_type: 'cash_cup' | 'fncs_qualifier' | 'fncs_finals' | 'global_championship' | 'major' | 'performance_eval' | 'other';
   region: string | null;
   start_time: string | null;
   end_time: string | null;

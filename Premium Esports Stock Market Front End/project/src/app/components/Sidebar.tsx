@@ -1,13 +1,14 @@
 import type { ComponentType } from 'react';
-import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X, MessageSquare } from 'lucide-react';
+import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X, MessageSquare, Bell } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useGuest } from '../lib/guest';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
 import { useOpenOrderCount } from './OpenOrders';
+import { useNotifications } from '../lib/notifications';
 import { usd } from '../lib/format';
 
-type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'player';
+type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'notifications' | 'player';
 
 interface NavItem {
   id: Page;
@@ -22,6 +23,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'leaderboards', label: 'Leaderboard', icon: Trophy },
   { id: 'stats', label: 'My Stats', icon: BarChart3 },
   { id: 'tournaments', label: 'Events', icon: Zap },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
 interface SidebarProps {
@@ -47,6 +49,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
   const openOrders = useOpenOrderCount();
+  const { unread } = useNotifications();
 
   return (
     <aside
@@ -93,6 +96,13 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
             >
               <Icon className="w-5 h-5 shrink-0" />
               <span className="flex-1">{item.label}</span>
+              {item.id === 'notifications' && unread > 0 && (
+                <span
+                  title="You have unread notifications"
+                  className="rounded-full"
+                  style={{ width: 9, height: 9, background: '#ff3d5c', boxShadow: '0 0 0 2px var(--sidebar)' }}
+                />
+              )}
               {item.id === 'portfolio' && openOrders > 0 && (
                 <span
                   title={`${openOrders} open order${openOrders > 1 ? 's' : ''}. Select to review and cancel.`}

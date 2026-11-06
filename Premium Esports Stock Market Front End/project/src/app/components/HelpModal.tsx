@@ -508,6 +508,18 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         ),
       },
       {
+        heading: 'Performance Evaluation cups',
+        body: (
+          <div className="space-y-1.5">
+            <p>Performance Evaluation cups are set-lobby events, and they pay per game won instead of by final placement. Each cup has a
+            $300,000 pool, and every game win is worth a quarter of it, shared across the winning team. In a trio, each player who wins a game
+            earns $25,000 for their shareholders, and a player who wins twice earns $50,000.</p>
+            <Fact label="Performance Evaluation pool" value="$300,000" />
+            <Fact label="One game win (trio, per player)" value="$25,000" />
+          </div>
+        ),
+      },
+      {
         heading: 'How placement sets the payout',
         body: (
           <>

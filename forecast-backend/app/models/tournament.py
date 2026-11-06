@@ -20,6 +20,7 @@ class TournamentType(str, enum.Enum):
     FNCS_FINALS = "fncs_finals"
     GLOBAL_CHAMPIONSHIP = "global_championship"
     MAJOR = "major"
+    PERFORMANCE_EVAL = "performance_eval"   # set-lobby Performance Evaluation cups: pay per game WON, not per placement
     OTHER = "other"
 
 

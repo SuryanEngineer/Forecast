@@ -39,6 +39,7 @@ from app.services import (
     book_registry,
     economic_params_service,
     lease_service,
+    notification_service,
     position_service,
     price_feed,
     reference_service,
@@ -281,6 +282,9 @@ def _process_fills(
     total_taker_fill_qty = 0
     taker_notional = Decimal("0")
     ctx = _MarketContext(db, player) if fills else None
+    # Who to tell about this execution: (user, order) -> [side, shares, notional]. Real users only (an order the House
+    # or a bot is on carries no notification), summed so one order filling in five pieces is one message.
+    to_notify: dict[tuple[uuid.UUID, uuid.UUID], list] = {}
 
     for fill in fills:
         fill_qty = int(fill.quantity)
@@ -327,6 +331,11 @@ def _process_fills(
         db.add(trade)
         db.flush()
         trades.append(trade)
+        for order_obj, owner, side_name in ((buyer_order, buyer_owner, "buy"), (seller_order, seller_owner, "sell")):
+            if order_obj is not None and not order_obj.is_bot and owner != house_user_id:
+                row = to_notify.setdefault((owner, order_obj.id), [side_name, 0, Decimal("0")])
+                row[1] += fill_qty
+                row[2] += fill.price * fill_qty
 
         notional = fill.price * fill_qty
         wallet_service.debit_for_trade(db, buyer_owner, notional, trade.id, held_release_amount=held_release)
@@ -367,6 +376,8 @@ def _process_fills(
                 wallet_service.receive_fee_revenue(db, house_user_id, fee_amount, taker_order.id, memo="Transaction fee revenue")
 
     db.flush()
+    for (owner, order_id), (side_name, qty, notional) in to_notify.items():
+        notification_service.trade_filled(db, owner, order_id, side_name, player, qty, notional)
     return trades
 
 
@@ -681,7 +692,7 @@ def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
         raise OrderNotCancellableError("quick orders settle instantly and cannot be cancelled")
     if order.status not in (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED):
         raise OrderNotCancellableError(f"order is already {order.status.value}")
-    return _cancel_resting(db, order)
+    return _cancel_resting(db, order, reason="you cancelled it", by_user=True)
 
 
 def expire_due_orders(db: Session, now: datetime | None = None, limit: int = 200) -> int:
@@ -703,7 +714,7 @@ def expire_due_orders(db: Session, now: datetime | None = None, limit: int = 200
     done = 0
     for order in due:
         try:
-            _cancel_resting(db, order)
+            _cancel_resting(db, order, reason="it reached its time limit")
             db.commit()
             done += 1
         except Exception:  # one bad order must not block the rest; it is retried next sweep
@@ -866,12 +877,12 @@ def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
     _RECONCILE_STATE["suspect"] = suspects - confirmed
     cancelled = released = 0
 
-    def cancel(pool: list[Order], amounts: list[Decimal], backing) -> int:
+    def cancel(pool: list[Order], amounts: list[Decimal], backing, reason: str = "it was no longer fully backed") -> int:
         n = 0
         for oid in market_policy.orders_to_cancel([(o.id, a) for o, a in zip(pool, amounts)], backing):
             o = next(x for x in pool if x.id == oid)
             try:
-                _cancel_resting(db, o)
+                _cancel_resting(db, o, reason=reason)
                 db.commit()
                 n += 1
             except Exception:
@@ -884,7 +895,7 @@ def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
             if kind == "b":
                 problem, pool, need, backing = _buy_problem(db, key, fee)
                 if problem == "short":
-                    cancelled += cancel(pool, [_buy_need(o, fee) for o in pool], backing + _TOL)
+                    cancelled += cancel(pool, [_buy_need(o, fee) for o in pool], backing + _TOL, "the cash backing it was spent elsewhere")
                     problem, pool, need, backing = _buy_problem(db, key, fee)
                 if problem == "excess":
                     excess = Decimal(db.query(Wallet.held_balance).filter(Wallet.user_id == key).scalar()) - need
@@ -898,7 +909,7 @@ def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
                 uid, pid = key
                 problem, pool, need, backing, pos = _sell_problem(db, uid, pid)
                 if problem == "short":
-                    cancelled += cancel(pool, [Decimal(o.quantity - o.filled_quantity) for o in pool], Decimal(backing))
+                    cancelled += cancel(pool, [Decimal(o.quantity - o.filled_quantity) for o in pool], Decimal(backing), "the shares backing it were sold elsewhere")
                     problem, pool, need, backing, pos = _sell_problem(db, uid, pid)
                 if problem == "excess" and pos is not None:
                     excess = pos.held_quantity - need
@@ -912,8 +923,9 @@ def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
     return {"cancelled": cancelled, "released": released}
 
 
-def _cancel_resting(db: Session, order: Order) -> Order:
-    """Takes a resting limit order off the book and releases what it was holding (shared by cancel and expiry)."""
+def _cancel_resting(db: Session, order: Order, reason: str = "it was taken off the book", by_user: bool = False) -> Order:
+    """Takes a resting limit order off the book and releases what it was holding (shared by cancel, expiry and the
+    hold reconciler). `reason` / `by_user` only decide what the user's notification says (a bot's order never notifies)."""
     user_id = order.user_id
     lock = book_registry.get_player_lock(order.player_id)
     with lock:
@@ -945,4 +957,6 @@ def _cancel_resting(db: Session, order: Order) -> Order:
         order.cancelled_at = datetime.now(timezone.utc)
         db.flush()
 
+    if not order.is_bot and notification_service.real_user_ids(db, [order.user_id]):
+        notification_service.order_cancelled(db, order, reason, by_user)
     return order

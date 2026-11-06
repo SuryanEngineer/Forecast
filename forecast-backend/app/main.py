@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, orders, players, stats, tournaments, treasury, wallet, ws
+from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, notifications, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.services import bot_trading_service, lease_service, maintenance_service, osirion_service, qualifier_service
@@ -298,6 +298,7 @@ app.include_router(markets.router, prefix=API_PREFIX)
 app.include_router(leaderboard.router, prefix=API_PREFIX)
 app.include_router(account.router, prefix=API_PREFIX)
 app.include_router(stats.router, prefix=API_PREFIX)
+app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(ws.router, prefix=API_PREFIX)
 
 

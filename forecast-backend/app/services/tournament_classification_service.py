@@ -60,12 +60,11 @@ DEFAULT_RULES: list[tuple[str, TournamentType | None, int, str]] = [
         "Any other Cash Cup Finals lobby not already matched above.",
     ),
     (
-        "performance evaluation", None, 26,
-        "Osirion's 'Fortnite Performance Evaluation' events pay real cash (seen at $1,600 for a top "
-        "finish), but per explicit product direction these should NOT count toward the tradeable "
-        "roster/Finals tier -- excluded outright rather than classified as Cash Cup. (Previously tracked "
-        "as CASH_CUP; changed back to an exclude rule -- see scripts/fix_classification_rules.py for the "
-        "one-time production fix needed since seed_default_rules() never updates an already-seeded row.)",
+        "performance evaluation", TournamentType.PERFORMANCE_EVAL, 26,
+        "Osirion's 'Fortnite Performance Evaluation' cups are set-lobby events (40 / 80 / 100 players). They are "
+        "tracked as their own tier and pay dividends per game WON (see dividend_service.performance_eval_pool): "
+        "a $300,000 pool where each win is worth a quarter of it, split across the winning team. Previously an "
+        "exclude rule; production rows are flipped by the notifications/performance-eval migration.",
     ),
     (
         "esports world cup", TournamentType.GLOBAL_CHAMPIONSHIP, 30,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Fragment } from 'react';
 import { Menu } from 'lucide-react';
 import { useCompact } from './lib/useCompact';
 import { toNumber } from './lib/types';
@@ -20,12 +21,14 @@ import { TournamentDetailModal } from './components/TournamentDetailModal';
 import { IntroTour, introSeenKey } from './components/IntroTour';
 import { HelpCenter } from './components/HelpModal';
 import { StatsPage } from './components/StatsPage';
+import { BellButton, NotificationsPage, ToastStack } from './components/NotificationCenter';
+import { NotificationsProvider } from './lib/notifications';
 import { SettingsPage } from './components/SettingsPage';
 import { LegalModal, type LegalDoc } from './components/LegalModal';
 import { FeedbackModal } from './components/FeedbackModal';
 import type { TournamentResponse } from './lib/types';
 
-type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
+type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings' | 'notifications';
 
 function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'register') => void } }) {
   const { user, justRegistered, wallet } = useAuth();
@@ -76,14 +79,18 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
     setCurrentPage(page as Page);
   }
 
-  const PAGE_TITLES: Record<string, string> = { dashboard: 'Home', markets: 'Market', portfolio: 'My Portfolio', leaderboards: 'Leaderboard', stats: 'My Stats', tournaments: 'Events', settings: 'Settings' };
+  const PAGE_TITLES: Record<string, string> = { dashboard: 'Home', markets: 'Market', portfolio: 'My Portfolio', leaderboards: 'Leaderboard', stats: 'My Stats', tournaments: 'Events', settings: 'Settings', notifications: 'Notifications' };
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
   const goTo = (page: string) => { setCurrentPage(page as Page); setMenuOpen(false); };
+
+  // Notifications only exist for real accounts (guests have none), so the provider is skipped in guest mode.
+  const Notifications = isGuest ? Fragment : NotificationsProvider;
 
   const guestValue = { isGuest, requireAccount: (f?: string) => { if (isGuest) setPrompt(f ?? ''); }, goLogin: guest?.goLogin ?? (() => {}) };
 
   return (
     <GuestContext.Provider value={guestValue}>
+    <Notifications>
     <div
       className={`dark overflow-hidden flex font-sans ${compact ? 'flex-col' : ''}`}
       style={{ height: '100dvh', background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
@@ -105,8 +112,9 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
               </div>
               <p className="font-bold text-foreground truncate" style={{ fontSize: 15 }}>{PAGE_TITLES[currentPage] ?? 'Forecast'}</p>
             </div>
+            {!isGuest && <div className="ml-auto"><BellButton onClick={() => setCurrentPage('notifications')} /></div>}
             {cash !== null && (
-              <div className="ml-auto text-right shrink-0 pr-1">
+              <div className={`${isGuest ? 'ml-auto ' : ''}text-right shrink-0 pr-1`}>
                 <p className="text-muted-foreground leading-none" style={{ fontSize: 9.5 }}>Cash</p>
                 <p className="font-mono font-bold text-foreground leading-tight" style={{ fontSize: 14 }}>${cash.toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
               </div>
@@ -137,6 +145,7 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
           : <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />)}
         {currentPage === 'leaderboards' && <Leaderboards openPlayer={setPlayerModalId} openTeam={setTeamModalUserId} />}
         {currentPage === 'stats' && (isGuest ? <AccountRequired title="My Stats" text="Your trading history, earnings and records show up here once you have an account." /> : <StatsPage />)}
+        {currentPage === 'notifications' && (isGuest ? <AccountRequired title="Notifications" text="Your trades, dividends and tournament updates show up here once you have an account." /> : <NotificationsPage />)}
         {currentPage === 'settings' && (isGuest ? <AccountRequired title="Settings" text="Create an account to manage your profile and settings." /> : <SettingsPage />)}
         {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); }} />}
       </main>
@@ -179,7 +188,9 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
         />
       )}
       {prompt !== null && <AccountPrompt feature={prompt || undefined} onClose={() => setPrompt(null)} />}
+      {!isGuest && <ToastStack onOpenInbox={() => setCurrentPage('notifications')} />}
     </div>
+    </Notifications>
     </GuestContext.Provider>
   );
 }

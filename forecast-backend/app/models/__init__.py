@@ -19,3 +19,4 @@ from app.models.osirion import OsirionTournamentMapping, OsirionPlayerMapping, O
 from app.models.tournament_classification import TournamentClassificationRule, RegionMultiplier  # noqa: F401
 from app.models.account import UserSession, EmailCode, PortfolioSnapshot, Season, SeasonEntry  # noqa: F401
 from app.models.qualifier import QualifierWindow, QualifierResult  # noqa: F401
+from app.models.notification import Notification  # noqa: F401

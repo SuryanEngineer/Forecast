@@ -13,10 +13,11 @@ from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy.orm import Session
 
+from app.engine import performance_eval
 from app.engine.dividend_calculator import compute_dividend_distribution, compute_player_pool
 from app.models.dividend import DividendLineItem, DividendPayout, DividendPayoutStatus
 from app.models.player import Player
-from app.models.tournament import PlacementResult, Tournament, TournamentStatus
+from app.models.tournament import PlacementResult, Tournament, TournamentStatus, TournamentType
 from app.services import economic_params_service, position_service, wallet_service
 
 
@@ -31,8 +32,15 @@ class PoolContext:
             fixed_pool = fixed_pool * economic_params_service.get_region_multiplier(db, tournament.region)
         self.effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
         self.platform_fee_pct = economic_params_service.get_param(db, "dividend.platform_fee_pct")
+        # Performance Evaluation cups pay per game WON out of their own pool (no region scaling), not per placement.
+        self.is_performance_eval = tournament.tournament_type == TournamentType.PERFORMANCE_EVAL
+        if self.is_performance_eval:
+            self.eval_pool = economic_params_service.get_param(db, "dividend.performance_eval_pool")
+            self.eval_win_share = economic_params_service.get_param(db, "dividend.performance_eval_win_share")
 
     def pool_for(self, placement_result: PlacementResult, max_placement: int) -> Decimal:
+        if self.is_performance_eval:
+            return performance_eval.player_pool(placement_result.raw_stats, self.eval_pool, self.eval_win_share)
         return compute_player_pool(
             placement=placement_result.placement,
             prize_won=placement_result.prize_won,
@@ -77,13 +85,23 @@ def create_payout_for_placement(
         fixed_pool = fixed_pool * region_multiplier
     effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
 
-    pool = compute_player_pool(
-        placement=placement_result.placement,
-        prize_won=placement_result.prize_won,
-        tournament_prize_pool=effective_prize_pool,
-        max_placement=max_placement,
-        placement_curve=placement_curve,
-    )
+    if tournament.tournament_type == TournamentType.PERFORMANCE_EVAL:
+        # Set-lobby cup: the pool is paid per game WON (a quarter of the cup's pool per win, split across the winning
+        # team), never by final placement. A player who won nothing gets a zero pool (the row still exists so the
+        # tournament can finalize). See app/engine/performance_eval.py.
+        pool = performance_eval.player_pool(
+            placement_result.raw_stats,
+            economic_params_service.get_param(db, "dividend.performance_eval_pool"),
+            economic_params_service.get_param(db, "dividend.performance_eval_win_share"),
+        )
+    else:
+        pool = compute_player_pool(
+            placement=placement_result.placement,
+            prize_won=placement_result.prize_won,
+            tournament_prize_pool=effective_prize_pool,
+            max_placement=max_placement,
+            placement_curve=placement_curve,
+        )
     payout = DividendPayout(
         id=uuid.uuid4(),
         tournament_id=tournament.id,
@@ -175,3 +193,11 @@ def _maybe_finalize_tournament(db: Session, tournament_id: uuid.UUID) -> None:
         tournament = db.get(Tournament, tournament_id)
         tournament.status = TournamentStatus.FINALIZED
         db.flush()
+        try:
+            from app.services import notification_service  # local import: keeps this module import-light
+
+            notification_service.dividends_paid(db, tournament_id)
+        except Exception:  # noqa: BLE001 -- a notification must never block a payout
+            import logging
+
+            logging.getLogger(__name__).exception("dividend notifications failed for tournament %s", tournament_id)

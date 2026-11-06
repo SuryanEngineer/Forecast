@@ -271,3 +271,10 @@ body { overscroll-behavior-y: none; }
     z-index: 90 !important;
   }
 }
+
+/* Notification pop-ups: pop in from the right with a little overshoot, then slide back out. */
+@keyframes toast-in { 0% { transform: translateX(120%); opacity: 0; } 60% { transform: translateX(-6px); opacity: 1; } 100% { transform: translateX(0); opacity: 1; } }
+@keyframes toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
+.toast-in { animation: toast-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.toast-out { animation: toast-out 0.3s ease-in both; }
+@media (prefers-reduced-motion: reduce) { .toast-in, .toast-out { animation-duration: 0.01s; } }

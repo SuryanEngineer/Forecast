@@ -109,6 +109,17 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "one fee unlocks bidding on every player in that round). Matches the simulation's $10,000 flat "
         "auction entry fee. See app/services/auction_service.py.",
     ),
+    "dividend.performance_eval_pool": (
+        Decimal("300000"),
+        "Dividend pool for ONE Performance Evaluation cup (a set-lobby event). Paid per game WON, not per placement: "
+        "each game win is worth `dividend.performance_eval_win_share` of this pool, split across the winning team's "
+        "players (so a trio's win pays each player $25,000 by default). See dividend_service.performance_eval_pool.",
+    ),
+    "dividend.performance_eval_win_share": (
+        Decimal("0.25"),
+        "Fraction of a Performance Evaluation cup's pool that one game win is worth (default a quarter), divided "
+        "among the winning team's members.",
+    ),
     "dividend.cash_cup_pool": (
         Decimal("300000"),
         "Fixed synthetic dividend pool paid out for a Cash Cup tournament, used instead of a real-world "
@@ -203,6 +214,7 @@ FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE: dict[str, str] = {
     "fncs_qualifier": "dividend.qualifier_pool",
     "fncs_finals": "dividend.fncs_pool",
     "global_championship": "dividend.global_pool",
+    "performance_eval": "dividend.performance_eval_pool",
 }
 
 # A MAJOR with one of these regions (or none -- Osirion leaves a cross-region event's region blank) is an onsite LAN

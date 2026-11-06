@@ -147,6 +147,7 @@ const TIER_LABELS: Record<string, string> = {
   fncs_finals: 'FNCS Finals',
   global_championship: 'Global / EWC',
   major: 'Major',
+  performance_eval: 'Performance Eval',
   other: 'Other',
 };
 

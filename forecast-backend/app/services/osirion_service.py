@@ -63,7 +63,8 @@ from app.models.tournament import (
     TournamentStatus,
     TournamentType,
 )
-from app.services import player_service, tournament_classification_service, tournament_service
+from app.engine import performance_eval
+from app.services import notification_service, player_service, tournament_classification_service, tournament_service
 from app.services.player_identity import skeleton
 
 logger = logging.getLogger("forecast.osirion")
@@ -760,6 +761,7 @@ def sync_tournament(
         page = 0
         total_pages = 1
         all_entries: list[dict] = []
+        notify_wins = not window_ended and not skip_finalize
         while page < total_pages and (max_pages is None or page < max_pages):
             leaderboard = osirion_client.get_leaderboard_page(
                 mapping.leaderboard_event_id, mapping.leaderboard_event_window_id, page=page
@@ -767,6 +769,8 @@ def sync_tournament(
             total_pages = leaderboard.get("totalPages") or 1
             entries = leaderboard.get("entries", [])
             all_entries.extend(entries)
+            if len(entries) > 150:
+                notify_wins = False   # a big open field: no per-player win notices
 
             # Open-field guard (live path, non-LAN only): a finals lobby is <=~100 players, so a leaderboard
             # with far more than a couple hundred entries is an open cup/qualifier that must never become
@@ -785,6 +789,26 @@ def sync_tournament(
                 result.error = (
                     f"open field (~{len(entries) * (total_pages - 1)}+ entries over {total_pages} pages) -- not a finals; "
                     f"tournament hidden and not synced"
+                )
+                logger.warning("Tournament %s (%s): %s", tournament.id, tournament.name, result.error)
+                return result
+
+            # Performance Evaluation cups are SET lobbies (40 / 80 / 100 players; trios can make 80 come out as 78).
+            # Anything up to ~100 players is accepted however Osirion pages it; a field that is surely bigger is an
+            # open event and is hidden before a single player is created (same reason as the guard above).
+            if (
+                page == 0
+                and not skip_finalize
+                and tournament.tournament_type == TournamentType.PERFORMANCE_EVAL
+                and not performance_eval.lobby_is_acceptable(
+                    sum(len(e.get("players") or []) for e in entries), total_pages
+                )
+            ):
+                tournament.is_historical_archive = True
+                db.commit()
+                result.error = (
+                    f"not a set lobby (more than ~{performance_eval.MAX_LOBBY_PLAYERS} players over {total_pages} pages) "
+                    f"-- Performance Evaluation tournament hidden and not synced"
                 )
                 logger.warning("Tournament %s (%s): %s", tournament.id, tournament.name, result.error)
                 return result
@@ -808,6 +832,16 @@ def sync_tournament(
                                 (osirion_player.get("accountId"), osirion_player.get("username"), rank)
                             )
                         continue
+                    # Game-win notices: compare the team's wins before / after this sync. Only for a live, finals-sized
+                    # event and only once a baseline exists (the very first sync records wins silently), so importing
+                    # an old result never announces games that were won long ago.
+                    prior = None
+                    if notify_wins:
+                        prior = (
+                            db.query(PlacementResult.raw_stats)
+                            .filter(PlacementResult.tournament_id == tournament.id, PlacementResult.player_id == player.id)
+                            .first()
+                        )
                     tournament_service.upsert_placement_result(
                         db,
                         tournament_id=tournament.id,
@@ -819,6 +853,10 @@ def sync_tournament(
                         percentile=percentile,
                         raw_stats=entry,
                     )
+                    if prior is not None:
+                        new_wins = performance_eval.count_game_wins(entry)
+                        if new_wins > performance_eval.count_game_wins(prior[0]):
+                            notification_service.game_win(db, tournament, player, new_wins - performance_eval.count_game_wins(prior[0]), new_wins)
                     result.matched += 1
 
             # Commit after EVERY page, not just once at the very end. This
