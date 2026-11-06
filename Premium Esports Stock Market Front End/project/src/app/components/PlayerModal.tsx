@@ -39,6 +39,9 @@ interface Props {
   onClose: () => void;
   /** Opens a tournament from this player's history, scrolled to this player's team in the standings. */
   onOpenTournament?: (tournament: TournamentResponse, focusPlayerId: string) => void;
+  /** Guest mode: show prices, order book and history, but no trading or personal data. */
+  readOnly?: boolean;
+  onLogin?: () => void;
 }
 
 /** The real price of a quick order of this size (GET /markets/{id}/quote): the resting orders it would take first, then the
@@ -233,7 +236,7 @@ function RecentTrades({ trades }: { trades: TradeResponse[] }) {
   );
 }
 
-export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
+export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = false, onLogin }: Props) {
   const { refreshWallet } = useAuth();
   const [tournamentHistory, setTournamentHistory] = useState<PlayerTournamentHistoryResponse | null>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
@@ -276,11 +279,13 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
       setMarket(m);
       setRecentTrades(trades);
       setBook(bk);
-      try {
-        const p = await api.get<PositionResponse>(`/players/${playerId}/position`);
-        setPosition(p);
-      } catch {
-        setPosition(null);
+      if (!readOnly) {
+        try {
+          const p = await api.get<PositionResponse>(`/players/${playerId}/position`);
+          setPosition(p);
+        } catch {
+          setPosition(null);
+        }
       }
     } catch (e) {
       setMessage({ kind: 'error', text: e instanceof ApiError ? e.message : 'Failed to load player' });
@@ -503,7 +508,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
               </p>
             </div>
 
-            <OpenOrders playerId={playerId} />
+            {!readOnly && <OpenOrders playerId={playerId} />}
 
             <OrderBook
               book={book}
@@ -515,6 +520,17 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
             />
             <RecentTrades trades={recentTrades} />
 
+            {readOnly ? (
+              <div className="rounded-xl p-4 text-center" style={{ background: 'var(--muted)', border: '1px solid var(--border)' }}>
+                <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>Log in to trade</p>
+                <p className="text-muted-foreground mt-1" style={{ fontSize: 12, lineHeight: 1.5 }}>You are in guest mode, so trading is switched off.</p>
+                {onLogin && (
+                  <button onClick={onLogin} className="mt-3 px-5 py-2 rounded-xl font-bold" style={{ fontSize: 13.5, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}>
+                    Log in
+                  </button>
+                )}
+              </div>
+            ) : (<>
             <div className="flex rounded-xl overflow-hidden border border-border">
               <button
                 onClick={() => setTradeMode('quick')}
@@ -750,6 +766,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                 </button>
               </div>
             )}
+            </>)}
           </div>
         </div>
       </motion.div>

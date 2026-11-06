@@ -5,6 +5,8 @@ import { toNumber } from './lib/types';
 import { useOpenOrderCount } from './components/OpenOrders';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuthScreen } from './components/AuthScreen';
+import { LandingPage } from './components/LandingPage';
+import { GuestApp } from './components/GuestApp';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { Markets } from './components/Markets';
@@ -176,6 +178,8 @@ function AuthenticatedApp() {
 
 function Root() {
   const { isAuthenticated, isLoading } = useAuth();
+  // Logged-out visitors start on the landing page; from there they can browse as a guest or log in.
+  const [screen, setScreen] = useState<'landing' | 'login' | 'guest'>('landing');
 
   if (isLoading) {
     return (
@@ -185,7 +189,10 @@ function Root() {
     );
   }
 
-  return isAuthenticated ? <AuthenticatedApp /> : <AuthScreen />;
+  if (isAuthenticated) return <AuthenticatedApp />;
+  if (screen === 'login') return <AuthScreen onBack={() => setScreen('landing')} />;
+  if (screen === 'guest') return <GuestApp onLogin={() => setScreen('login')} onBack={() => setScreen('landing')} />;
+  return <LandingPage onGuest={() => setScreen('guest')} onLogin={() => setScreen('login')} />;
 }
 
 export default function App() {

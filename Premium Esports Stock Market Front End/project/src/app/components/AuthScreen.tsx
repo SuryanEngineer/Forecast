@@ -5,7 +5,7 @@ import { LegalModal, type LegalDoc } from './LegalModal';
 const INPUT_CLS = 'w-full px-3 py-2.5 rounded-xl border border-border text-foreground outline-none transition-colors focus:border-primary/50';
 const INPUT_STYLE = { background: 'var(--muted)', fontSize: 14 } as const;
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, onBack }: { children: React.ReactNode; onBack?: () => void }) {
   return (
     <div
       className="min-h-screen w-screen flex items-center justify-center py-8"
@@ -15,6 +15,11 @@ function Shell({ children }: { children: React.ReactNode }) {
       }}
     >
       <div className="w-full max-w-[380px] px-6">
+        {onBack && (
+          <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground mb-4" style={{ fontSize: 13 }}>
+            &larr; Back
+          </button>
+        )}
         <div className="flex items-center gap-3 mb-8 justify-center">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -59,7 +64,7 @@ function SubmitButton({ busy, children }: { busy: boolean; children: React.React
   );
 }
 
-export function AuthScreen() {
+export function AuthScreen({ onBack }: { onBack?: () => void } = {}) {
   const { login, register, requestPasswordReset, confirmPasswordReset, error } = useAuth();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
@@ -117,7 +122,7 @@ export function AuthScreen() {
 
   if (mode === 'forgot') {
     return (
-      <Shell>
+      <Shell onBack={onBack}>
         <div className="rounded-2xl border border-border p-6" style={{ background: 'var(--card)' }}>
           <p className="font-semibold mb-1" style={{ fontSize: 15, color: 'var(--foreground)' }}>Reset your password</p>
 
@@ -181,7 +186,7 @@ export function AuthScreen() {
   }
 
   return (
-    <Shell>
+    <Shell onBack={onBack}>
       <div className="rounded-2xl border border-border p-6" style={{ background: 'var(--card)' }}>
         <div className="flex rounded-xl overflow-hidden border border-border mb-5">
           {(['login', 'register'] as const).map(m => (
