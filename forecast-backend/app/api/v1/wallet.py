@@ -36,11 +36,11 @@ def day_change(user: User = Depends(get_current_user), db: Session = Depends(get
 
 @router.get("/net-worth-series")
 def net_worth_series(
-    hours: int = Query(24, ge=1, le=336), points: int = Query(48, ge=2, le=200),
+    hours: int = Query(24, ge=0, le=9600), points: int = Query(300, ge=2, le=600),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> dict:
     """The user's net worth at evenly spaced moments over the last `hours` (rebuilt from the ledger; see
-    portfolio_service.net_worth_series). Powers the intraday portfolio chart."""
+    portfolio_service.net_worth_series). Powers the portfolio chart (hours=0 means since the account began)."""
     from app.services import portfolio_service
 
     return {"points": portfolio_service.net_worth_series(db, user.id, hours, points)}

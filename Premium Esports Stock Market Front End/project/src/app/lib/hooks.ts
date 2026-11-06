@@ -191,7 +191,7 @@ export function useDayChange() {
 export interface NetWorthPoint { t: string; net_worth: number }
 
 /** The user's net worth at evenly spaced moments over the last `hours`, rebuilt server-side from the ledger. */
-export function useNetWorthSeries(hours: number, points: number, enabled = true) {
+export function useNetWorthSeries(hours: number, points = 300, enabled = true) {
   return usePolledFetch<{ points: NetWorthPoint[] }>(
     enabled && getToken() ? `/wallet/net-worth-series?hours=${hours}&points=${points}` : null,
     { points: [] }, 60_000,

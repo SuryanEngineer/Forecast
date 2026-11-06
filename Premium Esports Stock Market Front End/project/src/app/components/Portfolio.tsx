@@ -36,9 +36,8 @@ const SORTS: { key: SortKey; label: string }[] = [
 
 type Range = '1D' | '7D' | '1M' | 'ALL';
 const RANGE_LABEL: Record<Range, string> = { '1D': '1 Day', '7D': '7 Days', '1M': '1 Month', ALL: 'All' };
-// 1 Day and 7 Days come from the server's intraday reconstruction; 1 Month and All use the end-of-day history.
-const INTRADAY: Partial<Record<Range, { hours: number; points: number }>> = { '1D': { hours: 24, points: 48 }, '7D': { hours: 168, points: 84 } };
-const RANGE_POINTS: Record<Range, number> = { '1D': 2, '7D': 7, '1M': 30, ALL: Infinity };
+// Every range comes from the server's exact rebuild of your net worth (cash + shares x prices, moment by moment); 0 hours = since the account began.
+const RANGE_HOURS: Record<Range, number> = { '1D': 24, '7D': 168, '1M': 720, ALL: 0 };
 
 function Kpi({ label, value, sub, color, hint }: { label: string; value: string; sub?: string; color?: string; hint?: string }) {
   return (
@@ -111,17 +110,14 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const total = invested + cash;
   const loading = marketsLoading || positionsLoading;
 
-  // Net worth history (one point per day) from the stats endpoint, trimmed to the chosen range, ending on today's live value.
-  const intra = INTRADAY[range];
-  const { data: series } = useNetWorthSeries(intra?.hours ?? 24, intra?.points ?? 48, !!intra);
+  // Net worth over time: a point whenever your cash, your shares, or the price of a stock you hold changed.
+  const { data: series } = useNetWorthSeries(RANGE_HOURS[range], 300);
   const chart = useMemo(() => {
-    if (intra) {
-      const dayFmt = range === '1D' ? { hour: 'numeric', minute: '2-digit' } as const : { month: 'numeric', day: 'numeric', hour: 'numeric' } as const;
-      return (series?.points ?? []).map(p => ({ day: p.t, label: new Date(p.t).toLocaleString('en-US', dayFmt), value: p.net_worth }));
-    }
-    const hist = (stats?.history ?? []).map(h => ({ day: h.day, label: h.day.slice(5), value: h.net_worth }));
-    return Number.isFinite(RANGE_POINTS[range]) ? hist.slice(-RANGE_POINTS[range]) : hist;
-  }, [stats, range, series, intra]);
+    const pts = (series?.points ?? []).map(p => ({ ts: new Date(p.t).getTime(), value: p.net_worth }));
+    return pts.length >= 2 ? pts : [];
+  }, [series]);
+  const spanMs = chart.length >= 2 ? chart[chart.length - 1].ts - chart[0].ts : 0;
+  const tickFmt = (ts: number) => new Date(ts).toLocaleString('en-US', spanMs <= 36 * 3600_000 ? { hour: 'numeric', minute: '2-digit' } : spanMs <= 10 * 86400_000 ? { month: 'numeric', day: 'numeric', hour: 'numeric' } : { month: 'short', day: 'numeric' });
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
 
@@ -177,7 +173,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
             </div>
           </div>
           {chart.length < 2 ? (
-            <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Your value chart appears after your first full day of play.</p>
+            <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Your value chart appears once you've made your first trade.</p>
           ) : (
             <div style={{ height: compact ? 130 : 170 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -188,14 +184,14 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                       <stop offset="100%" stopColor={chartColor} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} minTickGap={28} />
+                  <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={tickFmt} tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} minTickGap={28} />
                   <YAxis hide domain={['auto', 'auto']} />
                   <Tooltip
                     formatter={(v: number) => [usd(v), 'Net worth']}
-                    labelFormatter={(l: string) => l}
+                    labelFormatter={(l: number) => new Date(l).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                     contentStyle={{ background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }}
                   />
-                  <Area type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2} fill="url(#pfNw)" dot={false} />
+                  <Area type="linear" dataKey="value" stroke={chartColor} strokeWidth={2} fill="url(#pfNw)" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

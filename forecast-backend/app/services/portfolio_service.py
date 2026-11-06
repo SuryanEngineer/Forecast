@@ -143,24 +143,55 @@ def day_change(db: Session, user_id: uuid.UUID, hours: int = 24) -> dict[str, De
     return {"net_worth": nw_now["net_worth"], "net_worth_then": nw_then, "change": change, "change_pct": pct, "hours": Decimal(hours)}
 
 
-def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: int = 48) -> list[dict]:
-    """A user's net worth at `points` evenly spaced moments over the last `hours`, rebuilt from the append-only records the
-    same way day_change does (so the chart's end-to-end change agrees with the "past 24h" number):
-      cash then     = cash now - every cash movement after that moment;
-      shares then   = shares now - every share movement after that moment, at the last trade price in force then;
-      treasury then = treasury now, undone for treasury purchases / redemptions after that moment.
-    Buying shares moves cash into shares at (almost) the same value, so it does not show as a jump; only price moves,
-    dividends, fees and deposits do. The final point is the live net worth. Moments before the account existed are skipped.
-    Returns [{"t": iso, "net_worth": float}] oldest first."""
-    from bisect import bisect_right
+def _thin_series(pts: list[tuple[datetime, float]], limit: int) -> list[tuple[datetime, float]]:
+    """Cut a long series to roughly `limit`..`2*limit` points WITHOUT smoothing it: time is split into `limit` equal buckets and
+    each bucket keeps its first, lowest, highest and last point (in time order), so every peak and dip survives."""
+    if len(pts) <= limit * 2:
+        return pts
+    t_first, t_last = pts[0][0], pts[-1][0]
+    span = max((t_last - t_first).total_seconds(), 1e-9)
+    buckets: dict[int, list[tuple[datetime, float]]] = {}
+    for p in pts:
+        b = min(limit - 1, int((p[0] - t_first).total_seconds() / span * limit))
+        buckets.setdefault(b, []).append(p)
+    out: list[tuple[datetime, float]] = []
+    for b in sorted(buckets):
+        rows = buckets[b]
+        keep = {id(rows[0]): rows[0], id(rows[-1]): rows[-1]}
+        lo = min(rows, key=lambda r: r[1])
+        hi = max(rows, key=lambda r: r[1])
+        keep[id(lo)] = lo
+        keep[id(hi)] = hi
+        out.extend(sorted(keep.values(), key=lambda r: r[0]))
+    return out
 
+
+# Ledger rows and share-ledger rows written by ONE trade carry timestamps a few milliseconds apart; treating them as separate
+# moments would draw a fake dip (cash gone, shares not yet arrived). Anything inside this window counts as the same moment.
+_SAME_MOMENT = timedelta(seconds=2)
+
+
+def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: int = 300) -> list[dict]:
+    """The user's net worth over time as a true step-by-step curve, not a handful of samples.
+
+    Net worth at any instant = cash + shares owned x each stock's price + treasury. So the curve changes whenever
+      * the user's cash changes (a trade, fee, dividend, deposit, treasury move)      -> cash ledger,
+      * the user's share counts change (they bought or sold)                          -> share ledger,
+      * a stock they hold trades at a new price                                       -> price snapshots,
+    and the value in between is flat. We rebuild exactly that:
+      1. the state at the start of the window = the state now, with every later movement undone;
+      2. one forward pass over all those events in time order, keeping cash / treasury / per-stock quantity and price, and
+         the holdings total updated incrementally (O(events), no per-point rescans);
+      3. a point after each event (price moves of stocks the user does not hold are skipped, they change nothing).
+    Same yardstick as day_change (size haircut at today's position size), so the chart's end-to-end change agrees with the
+    "past 24h" number. `hours`=0 means since the account began. The last point is the live net worth.
+    Long series are thinned by min/max bucketing (see _thin_series), so the jaggedness is kept. Returns oldest first."""
     from app.models.wallet import LedgerEntry, LedgerEntryType
     from app.services import market_data_service
 
-    hours = max(1, min(int(hours), 24 * 14))
-    points = max(2, min(int(points), 200))
+    hours = max(0, min(int(hours), 24 * 400))
+    points = max(2, min(int(points), 600))
     now = datetime.now(timezone.utc)
-    t0 = now - timedelta(hours=hours)
     nw_now = compute_net_worths(db, [user_id]).get(user_id)
     if nw_now is None:
         return []
@@ -169,20 +200,29 @@ def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: i
     def aware(dt: datetime) -> datetime:
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-    led: list[tuple[datetime, "LedgerEntryType", Decimal]] = []
     first_seen = now
     if wallet is not None:
         first = db.query(func.min(LedgerEntry.created_at)).filter(LedgerEntry.wallet_id == wallet.id).scalar()
         if first is not None:
             first_seen = aware(first)
+    first_move = db.query(func.min(ShareTransfer.occurred_at)).filter(ShareTransfer.user_id == user_id).scalar()
+    if first_move is not None:
+        first_seen = min(first_seen, aware(first_move))
+    t0 = first_seen - timedelta(seconds=1) if hours == 0 else now - timedelta(hours=hours)
+    t0 = max(t0, first_seen - timedelta(seconds=1))
+    live = float(nw_now["net_worth"])
+
+    # Cash-moving ledger rows in the window (zero-amount order hold / release rows change nothing, so they are not loaded).
+    led: list[tuple[datetime, "LedgerEntryType", Decimal]] = []
+    if wallet is not None:
         led = [
             (aware(c), et, Decimal(str(a or 0)))
             for c, et, a in db.query(LedgerEntry.created_at, LedgerEntry.entry_type, LedgerEntry.amount)
-            .filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.created_at > t0)
+            .filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.created_at > t0, LedgerEntry.amount != 0)
             .order_by(LedgerEntry.created_at.asc())
             .all()
         ]
-    now_qty = {pid: q for pid, q in db.query(Position.player_id, Position.quantity).filter(Position.user_id == user_id, Position.quantity > 0).all()}
+    now_qty = {pid: int(q) for pid, q in db.query(Position.player_id, Position.quantity).filter(Position.user_id == user_id, Position.quantity > 0).all()}
     moves = [
         (aware(at), pid, int(d))
         for pid, d, at in db.query(ShareTransfer.player_id, ShareTransfer.delta, ShareTransfer.occurred_at)
@@ -191,49 +231,87 @@ def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: i
         .all()
     ]
     pids = list(set(now_qty) | {pid for _t, pid, _d in moves})
+
+    # State at t0: today's state with everything after t0 undone.
+    cash = nw_now["cash"] - sum((a for _c, _et, a in led), ZERO)
+    treasury = nw_now["treasury"]
+    for _c, et, a in led:
+        if et == LedgerEntryType.TREASURY_BUY:
+            treasury -= -a        # undo: that cash went INTO treasury
+        elif et == LedgerEntryType.TREASURY_REDEEM:
+            treasury += a         # undo: that cash came OUT of treasury
+    treasury = max(ZERO, treasury)
+    qty: dict[uuid.UUID, int] = dict(now_qty)
+    for _c, pid, d in moves:
+        qty[pid] = qty.get(pid, 0) - d
+
+    one = Decimal("1")
     valuer = valuation_service.Valuer(db, pids) if pids else None
-    base_px = market_data_service._bulk_latest_prices(db, pids, before=t0) if pids else {}
-    ticks: dict[uuid.UUID, list[tuple[datetime, Decimal]]] = {pid: [] for pid in pids}
+    haircut = {pid: valuer.haircut(pid, now_qty.get(pid, 1)) for pid in pids} if valuer else {}
+    price: dict[uuid.UUID, Decimal] = {}
     if pids:
-        for pid, price, at in (
+        price = dict(market_data_service._bulk_latest_prices(db, pids, before=t0))
+        for pid in pids:
+            if not price.get(pid):
+                price[pid] = valuer.listed(pid)
+
+    # One event stream, in time order. kind: 0 cash, 1 shares, 2 price.
+    events: list[tuple[datetime, int, object, object]] = []
+    events.extend((c, 0, et, a) for c, et, a in led)
+    events.extend((c, 1, pid, d) for c, pid, d in moves)
+    if pids:
+        for pid, px, at in (
             db.query(PriceSnapshot.player_id, PriceSnapshot.price, PriceSnapshot.recorded_at)
             .filter(PriceSnapshot.player_id.in_(pids), PriceSnapshot.recorded_at > t0)
             .order_by(PriceSnapshot.recorded_at.asc())
             .all()
         ):
-            ticks[pid].append((aware(at), price))
-    tick_times = {pid: [t for t, _p in rows] for pid, rows in ticks.items()}
-    haircut = {pid: valuer.haircut(pid, now_qty.get(pid, 1)) for pid in pids} if valuer else {}
+            events.append((aware(at), 2, pid, px))
+    events.sort(key=lambda e: e[0])
 
-    def price_at(pid: uuid.UUID, t: datetime) -> Decimal:
-        i = bisect_right(tick_times[pid], t)
-        if i > 0:
-            return ticks[pid][i - 1][1]
-        return base_px.get(pid) or (valuer.listed(pid) if valuer else ZERO)
+    def contribution(pid: uuid.UUID) -> Decimal:
+        q = qty.get(pid, 0)
+        return q * price.get(pid, ZERO) * haircut.get(pid, one) if q > 0 else ZERO
 
-    out: list[dict] = []
-    for i in range(points):
-        t = now - (now - t0) * (points - 1 - i) / (points - 1)
-        if i == points - 1:
-            out.append({"t": now.isoformat(), "net_worth": float(nw_now["net_worth"])})
-            break
-        if t < first_seen:
-            continue
-        cash_then = nw_now["cash"] - sum((a for c, _et, a in led if c > t), ZERO)
-        treasury_moved = ZERO
-        for c, et, a in led:
-            if c > t:
-                if et == LedgerEntryType.TREASURY_BUY:
-                    treasury_moved += -a
-                elif et == LedgerEntryType.TREASURY_REDEEM:
-                    treasury_moved -= a
-        qty_then = dict(now_qty)
-        for c, pid, d in moves:
-            if c > t:
-                qty_then[pid] = qty_then.get(pid, 0) - d
-        holdings = ZERO
-        for pid, q in qty_then.items():
+    holdings = sum((contribution(pid) for pid in pids), ZERO)
+    pts: list[tuple[datetime, float]] = []
+    if t0 >= first_seen:
+        pts.append((t0, float(cash + holdings + treasury)))
+
+    n = len(events)
+    for i, (t, kind, a, b) in enumerate(events):
+        emit = True
+        if kind == 0:
+            cash += b
+            if a == LedgerEntryType.TREASURY_BUY:
+                treasury += -b
+            elif a == LedgerEntryType.TREASURY_REDEEM:
+                treasury = max(ZERO, treasury - b)
+        elif kind == 1:
+            before = contribution(a)
+            qty[a] = qty.get(a, 0) + b
+            holdings += contribution(a) - before
+        else:
+            q = qty.get(a, 0)
             if q > 0:
-                holdings += q * price_at(pid, t) * haircut.get(pid, Decimal("1"))
-        out.append({"t": t.isoformat(), "net_worth": float(cash_then + holdings + max(ZERO, nw_now["treasury"] - treasury_moved))})
-    return out
+                before = contribution(a)
+                price[a] = b
+                holdings += contribution(a) - before
+            else:
+                price[a] = b
+                emit = False          # a stock the user does not hold at that moment: no effect on their curve
+        if kind != 2 and i + 1 < n and events[i + 1][1] != 2 and events[i + 1][0] - t < _SAME_MOMENT:
+            emit = False              # still inside the same trade: wait for its other half
+        if emit and t >= first_seen:
+            pts.append((t, float(cash + holdings + treasury)))
+
+    # Each point is held until the next event, so draw a flat run into every change: that makes the line a true step curve
+    # rather than slanting between distant events.
+    stepped: list[tuple[datetime, float]] = []
+    for t, v in pts:
+        if stepped and t > stepped[-1][0] and stepped[-1][1] != v:
+            stepped.append((t - timedelta(milliseconds=1), stepped[-1][1]))
+        stepped.append((t, v))
+    stepped.append((now, live))
+    stepped = _thin_series(stepped, points)
+    return [{"t": t.isoformat(), "net_worth": v} for t, v in stepped]
