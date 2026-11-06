@@ -85,6 +85,27 @@ def get_benchmark(db: Session = Depends(get_db)) -> dict:
     return cached_call(("markets-benchmark",), 60, lambda: fair_price_service.benchmark(db))
 
 
+@router.get("/by-ids", response_model=list[MarketSnapshotResponse])
+def get_markets_by_ids(
+    ids: str = Query(..., description="Comma-separated player ids (up to 150)."), db: Session = Depends(get_db)
+) -> list[MarketSnapshotResponse]:
+    """Snapshots for a specific set of players in one request -- the portfolio, open orders and tournament views need the
+    players THEY show, not a ranked page, and used to make one request per player. Registered above /{player_id}."""
+    wanted: list[uuid.UUID] = []
+    for raw in ids.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            wanted.append(uuid.UUID(raw))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Bad player id: {raw}")
+    if len(wanted) > 150:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Too many ids (max 150)")
+    key = ("markets-by-ids", tuple(sorted(wanted)))
+    return cached_call(key, 5, lambda: [MarketSnapshotResponse(**row) for row in market_data_service.get_market_snapshots_by_ids(db, wanted)])
+
+
 @router.get("/{player_id}", response_model=MarketSnapshotResponse)
 def get_market(player_id: uuid.UUID, db: Session = Depends(get_db)) -> MarketSnapshotResponse:
     player = db.get(Player, player_id)

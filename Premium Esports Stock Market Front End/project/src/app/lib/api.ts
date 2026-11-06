@@ -17,9 +17,62 @@ export function getToken(): string | null {
 }
 
 // Last good response per GET path, so a page you have already seen paints instantly while it refreshes in the
-// background (see usePolledFetch). Wiped whenever the signed-in account changes so one account's data can never show
-// up for another.
-export const responseCache = new Map<string, unknown>();
+// background (see usePolledFetch). It is kept in this tab's sessionStorage too, so even a full browser reload paints
+// from it. It is tied to the signed-in account (a tag of the token) and wiped whenever the account changes, so one
+// account's data can never show up for another.
+interface CacheEntry { data: unknown; at: number }
+const CACHE_KEY = 'forecast_response_cache_v1';
+const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+const CACHE_ENTRY_MAX_CHARS = 400_000;
+const CACHE_TOTAL_MAX_CHARS = 3_000_000;
+const cacheMem = new Map<string, CacheEntry>();
+let cacheHydrated = false;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+const tokenTag = () => (getToken() ?? 'guest').slice(-16);
+
+function hydrateCache() {
+  if (cacheHydrated) return;
+  cacheHydrated = true;
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return;
+    const blob = JSON.parse(raw) as { tag: string; entries: Record<string, CacheEntry> };
+    if (blob.tag !== tokenTag()) { sessionStorage.removeItem(CACHE_KEY); return; }
+    const now = Date.now();
+    for (const [k, e] of Object.entries(blob.entries)) if (now - e.at < CACHE_MAX_AGE_MS) cacheMem.set(k, e);
+  } catch { /* unreadable cache: start empty */ }
+}
+
+function schedulePersist() {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      const entries: Record<string, CacheEntry> = {};
+      let total = 0;
+      // Newest first, until the budget runs out.
+      for (const [k, e] of [...cacheMem.entries()].sort((a, b) => b[1].at - a[1].at)) {
+        const size = JSON.stringify(e.data).length;
+        if (size > CACHE_ENTRY_MAX_CHARS || total + size > CACHE_TOTAL_MAX_CHARS) continue;
+        entries[k] = e; total += size;
+      }
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ tag: tokenTag(), entries }));
+    } catch { /* storage full or unavailable: the in-memory cache still works */ }
+  }, 1000);
+}
+
+export const responseCache = {
+  get(path: string): unknown | undefined { hydrateCache(); return cacheMem.get(path)?.data; },
+  /** Milliseconds since this path was last fetched, or Infinity if never. */
+  age(path: string): number { hydrateCache(); const e = cacheMem.get(path); return e ? Date.now() - e.at : Infinity; },
+  set(path: string, data: unknown): void { hydrateCache(); cacheMem.set(path, { data, at: Date.now() }); schedulePersist(); },
+  clear(): void {
+    cacheMem.clear();
+    cacheHydrated = true;
+    try { sessionStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
+  },
+};
 
 export function setToken(token: string | null): void {
   if (token) localStorage.setItem(TOKEN_KEY, token);

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { ArrowUpRight, ArrowDownRight, ChevronRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { Spinner } from './Spinner';
 import { useDayChange, useMarkets, useMarketsByIds, useMyPositions, usePickLiveTournament, useTournamentsList } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
@@ -45,12 +46,12 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
   const { data: topPage, loading: marketsLoading } = useMarkets(1, 4, 'price_desc');
   const topMovers = topPage.items;
   const { data: serverDay } = useDayChange();
-  const { data: positions } = useMyPositions();
+  const { data: positions, loading: positionsLoading } = useMyPositions();
   const { data: tournaments } = useTournamentsList();
   const liveTournament = usePickLiveTournament(tournaments);
 
   const holdingIds = useMemo(() => positions.map(p => p.player_id), [positions]);
-  const { data: marketById } = useMarketsByIds(holdingIds);
+  const { data: marketById, ready: marketsReady } = useMarketsByIds(holdingIds);
   const cashBalance = wallet ? toNumber(wallet.cash_balance) : 0;
 
   const holdings = positions
@@ -69,8 +70,12 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
     .filter((h): h is NonNullable<typeof h> => h !== null)
     .sort((a, b) => b.value - a.value);
 
-  const holdingsValue = holdings.reduce((s, h) => s + h.value, 0);
+  // Position values are priced by the server, so the total needs only the positions (not the per-player market data).
+  const valuesKnown = positions.every(p => p.value !== undefined);
+  const holdingsValue = positions.length > 0 && valuesKnown ? positions.reduce((s, p) => s + toNumber(p.value ?? 0), 0) : holdings.reduce((s, h) => s + h.value, 0);
   const totalPortfolio = cashBalance + holdingsValue;
+  // Until positions and wallet have arrived the total would be just the cash: show a spinner instead.
+  const calculating = positionsLoading || !wallet || (positions.length > 0 && !valuesKnown && !marketsReady);
   // The server rebuilds what the portfolio was worth 24h ago from the trade ledger, so buying or selling a stock today
   // (or adding cash) is never mistaken for a gain or loss. Before it loads, show 0 rather than a misleading estimate.
   const dayChange = serverDay ? serverDay.change : 0;
@@ -98,7 +103,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
               {user ? `${user.display_name.split(' ')[0]}'s Portfolio Value` : 'Portfolio Value'}
             </p>
             <p className="font-mono font-bold" style={{ fontSize: 'clamp(30px, 9.5vw, 46px)', letterSpacing: '-1.5px', color: 'var(--foreground)', lineHeight: 1.1, marginTop: 4 }}>
-              {usd(totalPortfolio)}
+              {calculating ? <Spinner size={28} label="Calculating…" /> : usd(totalPortfolio)}
             </p>
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               <span

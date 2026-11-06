@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../lib/auth';
+import { Spinner } from './Spinner';
 import { useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
@@ -40,12 +41,14 @@ const RANGE_LABEL: Record<Range, string> = { '1D': '1 Day', '7D': '7 Days', '1M'
 const RANGE_PHRASE: Record<Range, string> = { '1D': 'past 24 hours', '7D': 'past 7 days', '1M': 'past month', ALL: 'all time' };
 const RANGE_HOURS: Record<Range, number> = { '1D': 24, '7D': 168, '1M': 720, ALL: 0 };
 
-function Kpi({ label, value, sub, color, hint }: { label: string; value: string; sub?: string; color?: string; hint?: string }) {
+function Kpi({ label, value, sub, color, hint, loading }: { label: string; value: string; sub?: string; color?: string; hint?: string; loading?: boolean }) {
   return (
     <div className="rounded-2xl border border-border p-4" style={{ background: 'var(--card)' }} title={hint}>
       <p className="text-muted-foreground" style={{ fontSize: 12 }}>{label}</p>
-      <p className="font-mono font-bold mt-1 truncate" style={{ fontSize: 'clamp(16px, 4.5vw, 20px)', color: color ?? 'var(--foreground)' }}>{value}</p>
-      {sub && <p className="text-muted-foreground mt-0.5 truncate" style={{ fontSize: 11 }}>{sub}</p>}
+      {loading
+        ? <div className="mt-1.5" style={{ height: 28 }}><Spinner size={16} /></div>
+        : <p className="font-mono font-bold mt-1 truncate" style={{ fontSize: 'clamp(16px, 4.5vw, 20px)', color: color ?? 'var(--foreground)' }}>{value}</p>}
+      {sub && !loading && <p className="text-muted-foreground mt-0.5 truncate" style={{ fontSize: 11 }}>{sub}</p>}
     </div>
   );
 }
@@ -90,7 +93,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   // Looks up each held player by id, not from a ranked page of the market -- see useMarketsByIds' docstring in
   // lib/hooks.ts for why.
   const holdingIds = useMemo(() => positions.map(p => p.player_id), [positions]);
-  const { data: marketById, loading: marketsLoading } = useMarketsByIds(holdingIds);
+  const { data: marketById, ready: marketsReady } = useMarketsByIds(holdingIds);
 
   const cash = wallet ? toNumber(wallet.cash_balance) : 0;
   const lockedCash = wallet ? toNumber(wallet.held_balance) : 0; // cash tied up in open buy orders
@@ -127,12 +130,18 @@ export function Portfolio({ navigate, openPlayer }: Props) {
     return rows.sort(by[sort]);
   }, [positions, marketById, sort]);
 
-  const invested = holdings.reduce((s, h) => s + h.value, 0);
+  // What the shares are worth comes straight from the positions (the server prices each one), so the total does not have
+  // to wait for the per-player market data that only the rows below need. Falls back to the rows if a value is missing.
+  const valuesKnown = positions.every(p => p.value !== undefined);
+  const invested = positions.length > 0 && valuesKnown ? positions.reduce((s, p) => s + toNumber(p.value ?? 0), 0) : holdings.reduce((s, h) => s + h.value, 0);
   const total = invested + cash;
-  const loading = marketsLoading || positionsLoading;
+  // Until the positions and wallet have arrived (and, if a value is missing, the market data), the total would be just the
+  // cash: show a spinner instead of a number that is about to change.
+  const calculating = positionsLoading || !wallet || (positions.length > 0 && !valuesKnown && !marketsReady);
+  const rowsLoading = positionsLoading || (positions.length > 0 && holdings.length < positions.length && !marketsReady);
 
   // Net worth over time: a point whenever your cash, your shares, or the price of a stock you hold changed.
-  const { data: series } = useNetWorthSeries(RANGE_HOURS[range], 300);
+  const { data: series, loading: seriesLoading } = useNetWorthSeries(RANGE_HOURS[range], 300);
   const chart = useMemo(() => {
     const pts = (series?.points ?? []).map(p => ({ ts: new Date(p.t).getTime(), value: p.net_worth }));
     return pts.length >= 2 ? pts : [];
@@ -180,9 +189,9 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.06), rgba(155,111,255,0.04)), var(--card)' }}>
         <div className="p-5 sm:p-6 pb-3">
           <p className="text-muted-foreground" style={{ fontSize: 13 }}>Total value</p>
-          <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', letterSpacing: '-1px', lineHeight: 1.1, color: 'var(--foreground)' }}>{usd(total)}</p>
+          <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', letterSpacing: '-1px', lineHeight: 1.1, color: 'var(--foreground)' }}>{calculating ? <Spinner size={30} label="Calculating…" /> : usd(total)}</p>
           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-            {chart.length >= 2 && (
+            {!calculating && chart.length >= 2 && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(chartDelta), color: tone(chartDelta) }}>
                 {chartDelta >= 0 ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
                 {usdSigned(chartDelta)} ({pctText(chartPct)}) {RANGE_PHRASE[range]}
@@ -207,7 +216,9 @@ export function Portfolio({ navigate, openPlayer }: Props) {
               ))}
             </div>
           </div>
-          {chart.length < 2 ? (
+          {chart.length < 2 && seriesLoading ? (
+            <div className="flex justify-center items-center" style={{ height: compact ? 160 : 200 }}><Spinner size={20} label="Building your chart…" /></div>
+          ) : chart.length < 2 ? (
             <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Your value chart appears once you've made your first trade.</p>
           ) : (
             <div style={{ height: compact ? 160 : 200, position: 'relative' }}>
@@ -274,14 +285,14 @@ export function Portfolio({ navigate, openPlayer }: Props) {
 
       {/* Key numbers */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Invested" value={usd(invested)} sub={`${holdings.length} player${holdings.length === 1 ? '' : 's'}`} hint="What selling every share you hold would pay right now" />
-        <Kpi label="Cash" value={usd(cash)} sub={lockedCash > 0 ? `${usd(lockedCash)} tied up in orders` : 'Ready to invest'} color="var(--primary)" />
-        <Kpi label="Spendable" value={wallet ? usd(toNumber(wallet.available_balance)) : '—'} sub={lockedCash > 0 ? `after ${usd(lockedCash)} reserved for open orders` : 'Free to spend right now'} color="var(--gain)" hint="Cash you can spend right now: your cash minus what is reserved for open buy orders" />
+        <Kpi label="Invested" loading={calculating} value={usd(invested)} sub={`${holdings.length} player${holdings.length === 1 ? '' : 's'}`} hint="What selling every share you hold would pay right now" />
+        <Kpi label="Cash" loading={!wallet} value={usd(cash)} sub={lockedCash > 0 ? `${usd(lockedCash)} tied up in orders` : 'Ready to invest'} color="var(--primary)" />
+        <Kpi label="Spendable" loading={!wallet} value={wallet ? usd(toNumber(wallet.available_balance)) : '—'} sub={lockedCash > 0 ? `after ${usd(lockedCash)} reserved for open orders` : 'Free to spend right now'} color="var(--gain)" hint="Cash you can spend right now: your cash minus what is reserved for open buy orders" />
         <Kpi label="Dividends earned" value={stats ? usd(stats.dividend_earnings) : '—'} sub={stats ? `${stats.dividend_payouts} payout${stats.dividend_payouts === 1 ? '' : 's'}` : undefined} color="var(--gain)" />
       </div>
 
-      {loading && holdings.length === 0 ? (
-        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading your portfolio…</p>
+      {rowsLoading && holdings.length === 0 ? (
+        <div className="flex justify-center py-10"><Spinner size={20} label="Loading your holdings…" /></div>
       ) : holdings.length === 0 ? (
         <div className="rounded-2xl border border-border p-10 text-center" style={{ background: 'var(--card)' }}>
           <p className="text-foreground font-semibold" style={{ fontSize: 16 }}>You don't own any players yet</p>

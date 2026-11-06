@@ -178,7 +178,17 @@ def list_market_snapshots(db: Session, active_only: bool = True, search: str | N
     return list(data)
 
 
-def _list_market_snapshots_uncached(db: Session, active_only: bool = True, search: str | None = None) -> list[dict]:
+def get_market_snapshots_by_ids(db: Session, player_ids: list[uuid.UUID]) -> list[dict]:
+    """Snapshots for a specific set of players (active or not), in ONE batched computation -- what a portfolio / open-orders /
+    tournament view needs for the players it shows, instead of one request per player."""
+    if not player_ids:
+        return []
+    return _list_market_snapshots_uncached(db, active_only=False, search=None, player_ids=list(dict.fromkeys(player_ids)))
+
+
+def _list_market_snapshots_uncached(
+    db: Session, active_only: bool = True, search: str | None = None, player_ids: list[uuid.UUID] | None = None
+) -> list[dict]:
     """Batch-computed equivalent of calling get_market_snapshot() once per
     player. That naive per-player loop meant THREE separate DB
     round-trips per player (last price, price-24h-ago, 24h volume) -- for
@@ -198,6 +208,8 @@ def _list_market_snapshots_uncached(db: Session, active_only: bool = True, searc
     doing bulk-price lookups across the entire roster. Matches gamertag,
     real_name, or team, case-insensitively."""
     query = db.query(Player)
+    if player_ids is not None:
+        query = query.filter(Player.id.in_(player_ids))
     if active_only:
         query = query.filter(Player.is_active.is_(True))
     if search:

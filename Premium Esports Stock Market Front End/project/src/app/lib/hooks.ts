@@ -23,6 +23,9 @@ interface FetchState<T> {
   refetch: () => void;
 }
 
+const PUBLIC_PATH = /^\/(markets|tournaments|leaderboard|seasons)(\/|\?|$)/;
+const FRESH_MS = 15_000;
+
 function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number): FetchState<T> {
   // Stale-while-revalidate: a page you have visited before shows its last data immediately (no spinner, no empty
   // state) while fresh data loads behind it.
@@ -50,6 +53,10 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
       return;
     }
     let cancelled = false;
+    // Public data you looked at a few seconds ago is not fetched again on a quick revisit (it is already on screen, and
+    // the poll below keeps it current). Private data (your positions, wallet, orders) always refreshes, because a trade
+    // may have changed it.
+    if (tick === 0 && PUBLIC_PATH.test(path) && responseCache.age(path) < FRESH_MS) { setLoading(false); return; }
     if (responseCache.get(path) === undefined) setLoading(true);
     api
       .get<T>(path)
@@ -133,52 +140,19 @@ export function useBenchmark() {
   return usePolledFetch<MarketBenchmark | null>('/markets/benchmark', null, 10 * 60_000);
 }
 
-// Looks up a specific, bounded set of players by id -- for callers that
-// need particular players (a user's own portfolio holdings, a
-// tournament's entrants/placed competitors), NOT a ranked page of the
-// market. Before GET /markets was paginated, every caller just fetched
-// the whole roster and did `.find()`/`.get()` on it; now that the real
-// roster is 89k+ players, that same lookup has to go by id instead,
-// since the player someone holds/placed might not be anywhere near the
-// top of whatever page/sort the ranked listing would return. Uses the
-// existing GET /markets/{player_id} single-player endpoint, one request
-// per id, in parallel -- fine at the scale these callers actually need
-// (a person's own holdings, one tournament's field), unlike the full
-// roster this replaces.
-export function useMarketsByIds(ids: string[]): { data: Map<string, MarketSnapshot>; loading: boolean } {
+// Looks up a specific, bounded set of players by id -- for callers that need particular players (a user's own portfolio
+// holdings, a tournament's entrants), NOT a ranked page of the market (the roster is tens of thousands of players, and
+// the ones someone holds are not necessarily near the top of any ranked listing). Uses GET /markets/by-ids: ONE request
+// for the whole set instead of one per player.
+export function useMarketsByIds(ids: string[]): { data: Map<string, MarketSnapshot>; loading: boolean; ready: boolean } {
   const uniqueIds = useMemo(() => [...new Set(ids)].sort(), [ids.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [data, setData] = useState<Map<string, MarketSnapshot>>(new Map());
-  const [loading, setLoading] = useState(false);
-  const key = uniqueIds.join(',');
-
-  useEffect(() => {
-    if (uniqueIds.length === 0) {
-      setData(new Map());
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    const fetchAll = () => {
-      Promise.allSettled(uniqueIds.map(id => api.get<MarketSnapshot>(`/markets/${id}`))).then(results => {
-        if (cancelled) return;
-        const next = new Map<string, MarketSnapshot>();
-        results.forEach((r, i) => {
-          if (r.status === 'fulfilled') next.set(uniqueIds[i], r.value);
-        });
-        setData(next);
-        setLoading(false);
-      });
-    };
-    fetchAll();
-    const interval = setInterval(fetchAll, 15_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  return { data, loading };
+  // One request for the whole set (it used to be one per player), served from cache on a revisit, refreshed every 15s.
+  const path = uniqueIds.length > 0 ? `/markets/by-ids?ids=${uniqueIds.slice(0, 150).join(',')}` : null;
+  const { data: rows, loading } = usePolledFetch<MarketSnapshot[]>(path, [], 15_000);
+  const data = useMemo(() => new Map(rows.map(m => [m.id, m] as const)), [rows]);
+  // `ready`: every player asked for has arrived (nothing to wait for when none were asked for).
+  const ready = uniqueIds.length === 0 || uniqueIds.every(id => data.has(id));
+  return { data, loading, ready };
 }
 
 export function useMyPositions() {

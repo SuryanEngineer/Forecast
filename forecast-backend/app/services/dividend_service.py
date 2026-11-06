@@ -21,6 +21,39 @@ from app.models.tournament import PlacementResult, Tournament, TournamentStatus,
 from app.services import economic_params_service, position_service, wallet_service
 
 
+def _parse_iso(value) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def tournament_finished_at(db: Session, tournament: Tournament) -> datetime:
+    """When the tournament ACTUALLY finished, for dating its dividends: the end time of the last game anyone played in it
+    (from the per-game `sessionHistory` stored on the results), because the Osirion window a cup is tracked under can stay
+    open long after the last game. Falls back to the tournament's own end time, then to now. Never in the future.
+    (The per-game JSON is only scanned for small fields -- a few hundred result rows -- to keep this cheap.)"""
+    now = datetime.now(timezone.utc)
+    last_game: datetime | None = None
+    n = db.query(PlacementResult.id).filter(PlacementResult.tournament_id == tournament.id).limit(401).count()
+    if 0 < n <= 400:
+        for (raw,) in db.query(PlacementResult.raw_stats).filter(PlacementResult.tournament_id == tournament.id).all():
+            for session in (raw or {}).get("sessionHistory") or []:
+                ended = _parse_iso(session.get("endTime"))
+                if ended is not None and (last_game is None or ended > last_game):
+                    last_game = ended
+    if last_game is not None and last_game <= now:
+        return last_game
+    if tournament.end_time is not None:
+        end = tournament.end_time if tournament.end_time.tzinfo else tournament.end_time.replace(tzinfo=timezone.utc)
+        if end <= now:
+            return end
+    return now
+
+
 class PoolContext:
     """Everything needed to price a placement's dividend pool for one tournament, loaded once (so
     previewing a 100-team leaderboard doesn't re-query the economy parameters per row)."""
@@ -161,12 +194,7 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
 
     # The money is dated to when the tournament FINISHED, not to when this job happened to run (a retroactive or delayed
     # payout would otherwise show up as a jump today). Falls back to now when there is no end time or it is in the future.
-    now = datetime.now(timezone.utc)
-    paid_at = now
-    if tournament is not None and tournament.end_time is not None:
-        end = tournament.end_time if tournament.end_time.tzinfo else tournament.end_time.replace(tzinfo=timezone.utc)
-        if end <= now:
-            paid_at = end
+    paid_at = tournament_finished_at(db, tournament) if tournament is not None else datetime.now(timezone.utc)
 
     for user_id_str, amount in payouts:
         if amount <= 0:
