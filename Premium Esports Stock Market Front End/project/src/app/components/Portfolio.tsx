@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
-import { Area, AreaChart, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../lib/auth';
 import { useDayChange, useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
@@ -47,6 +47,34 @@ function Kpi({ label, value, sub, color, hint }: { label: string; value: string;
       {sub && <p className="text-muted-foreground mt-0.5 truncate" style={{ fontSize: 11 }}>{sub}</p>}
     </div>
   );
+}
+
+/** Y-axis for the value chart: pads the data's range so the line never hugs the edges (flat stretches still get some context
+ * above and below), then snaps to round tick values (1 / 2 / 2.5 / 5 x 10^n) so the labels read cleanly. */
+function niceAxis(values: number[]): { domain: [number, number]; ticks: number[]; step: number } {
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { domain: [0, 1], ticks: [0, 1], step: 1 };
+  const range = Math.max(hi - lo, Math.abs(hi) * 0.01, 1);   // a flat line still shows +/-0.5% around it
+  const pad = range * 0.18;
+  lo = Math.max(0, lo - pad); hi = hi + pad;
+  const raw = (hi - lo) / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = ([1, 2, 2.5, 5, 10].map(m => m * mag).find(m => m >= raw)) ?? raw;
+  const first = Math.floor(lo / step) * step, last = Math.ceil(hi / step) * step;
+  const ticks: number[] = [];
+  for (let v = first; v <= last + step / 2; v += step) ticks.push(Math.round(v / step) * step);
+  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step };
+}
+
+/** Compact dollar label with just enough decimals that neighbouring ticks stay distinct ($99.5K, $100K, $100.5K). */
+function axisMoney(v: number, step: number): string {
+  const unit = Math.abs(v) >= 1e6 || step >= 1e6 ? 1e6 : Math.abs(v) >= 1e4 || step >= 1e3 ? 1e3 : 1;
+  const suffix = unit === 1e6 ? 'M' : unit === 1e3 ? 'K' : '';
+  const u = step / unit;
+  let d = 0;
+  while (d < 3 && Math.abs(u * 10 ** d - Math.round(u * 10 ** d)) > 1e-6) d++;
+  if (unit === 1) d = u >= 1 ? 0 : 2;
+  return `$${(v / unit).toFixed(d)}${suffix}`;
 }
 
 export function Portfolio({ navigate, openPlayer }: Props) {
@@ -133,6 +161,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       .filter(m => m.ts >= chart[0].ts && m.ts <= chart[chart.length - 1].ts)
       .map(m => ({ ...m, value: valueAt(m.ts) }));
   }, [series, chart]);
+  const axis = useMemo(() => niceAxis(chart.map(c => c.value)), [chart]);
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
 
@@ -190,9 +219,9 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           {chart.length < 2 ? (
             <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Your value chart appears once you've made your first trade.</p>
           ) : (
-            <div style={{ height: compact ? 130 : 170, position: 'relative' }}>
+            <div style={{ height: compact ? 160 : 200, position: 'relative' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chart} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                <AreaChart data={chart} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="pfNw" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={chartColor} stopOpacity={0.3} />
@@ -200,7 +229,8 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={tickFmt} tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} minTickGap={28} />
-                  <YAxis hide domain={['auto', 'auto']} />
+                  <CartesianGrid vertical={false} stroke="rgba(125,143,174,0.14)" />
+                  <YAxis orientation="left" domain={axis.domain} ticks={axis.ticks} width={compact ? 44 : 52} tick={{ fontSize: 10, fill: '#7d8fae' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => axisMoney(v, axis.step)} />
                   <Tooltip
                     formatter={(v: number) => [usd(v), 'Net worth']}
                     labelFormatter={(l: number) => new Date(l).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
