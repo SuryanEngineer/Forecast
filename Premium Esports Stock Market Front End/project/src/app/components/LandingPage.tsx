@@ -12,8 +12,9 @@ const STEPS = [
 
 /** What a logged-out visitor sees first: what Forecast is, a live look at the market, and two ways in. Deliberately short. */
 export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin: () => void }) {
-  const { data: movers } = useMarkets(1, 5, 'gainers');
+  const { data: movers } = useMarkets(1, 5, 'price');
   const [legal, setLegal] = useState<LegalDoc | null>(null);
+  const [showEmail, setShowEmail] = useState(false);
   const rows = movers.items.slice(0, 5);
 
   return (
@@ -59,7 +60,7 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
         {rows.length > 0 && (
           <section className="rounded-2xl border border-border overflow-hidden mb-12" style={{ background: 'var(--card)' }}>
             <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-              <p className="font-semibold text-foreground" style={{ fontSize: 14 }}>Top movers right now</p>
+              <p className="font-semibold text-foreground" style={{ fontSize: 14 }}>Highest-priced players</p>
               <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>Live prices</p>
             </div>
             {rows.map((m, i) => {
@@ -92,16 +93,26 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
 
       <footer className="w-full max-w-[920px] mx-auto px-6 pb-8 text-center text-muted-foreground" style={{ fontSize: 12, lineHeight: 1.7 }}>
         <p>
-          <button onClick={() => setLegal('terms')} className="hover:text-foreground underline-offset-2 hover:underline">Terms</button>
+          <button onClick={() => setLegal('terms')} className="hover:text-foreground underline-offset-2 hover:underline" style={{ fontSize: 12 }}>Terms</button>
           {' · '}
-          <button onClick={() => setLegal('privacy')} className="hover:text-foreground underline-offset-2 hover:underline">Privacy</button>
+          <button onClick={() => setLegal('privacy')} className="hover:text-foreground underline-offset-2 hover:underline" style={{ fontSize: 12 }}>Privacy</button>
           {' · '}
-          <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-foreground underline-offset-2 hover:underline">{SUPPORT_EMAIL}</a>
+          <button onClick={() => setShowEmail(true)} className="hover:text-foreground underline-offset-2 hover:underline" style={{ fontSize: 12 }}>{SUPPORT_EMAIL}</button>
         </p>
         <p>A game played with virtual cash. Not affiliated with or endorsed by Epic Games.</p>
       </footer>
 
       {legal && <LegalModal doc={legal} onClose={() => setLegal(null)} />}
+      {showEmail && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 modal-overlay" style={{ background: 'rgba(2,6,16,0.78)' }} onClick={() => setShowEmail(false)}>
+          <div className="w-full max-w-[340px] rounded-2xl border border-border p-6 text-center" style={{ background: 'var(--card)' }} onClick={e => e.stopPropagation()}>
+            <p className="text-foreground font-bold" style={{ fontSize: 16 }}>Contact us</p>
+            <p className="text-muted-foreground mt-1" style={{ fontSize: 12.5 }}>Questions, feedback or problems? Email us at</p>
+            <p className="font-mono font-semibold text-foreground mt-2 select-all break-all" style={{ fontSize: 14 }}>{SUPPORT_EMAIL}</p>
+            <button onClick={() => setShowEmail(false)} className="mt-4 px-5 py-2 rounded-xl font-semibold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 13 }}>Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
