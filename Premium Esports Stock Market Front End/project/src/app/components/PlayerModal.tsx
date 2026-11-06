@@ -20,6 +20,7 @@ import { tournamentDisplayName } from '../lib/tournamentName';
 import { PlayerAvatar } from './Dashboard';
 import { HelpButton, VerifiedBadge } from './HelpModal';
 import { OpenOrders, notifyOrdersChanged } from './OpenOrders';
+import { useGuest } from '../lib/guest';
 
 // Optional time limit for a limit order: one tap, "until cancelled" is the default.
 // Largest order the form accepts (the backend enforces the same cap).
@@ -39,9 +40,6 @@ interface Props {
   onClose: () => void;
   /** Opens a tournament from this player's history, scrolled to this player's team in the standings. */
   onOpenTournament?: (tournament: TournamentResponse, focusPlayerId: string) => void;
-  /** Guest mode: show prices, order book and history, but no trading or personal data. */
-  readOnly?: boolean;
-  onLogin?: () => void;
 }
 
 /** The real price of a quick order of this size (GET /markets/{id}/quote): the resting orders it would take first, then the
@@ -236,7 +234,8 @@ function RecentTrades({ trades }: { trades: TradeResponse[] }) {
   );
 }
 
-export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = false, onLogin }: Props) {
+export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
+  const { isGuest, requireAccount } = useGuest();
   const { refreshWallet } = useAuth();
   const [tournamentHistory, setTournamentHistory] = useState<PlayerTournamentHistoryResponse | null>(null);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
@@ -279,7 +278,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
       setMarket(m);
       setRecentTrades(trades);
       setBook(bk);
-      if (!readOnly) {
+      if (!isGuest) {
         try {
           const p = await api.get<PositionResponse>(`/players/${playerId}/position`);
           setPosition(p);
@@ -346,13 +345,14 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
 
   const price = toNumber(market.last_price);
   // Selling is limited to shares you own and haven't already listed in another sell order; buying to MAX_ORDER_SHARES.
-  const sellCap = Math.max(0, position?.available_quantity ?? 0);
+  const sellCap = isGuest ? MAX_ORDER_SHARES : Math.max(0, position?.available_quantity ?? 0);
   const orderCap = orderSide === 'sell' ? Math.max(1, sellCap) : MAX_ORDER_SHARES;
   const changePct = toNumber(market.change_pct);
   const isUp = changePct >= 0;
   const color = colorForId(market.id);
 
   async function handleQuick(side: 'buy' | 'sell') {
+    if (isGuest) { requireAccount(`${side} shares`); return; }
     setSubmitting(true);
     setMessage(null);
     try {
@@ -367,6 +367,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
   }
 
   async function handleLimitOrder() {
+    if (isGuest) { requireAccount('place orders'); return; }
     const priceVal = parseFloat(limitPrice);
     const shares = parseInt(orderShares, 10);
     if (!priceVal || !shares || priceVal <= 0 || shares <= 0) return;
@@ -508,7 +509,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
               </p>
             </div>
 
-            {!readOnly && <OpenOrders playerId={playerId} />}
+            <OpenOrders playerId={playerId} />
 
             <OrderBook
               book={book}
@@ -520,17 +521,6 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
             />
             <RecentTrades trades={recentTrades} />
 
-            {readOnly ? (
-              <div className="rounded-xl p-4 text-center" style={{ background: 'var(--muted)', border: '1px solid var(--border)' }}>
-                <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>Log in to trade</p>
-                <p className="text-muted-foreground mt-1" style={{ fontSize: 12, lineHeight: 1.5 }}>You are in guest mode, so trading is switched off.</p>
-                {onLogin && (
-                  <button onClick={onLogin} className="mt-3 px-5 py-2 rounded-xl font-bold" style={{ fontSize: 13.5, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}>
-                    Log in
-                  </button>
-                )}
-              </div>
-            ) : (<>
             <div className="flex rounded-xl overflow-hidden border border-border">
               <button
                 onClick={() => setTradeMode('quick')}
@@ -583,7 +573,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
                   />
                   <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>
                     Buy up to {MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order
-                    {sellCap > 0 ? ` · sell up to ${sellCap.toLocaleString('en-US')} (what you own)` : ' · you have no shares to sell'}
+                    {isGuest ? '' : sellCap > 0 ? ` · sell up to ${sellCap.toLocaleString('en-US')} (what you own)` : ' · you have no shares to sell'}
                   </p>
                 </div>
                 <div className="rounded-xl p-3 border border-border" style={{ background: 'var(--muted)' }}>
@@ -631,7 +621,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
                   {submitting ? 'Placing…' : `⚡ Quick Buy ${quickQty} Share${quickQty !== 1 ? 's' : ''}`}
                 </button>
                 <button
-                  disabled={submitting || !position || position.available_quantity < quickQty}
+                  disabled={submitting || (!isGuest && (!position || position.available_quantity < quickQty))}
                   onClick={() => handleQuick('sell')}
                   className="w-full py-3 rounded-xl font-bold transition-all"
                   style={{
@@ -639,12 +629,12 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
                     background: 'rgba(255,61,92,0.12)',
                     color: 'var(--loss)',
                     border: '1.5px solid rgba(255,61,92,0.3)',
-                    opacity: !position || position.available_quantity < quickQty ? 0.5 : 1,
+                    opacity: !isGuest && (!position || position.available_quantity < quickQty) ? 0.5 : 1,
                   }}
                 >
                   ⚡ Quick Sell {quickQty} Share{quickQty !== 1 ? 's' : ''}
                 </button>
-                {position && position.available_quantity < quickQty && (
+                {!isGuest && position && position.available_quantity < quickQty && (
                   <p className="text-center" style={{ fontSize: 11, color: 'var(--loss)' }}>
                     {sellCap > 0 ? `You can only sell up to ${sellCap.toLocaleString('en-US')} share${sellCap === 1 ? '' : 's'}; lower the amount to sell.` : "You don't have any shares to sell."}
                   </p>
@@ -717,7 +707,7 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
                     style={{ background: 'var(--muted)', fontSize: 16 }}
                   />
                   <p className="text-muted-foreground text-center mt-1" style={{ fontSize: 11 }}>
-                    {orderSide === 'sell'
+                    {orderSide === 'sell' && !isGuest
                       ? (sellCap > 0 ? `You can sell up to ${sellCap.toLocaleString('en-US')} share${sellCap === 1 ? '' : 's'} (the ones you own and haven't already listed)` : "You don't have any shares available to sell")
                       : `Up to ${MAX_ORDER_SHARES.toLocaleString('en-US')} shares per order`}
                   </p>
@@ -766,7 +756,6 @@ export function PlayerModal({ playerId, onClose, onOpenTournament, readOnly = fa
                 </button>
               </div>
             )}
-            </>)}
           </div>
         </div>
       </motion.div>

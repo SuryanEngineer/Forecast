@@ -64,9 +64,9 @@ function SubmitButton({ busy, children }: { busy: boolean; children: React.React
   );
 }
 
-export function AuthScreen({ onBack }: { onBack?: () => void } = {}) {
+export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => void; initialMode?: 'login' | 'register' } = {}) {
   const { login, register, requestPasswordReset, confirmPasswordReset, error } = useAuth();
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');

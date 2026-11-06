@@ -6,7 +6,8 @@ import { useOpenOrderCount } from './components/OpenOrders';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuthScreen } from './components/AuthScreen';
 import { LandingPage } from './components/LandingPage';
-import { GuestApp } from './components/GuestApp';
+import { AccountPrompt, AccountRequired } from './components/AccountPrompt';
+import { GuestContext } from './lib/guest';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { Markets } from './components/Markets';
@@ -26,8 +27,10 @@ import type { TournamentResponse } from './lib/types';
 
 type Page = 'dashboard' | 'markets' | 'portfolio' | 'leaderboards' | 'tournaments' | 'stats' | 'settings';
 
-function AuthenticatedApp() {
+function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'register') => void } }) {
   const { user, justRegistered, wallet } = useAuth();
+  const isGuest = !!guest;
+  const [prompt, setPrompt] = useState<string | null>(null);
   const compact = useCompact();
   const [menuOpen, setMenuOpen] = useState(false);
   const openOrders = useOpenOrderCount();
@@ -58,8 +61,8 @@ function AuthenticatedApp() {
   // reopen it for them. `user` is guaranteed non-null here (see Root
   // below), and `useState(() => ...)` only reads `justRegistered` once,
   // at mount, so it can't flip back on later re-renders.
-  const introKey = introSeenKey(user!.id);
-  const [showIntro, setShowIntro] = useState(() => justRegistered);
+  const introKey = introSeenKey(user?.id ?? 'guest');
+  const [showIntro, setShowIntro] = useState(() => justRegistered && !isGuest);
   const [introStep, setIntroStep] = useState(0);
   const [showGuide, setShowGuide] = useState(false);
 
@@ -77,7 +80,10 @@ function AuthenticatedApp() {
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
   const goTo = (page: string) => { setCurrentPage(page as Page); setMenuOpen(false); };
 
+  const guestValue = { isGuest, requireAccount: (f?: string) => { if (isGuest) setPrompt(f ?? ''); }, goLogin: guest?.goLogin ?? (() => {}) };
+
   return (
+    <GuestContext.Provider value={guestValue}>
     <div
       className={`dark overflow-hidden flex font-sans ${compact ? 'flex-col' : ''}`}
       style={{ height: '100dvh', background: 'radial-gradient(ellipse at 15% 50%, rgba(0,200,255,0.03) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(155,111,255,0.04) 0%, transparent 50%), var(--background)' }}
@@ -126,12 +132,12 @@ function AuthenticatedApp() {
         {currentPage === 'markets' && (
           <Markets navigate={navigate} initialSearch={marketSearch} onSearchChange={setMarketSearch} />
         )}
-        {currentPage === 'portfolio' && (
-          <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />
-        )}
+        {currentPage === 'portfolio' && (isGuest
+          ? <AccountRequired title="My Portfolio" text="Create a free account to start with virtual cash, buy shares, and track everything you own here." />
+          : <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />)}
         {currentPage === 'leaderboards' && <Leaderboards openPlayer={setPlayerModalId} openTeam={setTeamModalUserId} />}
-        {currentPage === 'stats' && <StatsPage />}
-        {currentPage === 'settings' && <SettingsPage />}
+        {currentPage === 'stats' && (isGuest ? <AccountRequired title="My Stats" text="Your trading history, earnings and records show up here once you have an account." /> : <StatsPage />)}
+        {currentPage === 'settings' && (isGuest ? <AccountRequired title="Settings" text="Create an account to manage your profile and settings." /> : <SettingsPage />)}
         {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); }} />}
       </main>
 
@@ -172,14 +178,16 @@ function AuthenticatedApp() {
           onReplayTour={() => { setShowGuide(false); openIntroAt(0); }}
         />
       )}
+      {prompt !== null && <AccountPrompt feature={prompt || undefined} onClose={() => setPrompt(null)} />}
     </div>
+    </GuestContext.Provider>
   );
 }
 
 function Root() {
   const { isAuthenticated, isLoading } = useAuth();
   // Logged-out visitors start on the landing page; from there they can browse as a guest or log in.
-  const [screen, setScreen] = useState<'landing' | 'login' | 'guest'>('landing');
+  const [screen, setScreen] = useState<'landing' | 'login' | 'register' | 'guest'>('landing');
 
   if (isLoading) {
     return (
@@ -190,8 +198,8 @@ function Root() {
   }
 
   if (isAuthenticated) return <AuthenticatedApp />;
-  if (screen === 'login') return <AuthScreen onBack={() => setScreen('landing')} />;
-  if (screen === 'guest') return <GuestApp onLogin={() => setScreen('login')} onBack={() => setScreen('landing')} />;
+  if (screen === 'login' || screen === 'register') return <AuthScreen initialMode={screen} onBack={() => setScreen('landing')} />;
+  if (screen === 'guest') return <AuthenticatedApp guest={{ goLogin: (mode = 'login') => setScreen(mode) }} />;
   return <LandingPage onGuest={() => setScreen('guest')} onLogin={() => setScreen('login')} />;
 }
 

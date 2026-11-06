@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import type {
   AnnouncedTournament,
   CalendarTournamentResponse,
@@ -164,7 +164,7 @@ export function useMarketsByIds(ids: string[]): { data: Map<string, MarketSnapsh
 }
 
 export function useMyPositions() {
-  return usePolledFetch<PositionResponse[]>('/players/positions/me', [], 15_000);
+  return usePolledFetch<PositionResponse[]>(getToken() ? '/players/positions/me' : null, [], 15_000);
 }
 
 export function useTournamentsList() {
@@ -185,7 +185,7 @@ export interface DayChange { net_worth: number; net_worth_then: number; change: 
 
 /** Real 24h change in the user's net worth (trades / deposits netted out, dividends counted) -- computed server-side. */
 export function useDayChange() {
-  return usePolledFetch<DayChange | null>('/wallet/day-change', null, 30_000);
+  return usePolledFetch<DayChange | null>(getToken() ? '/wallet/day-change' : null, null, 30_000);
 }
 
 export interface NetWorthPoint { t: string; net_worth: number }
@@ -193,7 +193,7 @@ export interface NetWorthPoint { t: string; net_worth: number }
 /** The user's net worth at evenly spaced moments over the last `hours`, rebuilt server-side from the ledger. */
 export function useNetWorthSeries(hours: number, points: number, enabled = true) {
   return usePolledFetch<{ points: NetWorthPoint[] }>(
-    enabled ? `/wallet/net-worth-series?hours=${hours}&points=${points}` : '/wallet/net-worth-series?hours=1&points=2',
+    enabled && getToken() ? `/wallet/net-worth-series?hours=${hours}&points=${points}` : null,
     { points: [] }, 60_000,
   );
 }
@@ -219,7 +219,7 @@ export function useSeasonList() {
 
 // Lifetime stats for the logged-in user -- GET /stats/me.
 export function useMyStats() {
-  return usePolledFetch<UserStats | null>('/stats/me', null, 60_000);
+  return usePolledFetch<UserStats | null>(getToken() ? '/stats/me' : null, null, 60_000);
 }
 
 // Polls the live standings for one tournament every 8s -- see

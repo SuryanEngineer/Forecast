@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import { Home, TrendingUp, Briefcase, Trophy, Zap, LogOut, HelpCircle, BarChart3, Settings, X, MessageSquare } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { useGuest } from '../lib/guest';
 import { toNumber } from '../lib/types';
 import { UserTag } from './UserTag';
 import { useOpenOrderCount } from './OpenOrders';
@@ -42,6 +43,7 @@ function initials(name: string): string {
 
 export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onShowFeedback, variant = 'rail', onClose }: SidebarProps) {
   const { user, wallet, logout } = useAuth();
+  const { isGuest, goLogin } = useGuest();
   const activePage = currentPage === 'player' ? 'markets' : currentPage;
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
   const openOrders = useOpenOrderCount();
@@ -126,12 +128,12 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
       </div>
 
       {/* Cash balance */}
-      {cash !== null && (
+      {(cash !== null || isGuest) && (
         <div className="px-4 pb-2">
           <div className="rounded-xl border border-border p-3" style={{ background: 'rgba(0,0,0,0.3)' }}>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>Cash to Invest</p>
             <p className="font-mono font-bold mt-0.5" style={{ fontSize: 16, color: 'var(--foreground)' }}>
-              {usd(cash)}
+              {cash !== null ? usd(cash) : '—'}
             </p>
           </div>
         </div>
@@ -139,6 +141,16 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
 
       {/* User */}
       <div className="border-t border-border p-3">
+        {isGuest ? (
+          <div className="p-2.5 rounded-xl" style={{ background: 'rgba(0,200,255,0.06)', border: '1px solid rgba(0,200,255,0.18)' }}>
+            <p className="font-medium" style={{ fontSize: 13, color: 'var(--foreground)' }}>Guest mode</p>
+            <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.4 }}>Log in or create an account to trade.</p>
+            <div className="flex gap-1.5 mt-2">
+              <button onClick={() => goLogin('login')} className="flex-1 py-1.5 rounded-lg font-semibold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 12 }}>Log in</button>
+              <button onClick={() => goLogin('register')} className="flex-1 py-1.5 rounded-lg font-semibold" style={{ fontSize: 12, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}>Sign up</button>
+            </div>
+          </div>
+        ) : (
         <div className="flex items-center gap-1">
           <button
             onClick={() => navigate('settings')}
@@ -165,6 +177,7 @@ export function Sidebar({ currentPage, navigate, onShowIntro, onShowLegal, onSho
             <LogOut className="w-4 h-4" />
           </button>
         </div>
+        )}
         <div className="flex justify-center gap-3 mt-1.5 text-muted-foreground" style={{ fontSize: 10 }}>
           <button onClick={() => onShowLegal('terms')} className="hover:underline">Terms</button>
           <button onClick={() => onShowLegal('privacy')} className="hover:underline">Privacy</button>

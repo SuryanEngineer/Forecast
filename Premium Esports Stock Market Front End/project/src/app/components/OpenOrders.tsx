@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, getToken } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useMarketsByIds } from '../lib/hooks';
 import { toNumber, type OrderResponse } from '../lib/types';
@@ -19,6 +19,7 @@ export function notifyOrdersChanged() {
 export function useOpenOrders(playerId?: string): { orders: OrderResponse[] | null; reload: () => void } {
   const [orders, setOrders] = useState<OrderResponse[] | null>(null);
   const load = useCallback(() => {
+    if (!getToken()) { setOrders([]); return; } // guest mode: no account, no orders
     api.get<OrderResponse[]>(playerId ? `/orders/me?player_id=${playerId}` : '/orders/me')
       .then(rows => setOrders(rows.filter(o => o.order_kind === 'limit' && (o.status === 'open' || o.status === 'partially_filled'))))
       .catch(() => setOrders(prev => prev ?? []));
