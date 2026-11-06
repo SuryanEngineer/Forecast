@@ -273,16 +273,23 @@ export function NextEventSection({ openTournament }: { openTournament: (tourname
   const { data: calendar } = useTournamentCalendar(true);
   const { data: announced } = useAnnouncedTournaments();
   const live = calendar.filter(t => t.phase === 'live' || t.phase === 'finalizing').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
+  const lastCompleted = calendar.filter(t => t.phase === 'completed').sort((a, b) => startMs(b.start_time) - startMs(a.start_time))[0];
+  const lastCard = lastCompleted && (
+    <div className="space-y-2.5">
+      <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Last completed event</p>
+      <CalendarRow tournament={lastCompleted} onOpen={() => openTournament(calendarToTournament(lastCompleted))} />
+    </div>
+  );
   if (live.length > 0) {
-    return <div className="space-y-4">{live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(calendarToTournament(t))} />)}</div>;
+    return <div className="space-y-4">{live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(calendarToTournament(t))} />)}{lastCard}</div>;
   }
   const upcoming = [
     ...calendar.filter(t => t.phase === 'upcoming').map(t => ({ start: startMs(t.start_time), tracked: t, announced: undefined as AnnouncedTournament | undefined })),
     ...announced.map(e => ({ start: startMs(e.start_time), tracked: undefined as CalendarTournamentResponse | undefined, announced: e })),
   ].sort((a, b) => a.start - b.start);
   const next = upcoming[0];
-  if (!next) return null;
-  return next.tracked ? (
+  if (!next) return lastCard ? <div>{lastCard}</div> : null;
+  const nextCard = next.tracked ? (
     <FeaturedEvent
       name={next.tracked.name} type={next.tracked.tournament_type} region={next.tracked.region} startTime={next.tracked.start_time}
       pool={next.tracked.total_dividend_pool !== null ? toNumber(next.tracked.total_dividend_pool) : null}
@@ -295,6 +302,7 @@ export function NextEventSection({ openTournament }: { openTournament: (tourname
       note={!next.announced!.finals_confirmed ? 'Announced: the date may change until the Finals are published.' : undefined}
     />
   );
+  return <div className="space-y-4">{nextCard}{lastCard}</div>;
 }
 
 export function Tournaments({ openTournament }: Props) {
