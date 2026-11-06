@@ -262,6 +262,41 @@ function AnnouncedRow({ event }: { event: AnnouncedTournament }) {
 
 const startMs = (iso: string | null) => (iso ? new Date(iso).getTime() : Number.POSITIVE_INFINITY);
 
+const calendarToTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
+  id: t.id, name: t.name, tournament_type: t.tournament_type, region: t.region, start_time: t.start_time, end_time: t.end_time,
+  prize_pool: t.total_dividend_pool, status: t.status, phase: t.phase, created_at: t.start_time ?? new Date().toISOString(),
+});
+
+/** The top of the Events page, reusable elsewhere (the landing page): live events with their leaderboard in red, or, when
+ * nothing is live, the next event with its countdown. Same cards, same rules as the Events page. */
+export function NextEventSection({ openTournament }: { openTournament: (tournament: TournamentResponse) => void }) {
+  const { data: calendar } = useTournamentCalendar(true);
+  const { data: announced } = useAnnouncedTournaments();
+  const live = calendar.filter(t => t.phase === 'live' || t.phase === 'finalizing').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
+  if (live.length > 0) {
+    return <div className="space-y-4">{live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(calendarToTournament(t))} />)}</div>;
+  }
+  const upcoming = [
+    ...calendar.filter(t => t.phase === 'upcoming').map(t => ({ start: startMs(t.start_time), tracked: t, announced: undefined as AnnouncedTournament | undefined })),
+    ...announced.map(e => ({ start: startMs(e.start_time), tracked: undefined as CalendarTournamentResponse | undefined, announced: e })),
+  ].sort((a, b) => a.start - b.start);
+  const next = upcoming[0];
+  if (!next) return null;
+  return next.tracked ? (
+    <FeaturedEvent
+      name={next.tracked.name} type={next.tracked.tournament_type} region={next.tracked.region} startTime={next.tracked.start_time}
+      pool={next.tracked.total_dividend_pool !== null ? toNumber(next.tracked.total_dividend_pool) : null}
+      onOpen={() => openTournament(calendarToTournament(next.tracked!))}
+    />
+  ) : (
+    <FeaturedEvent
+      name={next.announced!.name} type={next.announced!.tournament_type} region={next.announced!.region} startTime={next.announced!.start_time}
+      pool={next.announced!.total_dividend_pool !== null ? toNumber(next.announced!.total_dividend_pool) : null}
+      note={!next.announced!.finals_confirmed ? 'Announced: the date may change until the Finals are published.' : undefined}
+    />
+  );
+}
+
 export function Tournaments({ openTournament }: Props) {
   // One calendar: live events first (red), then the next event (big card), then everything else still to come in date
   // order, then events awaiting final results, then completed events (newest first).

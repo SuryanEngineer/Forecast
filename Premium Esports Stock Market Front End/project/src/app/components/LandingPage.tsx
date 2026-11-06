@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useMarkets } from '../lib/hooks';
-import { toNumber } from '../lib/types';
+import { toNumber, type TournamentResponse } from '../lib/types';
 import { usd } from '../lib/format';
 import { LegalModal, SUPPORT_EMAIL, type LegalDoc } from './LegalModal';
 import { PlayerModal } from './PlayerModal';
+import { TournamentDetailModal } from './TournamentDetailModal';
+import { NextEventSection } from './Tournaments';
 import { AccountPrompt } from './AccountPrompt';
 import { GuestContext } from '../lib/guest';
 
@@ -15,11 +17,13 @@ const STEPS = [
 
 /** What a logged-out visitor sees first: what Forecast is, a live look at the market, and two ways in. Deliberately short. */
 export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin: (mode?: 'login' | 'register') => void }) {
-  const { data: movers } = useMarkets(1, 5, 'price');
+  const { data: movers } = useMarkets(1, 5, 'price_desc');
   const [legal, setLegal] = useState<LegalDoc | null>(null);
   const [showEmail, setShowEmail] = useState(false);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<string | null>(null);
+  const [tournament, setTournament] = useState<TournamentResponse | null>(null);
+  const [focusPlayerId, setFocusPlayerId] = useState<string | null>(null);
   const rows = movers.items.slice(0, 5);
 
   return (
@@ -46,14 +50,14 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
           </p>
           <div className="flex items-center justify-center gap-3 mt-7 flex-wrap">
             <button
-              onClick={onGuest}
+              onClick={() => onLogin()}
               className="px-6 py-3 rounded-xl font-bold transition-opacity hover:opacity-90"
               style={{ fontSize: 15, background: 'linear-gradient(135deg, var(--primary), var(--accent))', color: '#fff' }}
             >
-              Guest mode
-            </button>
-            <button onClick={() => onLogin()} className="px-6 py-3 rounded-xl font-bold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 15 }}>
               Log in
+            </button>
+            <button onClick={onGuest} className="px-6 py-3 rounded-xl font-bold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 15 }}>
+              Guest mode
             </button>
           </div>
           <p className="text-muted-foreground mt-3" style={{ fontSize: 12.5 }}>Guest mode lets you browse the market without an account.</p>
@@ -62,7 +66,7 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
         {rows.length > 0 && (
           <section className="rounded-2xl border border-border overflow-hidden mb-12" style={{ background: 'var(--card)' }}>
             <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-              <p className="font-semibold text-foreground" style={{ fontSize: 14 }}>Highest-priced players</p>
+              <p className="font-semibold text-foreground" style={{ fontSize: 14 }}>⭐ Top Players</p>
               <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>Live prices</p>
             </div>
             {rows.map((m, i) => {
@@ -81,6 +85,10 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
             })}
           </section>
         )}
+
+        <section className="mb-12">
+          <NextEventSection openTournament={t => { setFocusPlayerId(null); setTournament(t); }} />
+        </section>
 
         <section className="grid gap-3 sm:grid-cols-3 mb-14">
           {STEPS.map(s => (
@@ -105,6 +113,16 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
       </footer>
 
       {legal && <LegalModal doc={legal} onClose={() => setLegal(null)} />}
+      {tournament && (
+        <GuestContext.Provider value={{ isGuest: true, requireAccount: f => setPrompt(f ?? ''), goLogin: onLogin }}>
+          <TournamentDetailModal
+            tournament={tournament}
+            focusPlayerId={focusPlayerId ?? undefined}
+            onClose={() => { setTournament(null); setFocusPlayerId(null); }}
+            onOpenPlayer={id => { setTournament(null); setFocusPlayerId(null); setPlayerId(id); }}
+          />
+        </GuestContext.Provider>
+      )}
       {playerId && (
         <GuestContext.Provider value={{ isGuest: true, requireAccount: f => setPrompt(f ?? ''), goLogin: onLogin }}>
           <PlayerModal playerId={playerId} onClose={() => setPlayerId(null)} />
