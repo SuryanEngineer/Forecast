@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../lib/auth';
-import { useDayChange, useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
+import { useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
 import { colorForId } from '../lib/colors';
 import { useCompact } from '../lib/useCompact';
@@ -37,6 +37,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 type Range = '1D' | '7D' | '1M' | 'ALL';
 const RANGE_LABEL: Record<Range, string> = { '1D': '1 Day', '7D': '7 Days', '1M': '1 Month', ALL: 'All' };
 // Every range comes from the server's exact rebuild of your net worth (cash + shares x prices, moment by moment); 0 hours = since the account began.
+const RANGE_PHRASE: Record<Range, string> = { '1D': 'past 24 hours', '7D': 'past 7 days', '1M': 'past month', ALL: 'all time' };
 const RANGE_HOURS: Record<Range, number> = { '1D': 24, '7D': 168, '1M': 720, ALL: 0 };
 
 function Kpi({ label, value, sub, color, hint }: { label: string; value: string; sub?: string; color?: string; hint?: string }) {
@@ -82,7 +83,6 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   const compact = useCompact();
   const { data: positions, loading: positionsLoading } = useMyPositions();
   const { data: stats } = useMyStats();
-  const { data: serverDay } = useDayChange();
   const [sort, setSort] = useState<SortKey>('value');
   const [range, setRange] = useState<Range>('1M');
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -128,13 +128,6 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   }, [positions, marketById, sort]);
 
   const invested = holdings.reduce((s, h) => s + h.value, 0);
-  const cost = holdings.reduce((s, h) => s + h.cost, 0);
-  const pl = invested - cost;
-  const plPct = cost > 0 ? (pl / cost) * 100 : 0;
-  // Past-24h change comes from the server: it rebuilds what you had 24h ago, so shares bought today are not counted as
-  // having moved with the stock's whole-day price change.
-  const dayDollar = serverDay ? serverDay.change : 0;
-  const dayPct = serverDay ? serverDay.change_pct : 0;
   const total = invested + cash;
   const loading = marketsLoading || positionsLoading;
 
@@ -162,7 +155,10 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       .map(m => ({ ...m, value: valueAt(m.ts) }));
   }, [series, chart]);
   const axis = useMemo(() => niceAxis(chart.map(c => c.value)), [chart]);
+  // The headline change is read straight off the chart: your value now minus your value at the start of the chosen range
+  // (exactly 24h ago for 1 Day, 7 days ago for 7 Days, and so on; the very beginning for All).
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
+  const chartPct = chart.length >= 2 && chart[0].value > 0 ? (chartDelta / chart[0].value) * 100 : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
 
   const slices = [
@@ -186,15 +182,10 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           <p className="text-muted-foreground" style={{ fontSize: 13 }}>Total value</p>
           <p className="font-mono font-bold" style={{ fontSize: 'clamp(28px, 9vw, 42px)', letterSpacing: '-1px', lineHeight: 1.1, color: 'var(--foreground)' }}>{usd(total)}</p>
           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-            {holdings.length > 0 && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(dayDollar), color: tone(dayDollar) }}>
-                {dayDollar >= 0 ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
-                {usdSigned(dayDollar)} ({pctText(dayPct)}) past 24h
-              </span>
-            )}
-            {cost > 0 && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(pl), color: tone(pl) }}>
-                {usdSigned(pl)} ({pctText(plPct)}) since bought
+            {chart.length >= 2 && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold" style={{ fontSize: 13, background: toneBg(chartDelta), color: tone(chartDelta) }}>
+                {chartDelta >= 0 ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
+                {usdSigned(chartDelta)} ({pctText(chartPct)}) {RANGE_PHRASE[range]}
               </span>
             )}
           </div>
@@ -285,7 +276,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi label="Invested" value={usd(invested)} sub={`${holdings.length} player${holdings.length === 1 ? '' : 's'}`} hint="What selling every share you hold would pay right now" />
         <Kpi label="Cash" value={usd(cash)} sub={lockedCash > 0 ? `${usd(lockedCash)} tied up in orders` : 'Ready to invest'} color="var(--primary)" />
-        <Kpi label="Gain / loss" value={cost > 0 ? usdSigned(pl) : '—'} sub={cost > 0 ? `${pctText(plPct)} on ${usd(cost)} cost` : 'No positions yet'} color={tone(pl)} />
+        <Kpi label="Spendable" value={wallet ? usd(toNumber(wallet.available_balance)) : '—'} sub={lockedCash > 0 ? `after ${usd(lockedCash)} reserved for open orders` : 'Free to spend right now'} color="var(--gain)" hint="Cash you can spend right now: your cash minus what is reserved for open buy orders" />
         <Kpi label="Dividends earned" value={stats ? usd(stats.dividend_earnings) : '—'} sub={stats ? `${stats.dividend_payouts} payout${stats.dividend_payouts === 1 ? '' : 's'}` : undefined} color="var(--gain)" />
       </div>
 
@@ -448,8 +439,8 @@ export function Portfolio({ navigate, openPlayer }: Props) {
 
           <p className="text-muted-foreground px-1" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
             Value is what selling the whole position right now would pay (real buy orders first, then the House), so a large position is worth slightly less per share than the listed price.
-            Gain / loss is since you bought: that value compared with your average cost, so a stock can be up today and still be down overall.
-            The small % under each price is how that stock's price moved over the last 24 hours, whatever time you bought it; the "past 24h" figure at the top is what your own portfolio did, counting shares only from when you held them.
+            Gain / loss on each row is since you bought: that value compared with your average cost, so a stock can be up today and still be down overall.
+            The small % under each price is how that stock's price moved over the last 24 hours, whatever time you bought it. The change at the top is your whole portfolio (cash and shares) now compared with exactly the start of the range you picked on the chart.
           </p>
         </>
       )}
