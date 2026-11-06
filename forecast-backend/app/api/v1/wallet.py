@@ -43,7 +43,7 @@ def net_worth_series(
     portfolio_service.net_worth_series). Powers the portfolio chart (hours=0 means since the account began)."""
     from app.services import portfolio_service
 
-    return {"points": portfolio_service.net_worth_series(db, user.id, hours, points)}
+    return {"points": portfolio_service.net_worth_series(db, user.id, hours, points), "markers": portfolio_service.dividend_markers(db, user.id, hours)}
 
 
 @router.post("/deposit", response_model=WalletResponse)

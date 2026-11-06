@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../lib/auth';
 import { useDayChange, useMarketsByIds, useMyPositions, useMyStats, useNetWorthSeries } from '../lib/hooks';
 import { toNumber, type MarketSnapshot } from '../lib/types';
@@ -118,6 +118,21 @@ export function Portfolio({ navigate, openPlayer }: Props) {
   }, [series]);
   const spanMs = chart.length >= 2 ? chart[chart.length - 1].ts - chart[0].ts : 0;
   const tickFmt = (ts: number) => new Date(ts).toLocaleString('en-US', spanMs <= 36 * 3600_000 ? { hour: 'numeric', minute: '2-digit' } : spanMs <= 10 * 86400_000 ? { month: 'numeric', day: 'numeric', hour: 'numeric' } : { month: 'short', day: 'numeric' });
+  // Tournaments that paid you inside this range, placed on the curve where the money landed (value read off the line there).
+  const [markerHover, setMarkerHover] = useState<{ x: number; y: number; i: number } | null>(null);
+  const markers = useMemo(() => {
+    if (chart.length < 2) return [];
+    const valueAt = (ts: number) => {
+      if (ts <= chart[0].ts) return chart[0].value;
+      let lo = 0, hi = chart.length - 1;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (chart[mid].ts <= ts) lo = mid; else hi = mid; }
+      return chart[hi].ts === chart[lo].ts ? chart[hi].value : chart[lo].value + (chart[hi].value - chart[lo].value) * ((ts - chart[lo].ts) / (chart[hi].ts - chart[lo].ts));
+    };
+    return (series?.markers ?? [])
+      .map(m => ({ ...m, ts: new Date(m.t).getTime() }))
+      .filter(m => m.ts >= chart[0].ts && m.ts <= chart[chart.length - 1].ts)
+      .map(m => ({ ...m, value: valueAt(m.ts) }));
+  }, [series, chart]);
   const chartDelta = chart.length >= 2 ? chart[chart.length - 1].value - chart[0].value : 0;
   const chartColor = chartDelta >= 0 ? '#10d9a0' : '#ff3d5c';
 
@@ -175,7 +190,7 @@ export function Portfolio({ navigate, openPlayer }: Props) {
           {chart.length < 2 ? (
             <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Your value chart appears once you've made your first trade.</p>
           ) : (
-            <div style={{ height: compact ? 130 : 170 }}>
+            <div style={{ height: compact ? 130 : 170, position: 'relative' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chart} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                   <defs>
@@ -191,9 +206,46 @@ export function Portfolio({ navigate, openPlayer }: Props) {
                     labelFormatter={(l: number) => new Date(l).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                     contentStyle={{ background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 12 }}
                   />
-                  <Area type="linear" dataKey="value" stroke={chartColor} strokeWidth={2} fill="url(#pfNw)" dot={false} />
+                  <Area type="linear" dataKey="value" stroke={chartColor} strokeWidth={2} fill="url(#pfNw)" dot={false} isAnimationActive={false} />
+                  {markers.map((m, i) => (
+                    <ReferenceDot
+                      key={m.tournament_id}
+                      x={m.ts}
+                      y={m.value}
+                      ifOverflow="visible"
+                      shape={(p: any) => (
+                        <g style={{ cursor: 'pointer' }} onMouseEnter={() => setMarkerHover({ x: p.cx, y: p.cy, i })} onMouseLeave={() => setMarkerHover(null)}>
+                          <circle cx={p.cx} cy={p.cy} r={10} fill="transparent" />
+                          <circle cx={p.cx} cy={p.cy} r={4.5} fill="#ffb020" stroke="var(--popover)" strokeWidth={1.5} />
+                        </g>
+                      )}
+                    />
+                  ))}
                 </AreaChart>
               </ResponsiveContainer>
+              {markerHover && markers[markerHover.i] && (
+                <div
+                  className="absolute pointer-events-none rounded-xl border border-border px-3 py-2"
+                  style={{ left: Math.min(Math.max(markerHover.x, 90), 9999), top: Math.max(markerHover.y - 8, 0), transform: 'translate(-50%, -100%)', background: 'var(--popover)', fontSize: 12, maxWidth: 220, zIndex: 5 }}
+                >
+                  <p className="text-foreground font-semibold">{markers[markerHover.i].name}</p>
+                  <p className="font-mono font-bold" style={{ color: 'var(--gain)' }}>+{usd(markers[markerHover.i].amount)} in dividends</p>
+                  {markers[markerHover.i].players.length > 0 && <p className="text-muted-foreground" style={{ fontSize: 11 }}>from {markers[markerHover.i].players.join(', ')}</p>}
+                </div>
+              )}
+            </div>
+          )}
+          {markers.length > 0 && (
+            <div className="mt-2">
+              <p className="text-muted-foreground" style={{ fontSize: 10.5 }}>
+                <span style={{ color: '#ffb020' }}>●</span> = a tournament paid you dividends. Hover a dot to see how much.
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 font-mono" style={{ fontSize: 11.5 }}>
+                {markers.slice(-6).reverse().map(m => (
+                  <span key={m.tournament_id} className="text-muted-foreground">{m.name} <strong style={{ color: 'var(--gain)' }}>+{usd(m.amount)}</strong></span>
+                ))}
+                {markers.length > 6 && <span className="text-muted-foreground">+{markers.length - 6} earlier</span>}
+              </div>
             </div>
           )}
         </div>

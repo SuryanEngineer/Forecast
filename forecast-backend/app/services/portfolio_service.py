@@ -315,3 +315,37 @@ def net_worth_series(db: Session, user_id: uuid.UUID, hours: int = 24, points: i
     stepped.append((now, live))
     stepped = _thin_series(stepped, points)
     return [{"t": t.isoformat(), "net_worth": v} for t, v in stepped]
+
+
+def dividend_markers(db: Session, user_id: uuid.UUID, hours: int = 24) -> list[dict]:
+    """The tournaments that paid this user a dividend inside the chart window, one entry per tournament, so the portfolio chart
+    can mark the jumps they caused. `amount` is everything that tournament paid the user (summed over the players they held),
+    `t` is when the money landed. `hours`=0 means since the account began. Oldest first."""
+    from app.models.dividend import DividendLineItem, DividendPayout
+    from app.models.tournament import Tournament
+    from app.models.wallet import LedgerEntry
+
+    hours = max(0, min(int(hours), 24 * 400))
+    t0 = None if hours == 0 else datetime.now(timezone.utc) - timedelta(hours=hours)
+    paid_at = func.coalesce(LedgerEntry.created_at, DividendLineItem.created_at)
+    q = (
+        db.query(Tournament.id, Tournament.name, DividendLineItem.amount_paid, paid_at, Player.gamertag)
+        .select_from(DividendLineItem)
+        .join(DividendPayout, DividendPayout.id == DividendLineItem.payout_id)
+        .join(Tournament, Tournament.id == DividendPayout.tournament_id)
+        .join(Player, Player.id == DividendPayout.player_id)
+        .outerjoin(LedgerEntry, LedgerEntry.id == DividendLineItem.ledger_entry_id)
+        .filter(DividendLineItem.user_id == user_id, DividendLineItem.amount_paid > 0)
+    )
+    if t0 is not None:
+        q = q.filter(paid_at > t0)
+    groups: dict[uuid.UUID, dict] = {}
+    for tid, name, amount, at, tag in q.all():
+        at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        g = groups.setdefault(tid, {"tournament_id": str(tid), "name": name, "amount": ZERO, "t": at, "players": []})
+        g["amount"] += Decimal(str(amount or 0))
+        g["t"] = max(g["t"], at)
+        if tag and tag not in g["players"]:
+            g["players"].append(tag)
+    out = sorted(groups.values(), key=lambda g: g["t"])
+    return [{**g, "amount": float(g["amount"]), "t": g["t"].isoformat(), "players": g["players"][:4]} for g in out]

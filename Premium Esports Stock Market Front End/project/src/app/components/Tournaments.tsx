@@ -41,7 +41,7 @@ function useCountdown(targetDate: string | null) {
 function CountdownBox({ value, label }: { value: number; label: string }) {
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="w-14 h-14 rounded-2xl flex items-center justify-center font-mono font-bold" style={{ fontSize: 22, background: 'var(--muted)', border: '1.5px solid var(--border)', color: 'var(--primary)' }}>
+      <div className="rounded-2xl flex items-center justify-center font-mono font-bold" style={{ width: 'clamp(38px, 12.5vw, 56px)', height: 'clamp(38px, 12.5vw, 56px)', fontSize: 'clamp(16px, 5vw, 22px)', background: 'var(--muted)', border: '1.5px solid var(--border)', color: 'var(--primary)' }}>
         {String(value).padStart(2, '0')}
       </div>
       <p className="text-muted-foreground uppercase" style={{ fontSize: 10, letterSpacing: '0.1em' }}>{label}</p>
@@ -57,8 +57,8 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
 }) {
   const cd = useCountdown(startTime);
   const Head = (
-    <div className="flex items-start gap-3 mb-4">
-      <div>
+    <div className="flex flex-wrap items-start gap-x-3 gap-y-2 mb-4">
+      <div className="min-w-0">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(0,200,255,0.15)', color: 'var(--primary)' }}>NEXT EVENT</span>
           <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(type)}</span>
@@ -75,7 +75,7 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
     </div>
   );
   return (
-    <div className="rounded-2xl border p-6" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.07), rgba(155,111,255,0.05)), var(--card)', borderColor: 'rgba(0,200,255,0.25)' }}>
+    <div className="rounded-2xl border p-4 sm:p-6" style={{ background: 'linear-gradient(135deg, rgba(0,200,255,0.07), rgba(155,111,255,0.05)), var(--card)', borderColor: 'rgba(0,200,255,0.25)' }}>
       {onOpen ? <button onClick={onOpen} className="w-full text-left">{Head}</button> : Head}
 
       {startTime && (
@@ -90,13 +90,13 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
       {startTime && (
         <div>
           <p className="text-muted-foreground mb-3" style={{ fontSize: 13 }}>Starts in:</p>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <CountdownBox value={cd.d} label="days" />
-            <span className="text-muted-foreground font-mono" style={{ fontSize: 22, paddingBottom: 20 }}>:</span>
+            <span className="text-muted-foreground font-mono" style={{ fontSize: 'clamp(16px, 5vw, 22px)', paddingBottom: 20 }}>:</span>
             <CountdownBox value={cd.h} label="hours" />
-            <span className="text-muted-foreground font-mono" style={{ fontSize: 22, paddingBottom: 20 }}>:</span>
+            <span className="text-muted-foreground font-mono" style={{ fontSize: 'clamp(16px, 5vw, 22px)', paddingBottom: 20 }}>:</span>
             <CountdownBox value={cd.m} label="min" />
-            <span className="text-muted-foreground font-mono" style={{ fontSize: 22, paddingBottom: 20 }}>:</span>
+            <span className="text-muted-foreground font-mono" style={{ fontSize: 'clamp(16px, 5vw, 22px)', paddingBottom: 20 }}>:</span>
             <CountdownBox value={cd.s} label="sec" />
           </div>
         </div>
