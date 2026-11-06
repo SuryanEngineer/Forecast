@@ -134,6 +134,66 @@ def get_announced_tournaments(db: Session = Depends(get_db)) -> list[AnnouncedTo
     return [AnnouncedTournamentResponse(**row) for row in rows]
 
 
+# Typical field size when none is known yet (a finals lobby is about 100 players).
+_DEFAULT_FIELD_PLAYERS = 100
+
+
+@router.get("/{tournament_id}/payout-preview")
+def get_payout_preview(
+    tournament_id: uuid.UUID,
+    field_players: int | None = Query(None, ge=2, le=500, description="Override the assumed number of players in the field."),
+    db: Session = Depends(get_db),
+) -> dict:
+    """What an event will pay, BEFORE it is played: the dividend pool and how it is split.
+
+    Normal events: the dividend pool each PLAYER of a placement earns for their shareholders, for every placement in the
+    explicit payout curve and a ladder of milestones down the tail (the tail decays smoothly to the last place, which
+    depends on the field size -- the number of entrants when known, else about 100). Performance Evaluation cups: what
+    one, two, three or four game wins are worth per player. Shareholders then split a player's pool in proportion to the
+    shares they held when the event started."""
+    from app.engine import dividend_calculator, performance_eval
+    from app.models.tournament import TournamentType
+
+    tournament = db.get(Tournament, tournament_id)
+    if tournament is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
+    ctx = dividend_service.PoolContext(db, tournament)
+    db.commit()  # parameter defaults may have been seeded
+
+    if tournament.tournament_type == TournamentType.PERFORMANCE_EVAL:
+        pool, share = ctx.eval_pool, ctx.eval_win_share
+        size = performance_eval.DEFAULT_TEAM_SIZE
+        per_win = performance_eval.per_player_win_value(pool, share, size)
+        return {
+            "mode": "per_win",
+            "pool": float(pool),
+            "win_share": float(share),
+            "team_size": size,
+            "per_win": float(per_win),
+            "rows": [{"wins": w, "pool_each": float(per_win * w)} for w in range(1, 5)],
+        }
+
+    pool = ctx.effective_prize_pool
+    if pool is None:
+        return {"mode": "placement", "pool": None, "field_players": None, "rows": []}
+
+    known = db.query(func.count(TournamentEntrant.id)).filter(TournamentEntrant.tournament_id == tournament_id).scalar() or 0
+    field = field_players or (int(known) if known >= 2 else _DEFAULT_FIELD_PLAYERS)
+    curve = ctx.placement_curve
+    explicit = sorted(curve)
+    milestones = [p for p in (15, 20, 25, 30, 40, 50, 60, 75, 100) if p > (explicit[-1] if explicit else 0) and p < field]
+    placements = [p for p in explicit if p <= field] + milestones + ([field] if field > (explicit[-1] if explicit else 0) else [])
+    rows = []
+    for place in dict.fromkeys(placements):
+        fraction = dividend_calculator.placement_payout_fraction(place, field, curve)
+        rows.append({
+            "placement": place,
+            "fraction": float(fraction),
+            "pool_each": float((pool * fraction).quantize(Decimal("0.01"))),
+        })
+    return {"mode": "placement", "pool": float(pool), "field_players": field, "field_known": known >= 2, "rows": rows}
+
+
 @router.get("/{tournament_id}/entrants", response_model=list[TournamentEntrantResponse])
 def get_tournament_entrants(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> list[TournamentEntrantResponse]:
     """Players known to have qualified for this tournament, pulled from a

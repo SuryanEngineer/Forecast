@@ -9,6 +9,7 @@ import { tournamentDisplayName } from '../lib/tournamentName';
 import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
 import { TeamLeaderboard } from './TeamLeaderboard';
+import { usd } from '../lib/format';
 
 interface Props {
   tournament: TournamentResponse;
@@ -125,6 +126,79 @@ function LiveStandingsSection({
 interface TournamentEntrant {
   player_id: string;
   gamertag: string;
+}
+
+interface PayoutPreviewData {
+  mode: 'placement' | 'per_win';
+  pool: number | null;
+  field_players?: number | null;
+  field_known?: boolean;
+  win_share?: number;
+  team_size?: number;
+  per_win?: number;
+  rows: { placement?: number; fraction?: number; wins?: number; pool_each: number }[];
+}
+
+/** For an event that has not been played: what it pays and how, so you know what to expect before buying. */
+function PayoutPreview({ tournamentId }: { tournamentId: string }) {
+  const [data, setData] = useState<PayoutPreviewData | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.get<PayoutPreviewData>(`/tournaments/${tournamentId}/payout-preview`).then(d => { if (alive) setData(d); }).catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [tournamentId]);
+
+  if (failed) return null;
+  if (!data) return <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>Loading payouts…</p>;
+  if (data.pool === null || data.rows.length === 0) {
+    return (
+      <div className="rounded-2xl border border-border p-4" style={{ background: 'var(--muted)' }}>
+        <p className="text-foreground font-semibold" style={{ fontSize: 13.5 }}>Dividend payouts</p>
+        <p className="text-muted-foreground mt-1" style={{ fontSize: 12.5, lineHeight: 1.5 }}>This event's dividend pool hasn't been set yet.</p>
+      </div>
+    );
+  }
+  const perWin = data.mode === 'per_win';
+  const cols = perWin ? '1fr 1fr' : '1fr 70px 1fr';
+  return (
+    <div className="rounded-2xl border border-border overflow-hidden" style={{ background: 'var(--muted)' }}>
+      <div className="px-4 pt-3.5 pb-2.5">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <p className="text-foreground font-semibold" style={{ fontSize: 14 }}>What this event will pay</p>
+          <p className="font-mono font-bold" style={{ fontSize: 15, color: 'var(--gain)' }}>{usd(data.pool)} dividend pool</p>
+        </div>
+        <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12, lineHeight: 1.55 }}>
+          {perWin
+            ? `This event pays per game won, not by final placement. Each win is worth ${Math.round((data.win_share ?? 0.25) * 100)}% of the pool, shared across the winning team, so a ${data.team_size}-player team's win pays each player ${usd(data.per_win ?? 0)}.`
+            : "Each player's placement earns a share of the pool, shown per player below (everyone on a team gets their own). That amount is split among everyone who owned the player's shares when the event started, in proportion to how many they held."}
+        </p>
+      </div>
+      <div className="px-2 pb-2 overflow-y-auto" style={{ maxHeight: 300 }}>
+        <div className="rounded-xl overflow-hidden" style={{ background: 'var(--card)' }}>
+          <div className="grid items-center px-3 py-2 text-muted-foreground" style={{ gridTemplateColumns: cols, fontSize: 10.5, letterSpacing: '0.06em', fontWeight: 600 }}>
+            <span>{perWin ? 'GAMES WON' : 'PLACEMENT'}</span>
+            {!perWin && <span className="text-right">% OF POOL</span>}
+            <span className="text-right">POOL PER PLAYER</span>
+          </div>
+          {data.rows.map((r, i) => (
+            <div key={i} className="grid items-center px-3 py-2" style={{ gridTemplateColumns: cols, borderTop: '1px solid var(--border)', fontSize: 12.5 }}>
+              <span className="text-foreground font-semibold">
+                {perWin ? `${r.wins} win${r.wins === 1 ? '' : 's'}` : r.placement === data.field_players && (r.placement ?? 0) > 12 ? `#${r.placement} (last)` : `#${r.placement}`}
+              </span>
+              {!perWin && <span className="text-right font-mono text-muted-foreground">{((r.fraction ?? 0) * 100).toFixed((r.fraction ?? 0) >= 0.01 ? 1 : 2)}%</span>}
+              <span className="text-right font-mono font-bold" style={{ color: 'var(--gain)' }}>{usd(r.pool_each)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {!perWin && data.field_players && (
+        <p className="text-muted-foreground px-4 pb-3" style={{ fontSize: 11 }}>
+          Placements below the top 12 shrink gradually to last place. Based on a field of about {data.field_players} players{data.field_known ? '' : " (the real number isn't known yet)"}.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Full "details" view for a single tournament: every placement entered,
@@ -248,6 +322,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
         </div>
 
         <div className="px-5 pb-5 pt-4">
+          {tournament.phase === 'upcoming' && <div className="mb-4"><PayoutPreview tournamentId={tournament.id} /></div>}
           {tournament.phase === 'upcoming' && entrants && entrants.length > 0 ? (
             <div className="space-y-2">
               <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
@@ -277,7 +352,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
             <div className="rounded-2xl border border-border p-6 text-center" style={{ background: 'var(--muted)' }}>
               <p style={{ fontSize: 24 }}>⏳</p>
               <p className="text-muted-foreground mt-2" style={{ fontSize: 13, lineHeight: 1.6 }}>
-                This one hasn't happened yet. Check back once it's underway or an admin has entered results.
+                This one hasn't happened yet. Results and the final leaderboard appear here once it's underway.
               </p>
             </div>
           ) : isLive ? (
