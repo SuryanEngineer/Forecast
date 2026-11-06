@@ -21,12 +21,14 @@
     <script type="application/ld+json">
       {"@context":"https://schema.org","@type":"WebSite","name":"Forecast: Esports Stock Market","alternateName":["Forecast Esports Stock Market","Forecast ESM"],"url":"https://forecast-esports-stock-market.onrender.com/","description":"Forecast is a free Fortnite esports stock market game. Buy and sell shares of pro players, follow live tournament results, and earn dividends when your players place. Play with virtual cash."}
     </script>
-    <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+    <style>html, body { height: 100%; margin: 0; background: #020610; } #root { height: 100%; }</style>
   </head>
 
   <body>
-    <div id="root">
-      <!-- Plain-HTML content for search engines and anyone without JavaScript; React replaces it on load. -->
+    <div id="root"></div>
+    <!-- Plain-HTML content for anyone without JavaScript. It lives in <noscript> so it never flashes before the app loads;
+         search engines that run JavaScript (Google) read the real page, and the meta tags / JSON-LD above cover the rest. -->
+    <noscript>
       <main style="font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:32px 20px;color:#e6edf7;background:#020610;min-height:100%">
         <h1>Forecast: Fortnite Esports Stock Market</h1>
         <p>Forecast is a free game where you trade Fortnite pros like stocks. Every player has a share price that moves with the market and their tournament results.</p>
@@ -36,7 +38,7 @@
         <p>Browse the player market, place instant or limit orders, follow live tournament leaderboards, track your portfolio, and climb the seasonal rankings.</p>
         <p>Enable JavaScript to play.</p>
       </main>
-    </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
