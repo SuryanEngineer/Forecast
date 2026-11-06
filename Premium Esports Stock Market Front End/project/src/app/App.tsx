@@ -200,7 +200,7 @@ function Root() {
   if (isAuthenticated) return <AuthenticatedApp />;
   if (screen === 'login' || screen === 'register') return <AuthScreen initialMode={screen} onBack={() => setScreen('landing')} />;
   if (screen === 'guest') return <AuthenticatedApp guest={{ goLogin: (mode = 'login') => setScreen(mode) }} />;
-  return <LandingPage onGuest={() => setScreen('guest')} onLogin={() => setScreen('login')} />;
+  return <LandingPage onGuest={() => setScreen('guest')} onLogin={(mode = 'login') => setScreen(mode)} />;
 }
 
 export default function App() {

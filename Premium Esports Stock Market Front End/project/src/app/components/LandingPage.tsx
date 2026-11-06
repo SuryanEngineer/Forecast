@@ -3,6 +3,9 @@ import { useMarkets } from '../lib/hooks';
 import { toNumber } from '../lib/types';
 import { usd } from '../lib/format';
 import { LegalModal, SUPPORT_EMAIL, type LegalDoc } from './LegalModal';
+import { PlayerModal } from './PlayerModal';
+import { AccountPrompt } from './AccountPrompt';
+import { GuestContext } from '../lib/guest';
 
 const STEPS = [
   { n: '1', title: 'Pick your players', text: 'Every Fortnite pro has a share price that moves with the market. Buy the ones you believe in.' },
@@ -11,10 +14,12 @@ const STEPS = [
 ];
 
 /** What a logged-out visitor sees first: what Forecast is, a live look at the market, and two ways in. Deliberately short. */
-export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin: () => void }) {
+export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin: (mode?: 'login' | 'register') => void }) {
   const { data: movers } = useMarkets(1, 5, 'price');
   const [legal, setLegal] = useState<LegalDoc | null>(null);
   const [showEmail, setShowEmail] = useState(false);
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<string | null>(null);
   const rows = movers.items.slice(0, 5);
 
   return (
@@ -22,16 +27,13 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
       className="dark min-h-screen w-full flex flex-col font-sans"
       style={{ background: 'radial-gradient(ellipse at 15% 20%, rgba(0,200,255,0.06) 0%, transparent 55%), radial-gradient(ellipse at 85% 10%, rgba(155,111,255,0.07) 0%, transparent 50%), var(--background)' }}
     >
-      <header className="w-full max-w-[920px] mx-auto px-6 pt-6 flex items-center justify-between">
+      <header className="w-full max-w-[920px] mx-auto px-6 pt-6 flex items-center">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}>
             <span className="font-mono font-bold" style={{ fontSize: 15, color: '#020610' }}>F</span>
           </div>
           <p className="font-bold tracking-wider text-foreground" style={{ fontSize: 15 }}>FORECAST</p>
         </div>
-        <button onClick={onLogin} className="px-4 py-2 rounded-xl font-semibold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 13.5 }}>
-          Log in
-        </button>
       </header>
 
       <main className="flex-1 w-full max-w-[920px] mx-auto px-6">
@@ -50,7 +52,7 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
             >
               Guest mode
             </button>
-            <button onClick={onLogin} className="px-6 py-3 rounded-xl font-bold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 15 }}>
+            <button onClick={() => onLogin()} className="px-6 py-3 rounded-xl font-bold border border-border text-foreground hover:bg-white/5" style={{ fontSize: 15 }}>
               Log in
             </button>
           </div>
@@ -66,7 +68,7 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
             {rows.map((m, i) => {
               const pct = toNumber(m.change_pct);
               return (
-                <div key={m.id} className="flex items-center justify-between px-5 py-3" style={{ borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
+                <button key={m.id} onClick={() => setPlayerId(m.id)} className="w-full text-left flex items-center justify-between px-5 py-3 hover:bg-white/[0.03] transition-colors" style={{ borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
                   <p className="text-foreground font-semibold truncate" style={{ fontSize: 14 }}>{m.real_name || m.gamertag}</p>
                   <div className="flex items-baseline gap-4 shrink-0 font-mono">
                     <span className="text-foreground" style={{ fontSize: 14 }}>{usd(toNumber(m.last_price))}</span>
@@ -74,7 +76,7 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
                       {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
                     </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </section>
@@ -103,6 +105,12 @@ export function LandingPage({ onGuest, onLogin }: { onGuest: () => void; onLogin
       </footer>
 
       {legal && <LegalModal doc={legal} onClose={() => setLegal(null)} />}
+      {playerId && (
+        <GuestContext.Provider value={{ isGuest: true, requireAccount: f => setPrompt(f ?? ''), goLogin: onLogin }}>
+          <PlayerModal playerId={playerId} onClose={() => setPlayerId(null)} />
+          {prompt !== null && <AccountPrompt feature={prompt || undefined} onClose={() => setPrompt(null)} />}
+        </GuestContext.Provider>
+      )}
       {showEmail && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 modal-overlay" style={{ background: 'rgba(2,6,16,0.78)' }} onClick={() => setShowEmail(false)}>
           <div className="w-full max-w-[340px] rounded-2xl border border-border p-6 text-center" style={{ background: 'var(--card)' }} onClick={e => e.stopPropagation()}>
