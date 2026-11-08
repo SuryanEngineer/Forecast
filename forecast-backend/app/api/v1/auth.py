@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -135,11 +135,16 @@ def heartbeat(request: Request, user: User = Depends(get_current_user), db: Sess
 # ---- Forgot password (emailed 6-digit code) ----------------------------------------------------------------------
 
 @router.post("/password-reset/request", response_model=MessageResponse)
-def request_password_reset(payload: PasswordResetRequestRequest, db: Session = Depends(get_db)) -> MessageResponse:
-    """Always returns the same message whether or not the email is registered (no account-discovery oracle)."""
-    password_reset_service.request_reset(db, payload.email.strip().lower())
-    return MessageResponse(message="If that email is registered, a 6-digit code has been sent. It expires in "
-                                   f"{settings.EMAIL_CODE_EXPIRE_MINUTES} minutes.")
+def request_password_reset(
+    payload: PasswordResetRequestRequest, background: BackgroundTasks, db: Session = Depends(get_db)
+) -> MessageResponse:
+    """Always returns the same message, instantly, whether or not the email is registered (no account-discovery oracle,
+    not even by response time). The email itself is sent after the response, with retries."""
+    pending = password_reset_service.request_reset(db, payload.email.strip().lower())
+    if pending is not None:
+        background.add_task(password_reset_service.deliver_reset_code, pending)
+    return MessageResponse(message="If that email is registered, a 6-digit code is on its way. It can take a minute or two "
+                                   f"and expires in {settings.EMAIL_CODE_EXPIRE_MINUTES} minutes.")
 
 
 @router.post("/password-reset/confirm", response_model=MessageResponse)

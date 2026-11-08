@@ -23,8 +23,16 @@ def main() -> None:
     print(f"Provider: {settings.EMAIL_PROVIDER}   From: {settings.EMAIL_FROM_ADDRESS}   Reply-To: {settings.EMAIL_REPLY_TO or settings.SUPPORT_EMAIL or '(none)'}")
     if settings.EMAIL_PROVIDER == "console":
         print("EMAIL_PROVIDER is 'console' -- nothing will really be sent (the message is just logged). Set it to resend/smtp first.")
-    ok = email_service.send_password_reset_code(to, "123456")
-    print("Sent." if ok else "FAILED -- see the error above / logs.")
+    ok, error = email_service.try_send(
+        to, "Forecast email test", "This is a test email from Forecast. If you can read this, password-reset codes can reach you.",
+        email_service._render_html("Email test", "This is a test email from Forecast. If you can read this, password-reset codes can reach you.", None, "You can delete this message."),
+    )
+    if ok and email_service.is_live():
+        print("Sent. Check the inbox AND the spam folder.")
+    elif ok:
+        print("Nothing was sent (console mode just prints the message).")
+    else:
+        print(f"FAILED: {error}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { LegalModal, type LegalDoc } from './LegalModal';
+import { LegalModal, SUPPORT_EMAIL, type LegalDoc } from './LegalModal';
+
+// Matches the server's minimum gap between codes for one account (EMAIL_CODE_MIN_RESEND_SECONDS). Asking sooner would be
+// silently ignored by the server, so the button is held for this long instead.
+const RESEND_COOLDOWN_SECONDS = 45;
 
 const INPUT_CLS = 'w-full px-3 py-2.5 rounded-xl border border-border text-foreground outline-none transition-colors focus:border-primary/50';
 const INPUT_STYLE = { background: 'var(--muted)', fontSize: 14 } as const;
@@ -81,6 +85,14 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(0);
+
+  // Counts the resend cooldown down once a second (only ticks while it is running).
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn(s => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   function switchMode(m: 'login' | 'register' | 'forgot') {
     setMode(m);
@@ -88,6 +100,35 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
     setNotice(null);
     setForgotStep('email');
     setCode('');
+    setResendIn(0);
+  }
+
+  // "Send a new code" from the code screen: stays on the screen (nothing typed is lost), and is held for the cooldown.
+  async function handleResend() {
+    if (resendIn > 0 || submitting) return;
+    setLocalError(null);
+    setSubmitting(true);
+    try {
+      await requestPasswordReset(email.trim());
+      setCode('');
+      setNotice('A new code is on its way. Use the newest email -- older codes stop working.');
+      setResendIn(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      if (err instanceof Error && !(err as any).status) setLocalError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // For people who already received a code (e.g. they reloaded the page): skip straight to entering it.
+  function haveCode() {
+    if (!email.trim()) {
+      setLocalError('Enter your email first.');
+      return;
+    }
+    setLocalError(null);
+    setNotice('Enter the code from your email.');
+    setForgotStep('code');
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -102,12 +143,14 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
         if (!acceptTerms) throw new Error('Please accept the Terms of Service and Privacy Policy');
         await register(email, password, displayName.trim(), acceptTerms);
       } else if (forgotStep === 'email') {
-        const msg = await requestPasswordReset(email);
+        const msg = await requestPasswordReset(email.trim());
         setNotice(msg);
         setForgotStep('code');
+        setResendIn(RESEND_COOLDOWN_SECONDS);
       } else {
         if (newPassword !== confirmPassword) throw new Error("Passwords don't match");
-        await confirmPasswordReset(email, code.trim(), newPassword);
+        if (code.trim().length !== 6) throw new Error('Enter the 6-digit code from the email');
+        await confirmPasswordReset(email.trim(), code.trim(), newPassword);
         setForgotStep('done');
       }
     } catch (err) {
@@ -148,11 +191,14 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
                     Enter the email on your account and we'll send a 6-digit code to reset your password.
                   </p>
                   <Field label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" required />
+                  <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.45 }}>
+                    Use the exact email you signed up with.
+                  </p>
                 </>
               ) : (
                 <>
                   <p className="text-muted-foreground" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                    {notice} Check your inbox (and spam folder) for an email from Forecast.
+                    {notice} It can take a minute or two. Check your inbox <b>and spam folder</b> for an email from {SUPPORT_EMAIL}.
                   </p>
                   <Field
                     label="6-digit code" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -167,10 +213,23 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
               <SubmitButton busy={submitting}>
                 {submitting ? 'Please wait…' : forgotStep === 'email' ? 'Send code' : 'Reset password'}
               </SubmitButton>
-              {forgotStep === 'code' && (
-                <button type="button" onClick={() => { setForgotStep('email'); setLocalError(null); }} className="w-full text-center" style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-                  Didn't get it? Send a new code
+              {forgotStep === 'email' && (
+                <button type="button" onClick={haveCode} className="w-full text-center" style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+                  I already have a code
                 </button>
+              )}
+              {forgotStep === 'code' && (
+                <>
+                  <button
+                    type="button" onClick={handleResend} disabled={resendIn > 0 || submitting}
+                    className="w-full text-center" style={{ fontSize: 12, color: resendIn > 0 ? 'var(--muted-foreground)' : 'var(--primary)' }}
+                  >
+                    {resendIn > 0 ? `Didn't get it? You can request a new code in ${resendIn}s` : "Didn't get it? Send a new code"}
+                  </button>
+                  <button type="button" onClick={() => { setForgotStep('email'); setLocalError(null); setNotice(null); }} className="w-full text-center" style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+                    Wrong email? Change it
+                  </button>
+                </>
               )}
             </form>
           )}

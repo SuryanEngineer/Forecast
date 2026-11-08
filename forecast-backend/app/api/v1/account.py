@@ -96,11 +96,15 @@ def request_email_change(payload: ChangeEmailRequest, user: User = Depends(get_c
     if account_service.email_in_use(db, new_email, exclude_user_id=user.id):
         raise _bad("That email is already in use.")
     try:
-        code = auth_code_service.issue_code(db, user.id, "change_email", target_email=new_email)
+        code, code_id = auth_code_service.issue_code_with_id(db, user.id, "change_email", target_email=new_email)
     except auth_code_service.CodeRateLimited as exc:
         raise _bad(str(exc), status.HTTP_429_TOO_MANY_REQUESTS)
     db.commit()
-    email_service.send_change_email_code(new_email, code)
+    if email_service.send_change_email_code(new_email, code) is False:
+        # The user is logged in, so be honest instead of pretending: drop the unusable code (it must not count toward
+        # their hourly limit) and tell them to retry.
+        auth_code_service.discard_code(db, code_id)
+        raise _bad("We couldn't send that email right now. Please try again in a minute.", status.HTTP_503_SERVICE_UNAVAILABLE)
     return MessageResponse(message=f"We sent a code to {new_email}.")
 
 

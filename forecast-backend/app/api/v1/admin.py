@@ -45,6 +45,7 @@ from app.services import (
     auction_service,
     bot_trading_service,
     economic_params_service,
+    email_service,
     osirion_service,
     tournament_classification_service,
     tournament_service,
@@ -391,6 +392,29 @@ def set_treasury_rate(payload: TreasuryRateUpdateRequest, admin: User = Depends(
     instrument = treasury_service.set_new_rate(db, payload.new_annual_rate, payload.effective_from)
     db.commit()
     return instrument
+
+
+@router.post("/email/test")
+def send_test_email(to: str, admin: User = Depends(get_current_admin)) -> dict:
+    """Sends one real test email through the LIVE mail setup (the same code path forgot-password uses) and reports exactly
+    what happened -- including the provider's error text -- so a broken Gmail relay / wrong env var is obvious.
+    Example: POST /api/v1/admin/email/test?to=you@gmail.com"""
+    to = (to or "").strip()
+    if "@" not in to or len(to) > 254:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pass a valid address, e.g. ?to=you@gmail.com")
+    configured = email_service.is_live()
+    ok, error = email_service.try_send(
+        to, "Forecast email test", "This is a test email from your Forecast backend. If you can read this, password-reset "
+        "codes can reach people." + email_service._footer_text(),
+        email_service._render_html("Email test", "This is a test email from your Forecast backend. If you can read this, "
+                                   "password-reset codes can reach people.", None, "You can delete this message."),
+    )
+    return {
+        "provider": email_service.provider_name(), "configured": configured, "sent": bool(ok and configured),
+        "error": error,
+        "note": None if configured else "EMAIL_PROVIDER is not set to a real provider (console mode only logs the message); "
+                                        "nothing was delivered.",
+    }
 
 
 @router.get("/economic-parameters", response_model=list[PlatformParameterResponse])

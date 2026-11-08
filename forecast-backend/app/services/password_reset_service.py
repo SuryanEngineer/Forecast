@@ -8,28 +8,64 @@ Forgot-password flow with emailed 6-digit codes (see auth_code_service for the c
 """
 from __future__ import annotations
 
+import logging
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
+from app.db.session import SessionLocal
 from app.models.user import User
 from app.services import account_service, auth_code_service, email_service
 
 PURPOSE = "password_reset"
+logger = logging.getLogger("forecast.email")
 
 
-def request_reset(db: Session, email: str) -> None:
-    user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+@dataclass(frozen=True)
+class PendingResetEmail:
+    """A code that has been saved and still has to be emailed (done after the HTTP response, see deliver_reset_code)."""
+    to_email: str
+    code: str
+    code_id: uuid.UUID
+
+
+def request_reset(db: Session, email: str) -> PendingResetEmail | None:
+    """Saves a new code for the account (if any) and returns what to email -- or None when there is nothing to send
+    (unknown/disabled account, or asked too soon). Does NOT send: the caller schedules `deliver_reset_code` as a
+    background task so the response is instant and identical either way (no account-discovery by timing)."""
+    user = db.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
     if user is None or not user.is_active:
-        return
+        return None
     try:
-        code = auth_code_service.issue_code(db, user.id, PURPOSE)
+        code, code_id = auth_code_service.issue_code_with_id(db, user.id, PURPOSE)
     except auth_code_service.CodeRateLimited:
-        return  # silently: same response either way
+        return None  # silently: same response either way
     db.commit()
-    email_service.send_password_reset_code(user.email, code)
+    return PendingResetEmail(to_email=user.email, code=code, code_id=code_id)
+
+
+def deliver_reset_code(pending: PendingResetEmail) -> None:
+    """Background task: emails the code, retrying transient failures. If it still can't be delivered the saved code is
+    discarded, so a broken mail provider can't use up the person's hourly allowance or invalidate a code they already
+    received. Never raises."""
+    try:
+        ok = email_service.send_with_retry(
+            lambda: email_service.send_password_reset_code(pending.to_email, pending.code), "password reset code"
+        )
+        if ok:
+            return
+        logger.error("Password-reset code for %s could not be emailed; discarding it.", pending.to_email)
+        db = SessionLocal()
+        try:
+            auth_code_service.discard_code(db, pending.code_id)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 -- a background task must not blow up
+        logger.exception("deliver_reset_code crashed for %s", pending.to_email)
 
 
 def confirm_reset(db: Session, email: str, code: str, new_password: str) -> bool:

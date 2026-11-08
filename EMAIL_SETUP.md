@@ -135,3 +135,35 @@ HTTPS instead (EMAIL_PROVIDER=webhook). About 100 emails a day for a normal Gmai
    `EMAIL_WEBHOOK_SECRET` = the same random string, `EMAIL_FROM_ADDRESS=Forecast <forecastesm@gmail.com>`,
    `EMAIL_REPLY_TO=forecastesm@gmail.com`.
 5. Use "Forgot password" on the site and check the inbox (and Spam).
+
+### Check the relay is public
+Open the web app URL (the one ending in `/exec`) in a browser. You should see `{"ok":true,"service":"forecast-email-relay"}`.
+A Google sign-in page means "Who has access" is not **Anyone**.
+
+### Updating the script later
+Saving in the Apps Script editor is **not** enough: the live URL keeps running the old code. Publish it:
+**Deploy > Manage deployments > pencil (edit) > Version: New version > Deploy**. The URL stays the same.
+
+### Test the live site's email (no guessing)
+The backend can send itself a test through exactly the path "Forgot password" uses, and shows the real error if it fails.
+In PowerShell (replace the email/password with your admin login and an address you can read):
+```powershell
+$api = "https://forecast-backend-vfje.onrender.com/api/v1"
+$tok = (Invoke-RestMethod -Method Post "$api/auth/login" -ContentType "application/json" -Body '{"email":"ADMIN_EMAIL","password":"ADMIN_PASSWORD"}').access_token
+Invoke-RestMethod -Method Post "$api/admin/email/test?to=you@gmail.com" -Headers @{Authorization="Bearer $tok"}
+```
+You get back `provider`, `configured`, `sent` and `error`. `sent: True` means Google accepted it; if it still isn't in the
+inbox, check Spam. `error` text says exactly what's wrong (wrong secret, relay not public, daily limit, ...).
+
+### If codes don't arrive: where to look (Render > forecast-backend > Logs)
+| Log line | Meaning / fix |
+|---|---|
+| `Email: NOT CONFIGURED` at startup | `EMAIL_PROVIDER` (or its URL/secret) is missing or misspelled in Render's Environment. |
+| `email relay refused the message: forbidden` | `EMAIL_WEBHOOK_SECRET` in Render differs from `SECRET` in the Apps Script. |
+| `email relay did not return JSON` | The URL isn't the `/exec` web app URL, or "Who has access" isn't Anyone. |
+| `...hit its daily sending limit` | Gmail allows ~100 sends/day. It resets within 24 hours; move to Resend + your own domain for more. |
+| `Email relay: N sends left` (warning at 20 or fewer) | You're close to the daily limit. |
+| `Email (...) FAILED after 3 attempts` | The code was discarded (so it doesn't count against the person's hourly limit); they can ask again. |
+
+How sending works now: "Send code" answers instantly, then the email is sent in the background with up to 3 attempts. A
+failed send is thrown away rather than counted, so a mail outage can't lock anyone out.

@@ -35,7 +35,22 @@ def _hash(purpose: str, user_id: uuid.UUID, code: str) -> str:
 
 
 def issue_code(db: Session, user_id: uuid.UUID, purpose: str, target_email: str | None = None) -> str:
-    """Creates a fresh code (invalidating older unused ones). Raises CodeRateLimited when asked too often."""
+    return issue_code_with_id(db, user_id, purpose, target_email)[0]
+
+
+def discard_code(db: Session, code_id: uuid.UUID) -> None:
+    """Deletes a code whose email could not be delivered, so it neither counts toward the hourly request limit (a person
+    whose emails keep failing must not get locked out) nor shadows a still-valid earlier code. Commits."""
+    row = db.get(EmailCode, code_id)
+    if row is not None and row.used_at is None:
+        db.delete(row)
+    db.commit()
+
+
+def issue_code_with_id(db: Session, user_id: uuid.UUID, purpose: str, target_email: str | None = None) -> tuple[str, uuid.UUID]:
+    """Creates a fresh code. Only the NEWEST unused code is ever accepted (see verify_code), so asking again supersedes
+    the old one -- but the old row is kept until the new one is confirmed delivered, so a failed send can be rolled back
+    without leaving the person with no valid code. Raises CodeRateLimited when asked too often."""
     now = _now()
     recent = (
         db.query(EmailCode).filter(EmailCode.user_id == user_id, EmailCode.purpose == purpose)
@@ -47,17 +62,14 @@ def issue_code(db: Session, user_id: uuid.UUID, purpose: str, target_email: str 
     if len(in_last_hour) >= settings.EMAIL_CODE_MAX_PER_HOUR:
         raise CodeRateLimited("Too many codes requested. Try again in a little while.")
 
-    for old in db.query(EmailCode).filter(
-        EmailCode.user_id == user_id, EmailCode.purpose == purpose, EmailCode.used_at.is_(None)
-    ).all():
-        old.used_at = now
     code = f"{secrets.randbelow(1_000_000):06d}"
+    code_id = uuid.uuid4()
     db.add(EmailCode(
-        id=uuid.uuid4(), user_id=user_id, purpose=purpose, code_hash=_hash(purpose, user_id, code),
+        id=code_id, user_id=user_id, purpose=purpose, code_hash=_hash(purpose, user_id, code),
         target_email=target_email, expires_at=now + timedelta(minutes=settings.EMAIL_CODE_EXPIRE_MINUTES),
     ))
     db.flush()
-    return code
+    return code, code_id
 
 
 def verify_code(db: Session, user_id: uuid.UUID, purpose: str, code: str) -> EmailCode | None:
@@ -79,5 +91,10 @@ def verify_code(db: Session, user_id: uuid.UUID, purpose: str, code: str) -> Ema
         db.flush()
         return None
     row.used_at = now
+    # Success: retire every other still-open code for this purpose so nothing older can be replayed.
+    for other in db.query(EmailCode).filter(
+        EmailCode.user_id == user_id, EmailCode.purpose == purpose, EmailCode.used_at.is_(None), EmailCode.id != row.id
+    ).all():
+        other.used_at = now
     db.flush()
     return row

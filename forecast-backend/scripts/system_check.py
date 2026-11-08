@@ -293,6 +293,48 @@ def check_auth_flows() -> None:
     r = client.post("/api/v1/auth/password-reset/confirm", json={"email": "alice@forecastcheck.dev", "code": good, "new_password": "Another123"})
     check(f"code burns after {settings.EMAIL_CODE_MAX_ATTEMPTS} wrong guesses (brute-force protection)", r.status_code == 400)
 
+    # ---- delivery failures: a broken mail provider must not lock people out or void a code they already have ------
+    section("Forgot password: delivery failures")
+    email_service.RETRY_DELAYS = ()  # no waiting between retries in tests
+    real_capture = email_service.send_email
+    old_max = settings.EMAIL_CODE_MAX_PER_HOUR
+    req = "/api/v1/auth/password-reset/request"
+    try:
+        register("dora@forecastcheck.dev", "dora_d")
+        n = len(OUTBOX)
+        r = client.post(req, json={"email": "DORA@forecastcheck.dev"})
+        check("request works whatever the letter case", r.status_code == 200 and len(OUTBOX) == n + 1 and OUTBOX[-1]["to"] == "dora@forecastcheck.dev")
+        dora_code = last_code("dora@forecastcheck.dev")
+
+        state = {"fail": True, "calls": 0}
+
+        def flaky(to_email, subject, text_body, html_body=None):
+            state["calls"] += 1
+            return False if state["fail"] else real_capture(to_email, subject, text_body, html_body)
+
+        email_service.send_email = flaky
+        settings.EMAIL_CODE_MAX_PER_HOUR = 3  # dora already used 1 -- five failed attempts would blow past this if they counted
+        replies = [client.post(req, json={"email": "dora@forecastcheck.dev"}) for _ in range(5)]
+        check("failed sends still answer 200 with the same message", all(x.status_code == 200 and x.json() == replies[0].json() for x in replies))
+        check("every failed send was attempted", state["calls"] == 5)
+        r = client.post("/api/v1/auth/password-reset/confirm", json={"email": "dora@forecastcheck.dev", "code": dora_code, "new_password": "DoraPass123"})
+        check("a code delivered earlier still works after later sends failed", r.status_code == 200, r.text)
+
+        state["fail"] = False
+        n = len(OUTBOX)
+        client.post(req, json={"email": "dora@forecastcheck.dev"})
+        check("after failures, a new code is delivered (failed sends don't use up the hourly limit)", len(OUTBOX) == n + 1)
+        new_code = last_code("dora@forecastcheck.dev")
+        r = client.post("/api/v1/auth/password-reset/confirm", json={"email": "dora@forecastcheck.dev", "code": new_code, "new_password": "DoraPass456"})
+        check("and that code resets the password", r.status_code == 200, r.text)
+
+        n = len(OUTBOX)
+        r = client.post(req, json={"email": "ghost-user@forecastcheck.dev"})
+        check("unknown email: same 200 reply, nothing sent", r.status_code == 200 and len(OUTBOX) == n)
+    finally:
+        email_service.send_email = real_capture
+        settings.EMAIL_CODE_MAX_PER_HOUR = old_max
+
 
 @guarded
 def check_profile_and_sessions() -> None:

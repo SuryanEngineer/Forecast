@@ -217,6 +217,13 @@ def _release_lease_once() -> None:
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
 
+    try:
+        from app.services import email_service
+
+        email_service.log_status()  # one clear line in the logs if password-reset emails can't actually go out
+    except Exception:
+        logging.getLogger("forecast.email").exception("Could not report email status")
+
     lease_service.mark_server()
     if lease_service.enabled():
         # Claim (or wait for) the market lease BEFORE any loop that matches orders starts.
