@@ -69,7 +69,7 @@ function SubmitButton({ busy, children }: { busy: boolean; children: React.React
 }
 
 export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => void; initialMode?: 'login' | 'register' } = {}) {
-  const { login, register, requestPasswordReset, confirmPasswordReset, error } = useAuth();
+  const { login, register, requestPasswordReset, confirmPasswordReset, error, clearError } = useAuth();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -96,6 +96,7 @@ export function AuthScreen({ onBack, initialMode = 'login' }: { onBack?: () => v
 
   function switchMode(m: 'login' | 'register' | 'forgot') {
     setMode(m);
+    clearError();
     setLocalError(null);
     setNotice(null);
     setForgotStep('email');

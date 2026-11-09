@@ -8,6 +8,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   wallet: WalletResponse | null;
   error: string | null;
+  // Forget the last API error (so a stale "Invalid email or password" doesn't show up on the next screen).
+  clearError: () => void;
   // True only for the AuthenticatedApp mount that immediately follows a
   // successful register() call -- lets App.tsx auto-show IntroTour on a
   // brand new account without also re-showing it to a returning user who
@@ -183,6 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         wallet,
         error,
+        clearError: () => setError(null),
         justRegistered,
         login,
         register,

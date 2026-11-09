@@ -198,6 +198,34 @@ def test_email_templates_contain_the_code_and_footer():
     assert "15 minutes" in seen["text"] and "no-reply" in seen["text"].lower()
 
 
+def _load_throttle():
+    spec = importlib.util.spec_from_file_location("ip_throttle_under_test", ROOT / "app" / "core" / "ip_throttle.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_ip_throttle_sliding_window():
+    lim = _load_throttle().SlidingWindowLimiter()
+    # 3 allowed per 600s
+    assert [lim.allow("1.2.3.4", 3, 600, now=t) for t in (0, 1, 2, 3, 4)] == [True, True, True, False, False]
+    assert lim.allow("9.9.9.9", 3, 600, now=5) is True  # other keys are independent
+    # refused calls are not recorded: once the first hit ages out, exactly one slot frees up
+    assert lim.allow("1.2.3.4", 3, 600, now=600) is True  # hit at t=0 expired
+    assert lim.allow("1.2.3.4", 3, 600, now=600.5) is False  # hit at t=1 is only 599.5s old: window still full
+    assert lim.allow("1.2.3.4", 3, 600, now=1300) is True  # all expired
+    # switched off
+    assert all(lim.allow("x", 0, 600, now=i) for i in range(50))
+    assert all(lim.allow("x", -1, 600, now=i) for i in range(50))
+
+
+def test_ip_throttle_memory_is_bounded():
+    lim = _load_throttle().SlidingWindowLimiter(max_keys=100)
+    for i in range(500):
+        lim.allow(f"ip{i}", 5, 10, now=float(i))  # each key's single hit expires 10s later
+    assert len(lim._hits) <= 101
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

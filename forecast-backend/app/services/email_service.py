@@ -18,6 +18,7 @@ import html
 import logging
 import smtplib
 import ssl
+import threading
 import time
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
@@ -273,3 +274,24 @@ def send_security_notice(to_email: str, heading: str, message: str) -> bool:
     text = f"{heading}\n\n{message}{_footer_text()}"
     return send_email(to_email, f"Forecast security notice: {heading}", text,
                       _render_html(heading, message, None, "If this wasn't you, reset your password right away."))
+
+
+# True: notices go out on a background thread so the request that triggered them never waits on the mail provider (a
+# slow Google reply could otherwise make "password changed" look like an error). The system check sets this to False so
+# its assertions about sent mail are deterministic.
+NOTICES_IN_BACKGROUND = True
+
+
+def send_security_notice_bg(to_email: str, heading: str, message: str) -> None:
+    """Fire-and-forget security notice (best effort, 3 attempts). Never raises and never blocks the caller."""
+    if not NOTICES_IN_BACKGROUND:
+        send_security_notice(to_email, heading, message)
+        return
+
+    def _run() -> None:
+        try:
+            send_with_retry(lambda: send_security_notice(to_email, heading, message), f"security notice '{heading}'")
+        except Exception:  # noqa: BLE001
+            logger.exception("Security notice '%s' to %s crashed", heading, to_email)
+
+    threading.Thread(target=_run, name="security-notice", daemon=True).start()

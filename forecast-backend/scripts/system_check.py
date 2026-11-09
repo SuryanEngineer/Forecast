@@ -44,6 +44,7 @@ os.environ.update({
     "EMAIL_PROVIDER": "console",
     "EMAIL_CODE_MIN_RESEND_SECONDS": "0",
     "EMAIL_CODE_MAX_PER_HOUR": "100",
+    "PASSWORD_RESET_MAX_PER_IP_10MIN": "1000",  # the IP backstop is exercised separately in the delivery section
     "JWT_SECRET_KEY": "system-check-secret",
 })
 sys.path.insert(0, ".")
@@ -107,6 +108,7 @@ def _capture(to_email, subject, text_body, html_body=None):
 
 
 email_service.send_email = _capture  # nothing is ever really sent
+email_service.NOTICES_IN_BACKGROUND = False  # security notices go out inline here so the assertions are deterministic
 
 
 def last_code(to: str) -> str | None:
@@ -331,6 +333,36 @@ def check_auth_flows() -> None:
         n = len(OUTBOX)
         r = client.post(req, json={"email": "ghost-user@forecastcheck.dev"})
         check("unknown email: same 200 reply, nothing sent", r.status_code == 200 and len(OUTBOX) == n)
+
+        # the per-IP backstop: only the first N requests from one address send anything; the reply never changes
+        from app.core.ip_throttle import password_reset_limiter
+        password_reset_limiter.clear()
+        old_ip = settings.PASSWORD_RESET_MAX_PER_IP_10MIN
+        settings.PASSWORD_RESET_MAX_PER_IP_10MIN = 2
+        settings.EMAIL_CODE_MAX_PER_HOUR = 100
+        try:
+            n = len(OUTBOX)
+            outs = [client.post(req, json={"email": "dora@forecastcheck.dev"}) for _ in range(4)]
+            check("IP backstop: 4 rapid requests all answer 200 with the same message", all(x.status_code == 200 and x.json() == outs[0].json() for x in outs))
+            check("IP backstop: only 2 of them sent an email", len(OUTBOX) == n + 2, f"sent {len(OUTBOX) - n}")
+        finally:
+            settings.PASSWORD_RESET_MAX_PER_IP_10MIN = old_ip
+            password_reset_limiter.clear()
+
+        # old codes are cleaned up; fresh ones are untouched
+        from datetime import datetime, timedelta, timezone as _tz
+        from app.models.account import EmailCode
+        from app.services import auth_code_service
+        with SessionLocal() as s:
+            dora = s.query(User).filter(User.email == "dora@forecastcheck.dev").first()
+            fresh_before = s.query(EmailCode).filter(EmailCode.user_id == dora.id).count()
+            s.add(EmailCode(user_id=dora.id, purpose="password_reset", code_hash="x" * 64,
+                            expires_at=datetime.now(_tz.utc) - timedelta(days=8), created_at=datetime.now(_tz.utc) - timedelta(days=8)))
+            s.commit()
+            auth_code_service._LAST_PRUNE = 0.0
+            removed = auth_code_service.prune(s)
+            s.commit()
+            check("prune removes only week-old codes", removed == 1 and s.query(EmailCode).filter(EmailCode.user_id == dora.id).count() == fresh_before, f"removed={removed}")
     finally:
         email_service.send_email = real_capture
         settings.EMAIL_CODE_MAX_PER_HOUR = old_max

@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     EMAIL_CODE_MAX_ATTEMPTS: int = 5
     EMAIL_CODE_MIN_RESEND_SECONDS: int = 45
     EMAIL_CODE_MAX_PER_HOUR: int = 6
+    # Backstop across ALL accounts: "send me a reset code" requests allowed per client IP per 10 minutes (0 = off).
+    PASSWORD_RESET_MAX_PER_IP_10MIN: int = 10
     # Login protection
     LOGIN_MAX_FAILED_ATTEMPTS: int = 8
     LOGIN_LOCKOUT_MINUTES: int = 15

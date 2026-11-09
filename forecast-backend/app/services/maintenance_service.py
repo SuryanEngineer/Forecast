@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.dividend import DividendPayout, DividendPayoutStatus
-from app.services import dividend_service, notification_service, retention_service, season_service, stats_service, treasury_service
+from app.services import auth_code_service, dividend_service, notification_service, retention_service, season_service, stats_service, treasury_service
 
 logger = logging.getLogger("forecast.maintenance")
 SNAPSHOT_EVERY_SECONDS = 15 * 60
@@ -57,6 +57,7 @@ def run_maintenance_pass(db: Session, force_snapshot: bool = False) -> dict:
         ("retention", lambda: retention_service.run_retention(db)),
         ("tournament_notices", lambda: notification_service.scan_tournament_events(db)),
         ("notifications_pruned", lambda: notification_service.prune(db)),
+        ("email_codes_pruned", lambda: auth_code_service.prune(db)),
     ):
         try:
             out[name] = fn()

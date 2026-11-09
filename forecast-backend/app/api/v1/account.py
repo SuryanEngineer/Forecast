@@ -81,8 +81,8 @@ def change_password(payload: ChangePasswordRequest, user: User = Depends(get_cur
     user.password_hash = hash_password(payload.new_password)
     user.password_changed_at = datetime.now(timezone.utc)
     db.commit()
-    email_service.send_security_notice(user.email, "Your password was changed",
-                                       "The password on your Forecast account was just changed. All other devices were signed out.")
+    email_service.send_security_notice_bg(user.email, "Your password was changed",
+                                          "The password on your Forecast account was just changed. All other devices were signed out.")
     return TokenResponse(access_token=create_access_token(user.id), user_id=user.id)
 
 
@@ -120,7 +120,7 @@ def confirm_email_change(payload: CodeRequest, user: User = Depends(get_current_
     old = user.email
     user.email = row.target_email
     db.commit()
-    email_service.send_security_notice(old, "Your email was changed", f"The email on your Forecast account was changed to {user.email}.")
+    email_service.send_security_notice_bg(old, "Your email was changed", f"The email on your Forecast account was changed to {user.email}.")
     return _profile(user)
 
 
@@ -143,5 +143,5 @@ def delete_account(payload: DeleteAccountRequest, user: User = Depends(get_curre
     email = user.email
     account_service.delete_account(db, user)
     db.commit()
-    email_service.send_security_notice(email, "Your account was deleted", "Your Forecast account has been deleted and your personal data removed.")
+    email_service.send_security_notice_bg(email, "Your account was deleted", "Your Forecast account has been deleted and your personal data removed.")
     return MessageResponse(message="Account deleted.")

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
+from app.core.ip_throttle import password_reset_limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.user import User, UserRole
@@ -136,13 +137,16 @@ def heartbeat(request: Request, user: User = Depends(get_current_user), db: Sess
 
 @router.post("/password-reset/request", response_model=MessageResponse)
 def request_password_reset(
-    payload: PasswordResetRequestRequest, background: BackgroundTasks, db: Session = Depends(get_db)
+    payload: PasswordResetRequestRequest, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)
 ) -> MessageResponse:
     """Always returns the same message, instantly, whether or not the email is registered (no account-discovery oracle,
     not even by response time). The email itself is sent after the response, with retries."""
-    pending = password_reset_service.request_reset(db, payload.email.strip().lower())
-    if pending is not None:
-        background.add_task(password_reset_service.deliver_reset_code, pending)
+    ip = _client(request)[0] or "unknown"
+    # Backstop against one machine making the site email lots of different people (the per-account limits can't see that).
+    if password_reset_limiter.allow(ip, settings.PASSWORD_RESET_MAX_PER_IP_10MIN, 600):
+        pending = password_reset_service.request_reset(db, payload.email.strip().lower())
+        if pending is not None:
+            background.add_task(password_reset_service.deliver_reset_code, pending)
     return MessageResponse(message="If that email is registered, a 6-digit code is on its way. It can take a minute or two "
                                    f"and expires in {settings.EMAIL_CODE_EXPIRE_MINUTES} minutes.")
 
@@ -154,5 +158,6 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest, db: Session = D
     except AccountError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not ok:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That code is invalid or has expired.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="That code is invalid or has expired. If you've tried a few times, request a new code.")
     return MessageResponse(message="Password updated. You can now log in with your new password.")

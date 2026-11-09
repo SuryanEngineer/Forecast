@@ -89,6 +89,6 @@ def confirm_reset(db: Session, email: str, code: str, new_password: str) -> bool
     user.failed_login_count = 0
     user.locked_until = None
     db.commit()
-    email_service.send_security_notice(user.email, "Your password was changed",
-                                       "The password on your Forecast account was just changed. All other devices were signed out.")
+    email_service.send_security_notice_bg(user.email, "Your password was changed",
+                                          "The password on your Forecast account was just changed. All other devices were signed out.")
     return True

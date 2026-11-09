@@ -72,6 +72,22 @@ def issue_code_with_id(db: Session, user_id: uuid.UUID, purpose: str, target_ema
     return code, code_id
 
 
+_LAST_PRUNE = 0.0
+
+
+def prune(db: Session) -> int:
+    """Deletes codes older than a week (long expired, used or not) so the table doesn't grow forever. Runs at most
+    every 30 minutes; called from the maintenance pass. Codes expire after minutes, so nothing live is ever touched."""
+    import time
+
+    global _LAST_PRUNE
+    if time.monotonic() - _LAST_PRUNE < 1800:
+        return 0
+    _LAST_PRUNE = time.monotonic()
+    cutoff = _now() - timedelta(days=7)
+    return db.query(EmailCode).filter(EmailCode.created_at < cutoff).delete(synchronize_session=False)
+
+
 def verify_code(db: Session, user_id: uuid.UUID, purpose: str, code: str) -> EmailCode | None:
     """Returns the consumed EmailCode row if `code` is the user's current valid code, else None (and counts the
     failed attempt, burning the code after too many)."""
