@@ -250,7 +250,9 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
   const [orderShares, setOrderShares] = useState('1');
   // null = good until cancelled (the default). One tap picks a time limit.
   const [expiryMinutes, setExpiryMinutes] = useState<number | null>(null);
-  const [quickQty, setQuickQty] = useState(1);  const [buyQuote, setBuyQuote] = useState<QuickQuote | null>(null);
+  const [quickQty, setQuickQty] = useState(1);
+  const [qtyDraft, setQtyDraft] = useState<string | null>(null);  // what's typed in the box while editing (may be empty)
+  const [buyQuote, setBuyQuote] = useState<QuickQuote | null>(null);
   const [sellQuote, setSellQuote] = useState<QuickQuote | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -566,8 +568,15 @@ export function PlayerModal({ playerId, onClose, onOpenTournament }: Props) {
                     type="number"
                     min={1}
                     max={MAX_ORDER_SHARES}
-                    value={quickQty}
-                    onChange={e => setQuickQty(Math.min(MAX_ORDER_SHARES, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                    value={qtyDraft ?? String(quickQty)}
+                    onChange={e => {
+                      // Let the box go empty while typing; only a valid number updates the real quantity.
+                      const raw = e.target.value;
+                      setQtyDraft(raw);
+                      const n = parseInt(raw, 10);
+                      if (Number.isFinite(n) && n >= 1) setQuickQty(Math.min(MAX_ORDER_SHARES, n));
+                    }}
+                    onBlur={() => setQtyDraft(null)}
                     className="w-full px-3 py-2.5 rounded-xl border border-border font-mono text-foreground text-center outline-none"
                     style={{ background: 'var(--muted)', fontSize: 16, fontWeight: 700 }}
                   />

@@ -23,6 +23,7 @@ export function PlayerProfile({ playerId, navigate }: Props) {
   const player = getPlayer(playerId);
   const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState(1);
+  const [qtyDraft, setQtyDraft] = useState<string | null>(null);
 
   if (!player) {
     return (
@@ -326,8 +327,15 @@ export function PlayerProfile({ playerId, navigate }: Props) {
             <input
               type="number"
               min={1}
-              value={quantity}
-              onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              value={qtyDraft ?? String(quantity)}
+              onChange={e => {
+                // Let the box go empty while typing; only a valid number updates the real quantity.
+                const raw = e.target.value;
+                setQtyDraft(raw);
+                const n = parseInt(raw, 10);
+                if (Number.isFinite(n) && n >= 1) setQuantity(n);
+              }}
+              onBlur={() => setQtyDraft(null)}
               className="w-full px-4 py-3 rounded-xl border border-border font-mono text-foreground text-center outline-none transition-colors focus:border-primary/50 mb-4"
               style={{ background: 'var(--muted)', fontSize: 18, fontWeight: 700 }}
             />
