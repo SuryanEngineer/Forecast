@@ -125,6 +125,7 @@ def _build_calendar(db: Session, include_completed: bool) -> list[CalendarTourna
                 is_osirion_tracked=mapping is not None,
                 last_synced_at=mapping.last_synced_at if mapping else None,
                 entrant_count=entrant_counts.get(tournament.id, 0),
+                format_rules=tournament.format_rules,
             )
         )
     db.commit()
@@ -664,7 +665,7 @@ def get_live_leaderboard(
         tournament_id=tournament.id,
         tournament_name=tournament.name,
         tournament_status=tournament.status.value,
-        phase=compute_tournament_phase(tournament.status, tournament.start_time, tournament.end_time),
+        phase=compute_tournament_phase(tournament.status, tournament.start_time, tournament.end_time, tournament.format_rules),
         is_osirion_tracked=mapping is not None,
         window_begin_time=mapping.window_begin_time if mapping else None,
         window_end_time=mapping.window_end_time if mapping else None,

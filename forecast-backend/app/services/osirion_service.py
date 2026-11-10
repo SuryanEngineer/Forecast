@@ -63,7 +63,7 @@ from app.models.tournament import (
     TournamentStatus,
     TournamentType,
 )
-from app.engine import format_policy, performance_eval, tracking_policy
+from app.engine import completion, format_policy, performance_eval, tracking_policy
 from app.services import notification_service, player_service, tournament_classification_service, tournament_service
 from app.services.player_identity import skeleton
 
@@ -819,6 +819,8 @@ def sync_tournament(
                         result.error = "open round with no cash prize -- not tracked"
                         return result
                     new["paid_places"] = old.get("paid_places")
+                    new["expected_games"] = old.get("expected_games")
+                    new["progress"] = old.get("progress")
                     tournament.format_rules = new
                     db.commit()
                     if new["lobby"] == format_policy.LOBBY_OPEN:
@@ -979,7 +981,41 @@ def sync_tournament(
     # ValueError, and leave the tournament stuck showing as perpetually
     # "Live"/"Sync stalled" on the frontend even though it finished
     # normally and simply had no involvement from anyone we track.
-    if reached_end_of_leaderboard and window_ended and lan_hold and result.unlinked:
+    # Is the tournament REALLY over? The window end is when lobbies CLOSE; games already started keep running (and a final can
+    # run past it). A set lobby with a published game count is over when its LAST game has a winner (and every game before
+    # it); without a count, once the window has closed and no game has finished for a while; an open round, shortly after the
+    # lobbies close. See engine/completion.py. The verdict and progress are stored on the tournament for the phase / UI.
+    # (Historical backfills keep the old "window has ended" rule: they are already decided and never pay.)
+    if skip_finalize:
+        finish_ok = reached_end_of_leaderboard and window_ended
+    else:
+        finish_ok = False
+        if reached_end_of_leaderboard:
+            try:
+                rules = dict(tournament.format_rules or {})
+                progress = completion.analyze_games(all_entries)
+                verdict = completion.decide_over(
+                    now=datetime.now(timezone.utc), window_end=end_time, lobby=rules.get("lobby"),
+                    expected_games=rules.get("expected_games"), progress=progress,
+                )
+                state = {
+                    "games_seen": progress.games_seen, "games_done": progress.games_done, "over": verdict.over,
+                    "over_at": verdict.over_at.isoformat() if verdict.over_at else None, "reason": verdict.reason,
+                    "last_game_end": progress.last_game_end.isoformat() if progress.last_game_end else None,
+                }
+                if rules.get("progress") != state:
+                    rules["progress"] = state
+                    tournament.format_rules = rules
+                    db.commit()
+                finish_ok = verdict.over
+                if window_ended and not verdict.over:
+                    logger.info("Tournament %s (%s) is past its lobby close but not over yet: %s", tournament.id, tournament.name, verdict.reason)
+            except Exception:  # noqa: BLE001 -- never let the bookkeeping break a sync
+                db.rollback()
+                logger.exception("Could not assess completion of tournament %s", tournament.id)
+                finish_ok = window_ended  # fall back to the old rule rather than leave it unpaid forever
+
+    if finish_ok and lan_hold and result.unlinked:
         # Never pay dividends on an incomplete/misattributed LAN field. Resolve with
         # scripts/link_lan_accounts.py; the next sync pass (45s) finalizes automatically.
         result.error = (
@@ -990,7 +1026,7 @@ def sync_tournament(
         logger.warning("Tournament %s: %s", tournament.id, result.error)
         return result
 
-    if reached_end_of_leaderboard and window_ended:
+    if finish_ok:
         has_any_results = (
             db.query(PlacementResult.id).filter(PlacementResult.tournament_id == tournament.id).first() is not None
         )
@@ -1234,6 +1270,9 @@ def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobb
         for cluster in tracking_policy.cluster_by_gap(group, lambda x: x.begin_time, lambda x: x.end_time):
             # `cluster` = one edition's windows in time order (a multi-day final, or a multi-round event).
             first = cluster[0]
+            if tracking_policy.is_hidden_family(first.classification_text):
+                skip("hidden_family", len(cluster))
+                continue
             if not any(w.has_cash_payout for w in cluster):
                 skip("no_cash", len(cluster))
                 continue
@@ -1290,7 +1329,22 @@ def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobb
                     skip("region")
                     continue
                 planned.append(PlannedWindow(w, ttype, list(members.get(key) or [w]), rec))
+
+    # The window's published game count (`matchCap`; 0 = none published): the tournament is over when that many games each
+    # have a winner (engine/completion.py), not merely when the lobbies close.
+    for p in planned:
+        cap = _match_cap(p.window)
+        if cap and p.format_rules is not None:
+            p.format_rules = {**p.format_rules, "expected_games": cap}
     return planned, skips
+
+
+def _match_cap(window: AvailableWindow) -> int:
+    try:
+        cap = int((window.raw_event_window or {}).get("matchCap") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return cap if 0 < cap <= 40 else 0
 
 
 # Tiers whose pool comes from the event's format (lobby / stage / cash). FNCS, Global and Major events keep their tier pool.

@@ -6,6 +6,7 @@ import {
   toNumber,
   type AnnouncedTournament,
   type CalendarTournamentResponse,
+  type LiveProgress,
   type TournamentResponse,
 } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
@@ -152,6 +153,27 @@ const TIER_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+/** One line on how far an event has got. Open rounds say when lobbies close (their games can't be counted); set-lobby events
+ * with a known game count say which game they're on and that they end when the last game has a winner. */
+function progressText(p: LiveProgress | null | undefined, endTime: string | null, phase: string): string | null {
+  if (phase === 'upcoming' || phase === 'completed') return null;
+  const end = endTime ? new Date(endTime) : null;
+  const closeAt = end ? end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
+  const closed = end ? end.getTime() <= Date.now() : false;
+  if (p?.lobby === 'open') {
+    if (!closeAt) return null;
+    return closed ? `Lobbies closed at ${closeAt} · waiting for the last games to finish` : `Lobbies close at ${closeAt}`;
+  }
+  if (p?.games_expected) {
+    const done = p.games_done ?? 0;
+    if (p.over) return `All ${p.games_expected} games finished`;
+    return `${done} of ${p.games_expected} games finished · over when game ${p.games_expected} has a winner`
+      + (closeAt && !closed ? ` · lobbies close ${closeAt}` : '');
+  }
+  if (closed && p && p.over === false) return 'Lobbies closed · games still running';
+  return null;
+}
+
 function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
   const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
   // `phase` is computed server-side from status + start_time + end_time
@@ -170,6 +192,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
   const startDate = tournament.start_time ? new Date(tournament.start_time) : null;
   const dateLabel = startDate ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD';
   const timeLabel = startDate ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
+  const progressLine = progressText(tournament.live_progress, tournament.end_time, tournament.phase);
 
   return (
     <button
@@ -206,6 +229,9 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
           {tournament.region ? ` · ${tournament.region}` : ''}
           {tournament.entrant_count > 0 ? ` · ${tournament.entrant_count} qualified` : ''}
         </p>
+        {progressLine && (
+          <p className="mt-0.5" style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{progressLine}</p>
+        )}
       </div>
 
       <div className="text-right shrink-0">

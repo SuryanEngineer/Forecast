@@ -67,7 +67,10 @@ def _cached_lobby(w):
 
 def select_open_rounds(db: Session, windows: list) -> list:
     """Which of Osirion's windows count as open rounds of something we track (pure given the windows + the DB)."""
-    mappings = db.query(OsirionTournamentMapping).all()
+    mappings = [
+        m for m in db.query(OsirionTournamentMapping).all()
+        if not tracking_policy.is_hidden_family(f"{m.osirion_event_id} {m.osirion_display_name or ''}")
+    ]
     tracked_keys = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in mappings}
     tracked_events = {m.osirion_event_id for m in mappings}
     planned, _ = osirion_service.plan_windows(db, windows, check_lobby=_cached_lobby)
@@ -94,7 +97,7 @@ def select_open_rounds(db: Session, windows: list) -> list:
         if w.is_zero_build or osirion_service.platform_restriction(w) or w.has_cash_payout:
             continue
         text = f"{w.event_group} {w.event_id} {w.display_name}"
-        if tracking_policy.is_excluded_family(text):
+        if tracking_policy.is_excluded_family(text) or tracking_policy.is_hidden_family(text):
             continue
         if not tracking_policy.reload_region_ok(w.regions, osirion_service.ALLOWED_TRACKING_REGIONS):
             continue

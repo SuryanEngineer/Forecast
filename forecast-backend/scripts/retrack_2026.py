@@ -189,7 +189,7 @@ def main() -> None:
         for m in mappings:
             rec = rules_by_key.get((m.leaderboard_event_id, m.leaderboard_event_window_id))
             t = db.get(Tournament, m.tournament_id)
-            if rec is None or t is None or t.format_rules:
+            if rec is None or t is None or (t.format_rules or {}).get("lobby"):
                 continue
             paid = _has_payouts(db, t.id)
             old = economic_params_service.get_tournament_pool(db, t.tournament_type, t.region, None)
@@ -216,6 +216,8 @@ def main() -> None:
                 continue
             if t.tournament_type == TournamentType.PERFORMANCE_EVAL and not args.include_performance_evals:
                 continue
+            if tracking_policy.is_hidden_family(t.name):
+                continue  # the Arenas Cash Cup is removed from the product
             m = db.query(OsirionTournamentMapping).filter(OsirionTournamentMapping.tournament_id == t.id).one_or_none()
             if m is None:
                 continue
@@ -266,7 +268,7 @@ def main() -> None:
             print(f"  - reopening {t.name}")
             try:
                 t.is_historical_archive = False
-                if not t.format_rules:
+                if not (t.format_rules or {}).get("lobby"):
                     # an event still in progress isn't in the ended-window plan: give it the cautious cash-round rule and let
                     # the first sync settle open vs set lobby from its leaderboard
                     t.format_rules = rules_by_key.get((m.leaderboard_event_id, m.leaderboard_event_window_id)) or format_policy.decide(

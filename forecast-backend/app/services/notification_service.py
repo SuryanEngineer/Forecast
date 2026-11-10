@@ -41,6 +41,16 @@ MAX_PER_USER = 300
 _TRAILING_DATE = re.compile(r"\s*[—–-]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\s*$", re.IGNORECASE)
 
 
+def _parse_when(value) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _label(name: str | None) -> str:
     """A tournament's name for message text: without the trailing UTC date the tracker appends ("... — Nov 15, 2026"), which can
     read as a different day than the viewer's local date."""
@@ -245,19 +255,32 @@ def scan_tournament_events(db: Session) -> dict[str, int]:
         .filter(Tournament.is_historical_archive.is_(False))
         .filter(
             ((Tournament.start_time <= now) & (Tournament.start_time >= since))
-            | ((Tournament.end_time <= now) & (Tournament.end_time >= since))
+            # a final can run hours past its lobby close, so look further back for the close
+            | ((Tournament.end_time <= now) & (Tournament.end_time >= since - timedelta(hours=8)))
             | ((Tournament.status == TournamentStatus.FINALIZED) & (Tournament.updated_at >= since))
         )
         .all()
     )
     for t in tournaments:
         start, end = aware(t.start_time), aware(t.end_time)
-        is_start = start is not None and since <= start <= now
-        # Over = its end time just passed (or, with no end time on file, it was just finalized). A cup finalized late
-        # (e.g. a retroactive payout for an old event) is not announced as "just ended".
-        is_end = (end is not None and since <= end <= now) or (
-            end is None and t.status == TournamentStatus.FINALIZED and aware(t.updated_at) >= since
-        )
+        # "Over" is decided by the sync (engine/completion.py): the last game of the event has a winner, or an open round's
+        # lobbies closed and the last games had time to finish -- NOT merely the window's close time, because games started
+        # before the close keep running. Events the sync has not assessed yet fall back to the close time.
+        progress = (t.format_rules or {}).get("progress") or {}
+        if progress:
+            over = bool(progress.get("over"))
+            over_at = _parse_when(progress.get("over_at")) if over else None
+            is_end = over and over_at is not None and since <= over_at <= now
+            already_over = over
+        else:
+            over_at = None
+            is_end = (end is not None and since <= end <= now) or (
+                end is None and t.status == TournamentStatus.FINALIZED and aware(t.updated_at) >= since
+            )
+            already_over = end is not None and end <= now
+        # Never announce "started" for an event that is already over (an event first seen after it finished would otherwise
+        # produce "started" and "ended" together). A cup finalized late (a retroactive payout) is not announced as "just ended".
+        is_start = start is not None and since <= start <= now and not already_over
         if not (is_start or is_end):
             continue
         pids = {r[0] for r in db.query(PlacementResult.player_id).filter(PlacementResult.tournament_id == t.id).all()}

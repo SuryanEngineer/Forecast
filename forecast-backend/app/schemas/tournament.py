@@ -40,7 +40,23 @@ class TournamentPhase(str, enum.Enum):
     COMPLETED = "completed"
 
 
-def compute_tournament_phase(status: TournamentStatus, start_time: datetime | None, end_time: datetime | None) -> TournamentPhase:
+def progress_view(rules: dict | None) -> dict | None:
+    """What the UI needs to say about how far a tournament has got (from Tournament.format_rules, written by the sync):
+    the lobby type, the number of games the window publishes (`matchCap`), how many have a winner, and whether it is over."""
+    r = rules or {}
+    p = r.get("progress") or {}
+    out = {
+        "lobby": r.get("lobby"),
+        "games_expected": r.get("expected_games") or None,
+        "games_done": p.get("games_done"),
+        "over": p.get("over"),
+    }
+    return out if any(v is not None for v in out.values()) else None
+
+
+def compute_tournament_phase(
+    status: TournamentStatus, start_time: datetime | None, end_time: datetime | None, rules: dict | None = None
+) -> TournamentPhase:
     if status == TournamentStatus.FINALIZED:
         return TournamentPhase.COMPLETED
 
@@ -53,6 +69,11 @@ def compute_tournament_phase(status: TournamentStatus, start_time: datetime | No
     if start_time is not None and start_time > now:
         return TournamentPhase.UPCOMING
     if end_time is not None and end_time <= now:
+        # The window end is when lobbies CLOSE; games already started keep running. A set-lobby event whose last sync found
+        # games still without a final winner is still LIVE -- only "over" (or an open round past its close) is FINALIZING.
+        progress = (rules or {}).get("progress") or {}
+        if progress and progress.get("over") is False and (rules or {}).get("lobby") != "open":
+            return TournamentPhase.LIVE
         return TournamentPhase.FINALIZING
     return TournamentPhase.LIVE
 
@@ -85,13 +106,20 @@ class TournamentResponse(BaseModel):
     prize_pool: Decimal | None
     status: TournamentStatus
     created_at: datetime
+    # How the event is run + how far it has got (read for the phase and the progress line; not sent as such).
+    format_rules: dict | None = Field(default=None, exclude=True)
 
     model_config = {"from_attributes": True}
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def phase(self) -> TournamentPhase:
-        return compute_tournament_phase(self.status, self.start_time, self.end_time)
+        return compute_tournament_phase(self.status, self.start_time, self.end_time, self.format_rules)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def live_progress(self) -> dict | None:
+        return progress_view(self.format_rules)
 
 
 class PlacementResultResponse(BaseModel):
@@ -280,13 +308,19 @@ class CalendarTournamentResponse(BaseModel):
     # round has concluded and been synced, or once real results exist
     # (at that point entrants are superseded by actual placements).
     entrant_count: int = 0
+    format_rules: dict | None = Field(default=None, exclude=True)
 
     model_config = {"from_attributes": True}
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def phase(self) -> TournamentPhase:
-        return compute_tournament_phase(self.status, self.start_time, self.end_time)
+        return compute_tournament_phase(self.status, self.start_time, self.end_time, self.format_rules)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def live_progress(self) -> dict | None:
+        return progress_view(self.format_rules)
 
 
 class AnnouncedTournamentResponse(BaseModel):

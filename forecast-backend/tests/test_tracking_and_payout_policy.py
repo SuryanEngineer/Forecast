@@ -7,7 +7,7 @@ from decimal import Decimal as D
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.engine import format_policy as fp, payout_policy, tracking_policy as tp
+from app.engine import completion as comp, format_policy as fp, payout_policy, tracking_policy as tp
 from app.engine.dividend_calculator import DEFAULT_PLACEMENT_CURVE, placement_payout_fraction
 
 
@@ -141,6 +141,83 @@ class TestFormatPolicy(unittest.TestCase):
 
     def test_describe(self):
         self.assertIn("open lobby", fp.describe({"lobby": "open", "stage": "round", "cash": True, "scoring": "placement"}))
+
+
+def _sess(sid, end, place):
+    return {"sessionId": sid, "endTime": end, "trackedStats": {"PLACEMENT_STAT_INDEX": place}}
+
+
+class TestCompletion(unittest.TestCase):
+    T0 = datetime(2026, 11, 14, 19, 0, tzinfo=timezone.utc)
+
+    def at(self, minutes):
+        return (self.T0 + timedelta(minutes=minutes)).isoformat()
+
+    def entries(self, games_with_winner, games_total=None):
+        """Two teams; game g is won by team A when g <= games_with_winner (otherwise nobody has placement 1 yet)."""
+        total = games_total or games_with_winner
+        a, b = [], []
+        for g in range(1, total + 1):
+            won = g <= games_with_winner
+            a.append(_sess(f"g{g}", self.at(g * 20), 1 if won else 2))
+            b.append(_sess(f"g{g}", self.at(g * 20), 2 if won else 3))
+        return [{"sessionHistory": a}, {"sessionHistory": b}]
+
+    def test_progress(self):
+        p = comp.analyze_games(self.entries(3))
+        self.assertEqual((p.games_seen, p.games_done), (3, 3))
+        self.assertEqual(p.last_game_end, self.T0 + timedelta(minutes=60))
+        p = comp.analyze_games(self.entries(2, games_total=3))   # game 3 played, no winner recorded
+        self.assertEqual((p.games_seen, p.games_done), (3, 2))
+        self.assertEqual(comp.analyze_games([]).games_seen, 0)
+
+    def test_gap_in_winners_stops_the_count(self):
+        # game 2 has no winner but game 3 does: only game 1 counts as "done"
+        a = [_sess("g1", self.at(20), 1), _sess("g2", self.at(40), 2), _sess("g3", self.at(60), 1)]
+        p = comp.analyze_games([{"sessionHistory": a}])
+        self.assertEqual(p.games_done, 1)
+
+    def test_final_needs_the_last_game_won(self):
+        close = self.T0 + timedelta(minutes=150)
+        now = close + timedelta(hours=1)  # an hour AFTER the close, and still not over
+        v = comp.decide_over(now=now, window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(9, games_total=10)))
+        self.assertFalse(v.over)  # game 10 has no winner yet
+        v = comp.decide_over(now=now, window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(10)))
+        self.assertTrue(v.over)
+        self.assertEqual(v.over_at, self.T0 + timedelta(minutes=200))  # when game 10 ended, not the close time
+        # one game short of the count never counts as over, even long after the close...
+        v = comp.decide_over(now=close + timedelta(minutes=90), window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(9)))
+        self.assertFalse(v.over)
+
+    def test_safety_valve(self):
+        close = self.T0 + timedelta(minutes=150)
+        v = comp.decide_over(now=close + timedelta(hours=4), window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(8)))
+        self.assertTrue(v.over)  # nothing played for ages and 3h past the close
+
+    def test_unknown_game_count(self):
+        close = self.T0 + timedelta(minutes=100)
+        p = comp.analyze_games(self.entries(4))  # last game ended at +80 min
+        self.assertFalse(comp.decide_over(now=close - timedelta(minutes=5), window_end=close, lobby="set", expected_games=None, progress=p).over)
+        # closed, but a game finished 10 minutes ago: still going
+        busy = comp.analyze_games(self.entries(5))  # last game ended at +100
+        self.assertFalse(comp.decide_over(now=close + timedelta(minutes=10), window_end=close, lobby="set", expected_games=0, progress=busy).over)
+        self.assertTrue(comp.decide_over(now=close + timedelta(minutes=40), window_end=close, lobby="set", expected_games=0, progress=busy).over)
+
+    def test_open_round_uses_the_close_plus_grace(self):
+        close = self.T0
+        p = comp.GameProgress()
+        self.assertFalse(comp.decide_over(now=close + timedelta(minutes=20), window_end=close, lobby="open", expected_games=6, progress=p).over)
+        v = comp.decide_over(now=close + timedelta(minutes=50), window_end=close, lobby="open", expected_games=6, progress=p)
+        self.assertTrue(v.over)
+        self.assertEqual(v.over_at, close)
+
+
+class TestHiddenFamily(unittest.TestCase):
+    def test_arenas_removed(self):
+        for text in ("Arenas Cash Cup — Nov 10, 2026", "epicgames_S43_ArenaCashCup_EU", "Season42_ArenaCashCup", "Arenas Test Cup", "S42_ArenaTestCup_Event9_EU"):
+            self.assertTrue(tp.is_hidden_family(text), text)
+        for text in ("Trios Cash Cup", "Solo Series", "FNCS Division 1", "Arenas Performance Evaluation", None):
+            self.assertFalse(tp.is_hidden_family(text), text)
 
 
 if __name__ == "__main__":

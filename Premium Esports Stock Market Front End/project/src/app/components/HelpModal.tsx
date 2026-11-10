@@ -504,7 +504,8 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
             multi-round event, pays the smaller Qualifier pool. An open round with no cash prize pays nothing, so it only appears in the “Open rounds” or “All” view of the Tournaments page,
             never in “Pays dividends”. FNCS events pay the FNCS pool online and the Global pool at a LAN.</p>
             <p>The split also follows each event's own scoring rules: an event that only scores game wins pays per game won, like
-            Performance Evaluation cups, and an event whose payout table pays a limited number of places pays only those places (the Arenas Cash Cup, for example, pays its top 10 in EU, 7 in NAC and 5 in NAW).</p>
+            Performance Evaluation cups, and an event whose payout table pays a limited number of places pays only those places.</p>
+            <p>A tournament is only marked over when it really is: a set-lobby event is over once its last game (for example game 10 of 10) has a winner, and an open round is over once its lobbies have closed and the last games have had time to finish. The scheduled close time alone doesn't end an event, because games that started before it keep running.</p>
             <Fact label="Cash Cup pool (final set lobby)" value="$300,000" />
             <Fact label="Qualifier pool (open cash round / later set-lobby round)" value="$150,000" />
             <Fact label="FNCS Finals / online Major pool" value="$1,500,000" />

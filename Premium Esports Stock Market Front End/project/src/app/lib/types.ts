@@ -187,6 +187,15 @@ export interface TradeResponse {
 // stuck), so "not finalized" never meant "happening right now".
 export type TournamentPhase = 'upcoming' | 'live' | 'finalizing' | 'completed';
 
+// How far a tournament has got, from the backend's game-aware completion check. `over` is true only once the last game has
+// a winner (set lobby) or an open round's lobbies have closed and the final games had time to finish.
+export interface LiveProgress {
+  lobby: 'set' | 'open' | 'unknown' | null;
+  games_expected: number | null;
+  games_done: number | null;
+  over: boolean | null;
+}
+
 export interface TournamentResponse {
   id: string;
   name: string;
@@ -197,6 +206,7 @@ export interface TournamentResponse {
   prize_pool: Money | null;
   status: 'scheduled' | 'results_pending' | 'finalized';
   phase: TournamentPhase;
+  live_progress?: LiveProgress | null;
   created_at: string;
 }
 
@@ -214,6 +224,7 @@ export interface CalendarTournamentResponse {
   end_time: string | null;
   status: 'scheduled' | 'results_pending' | 'finalized';
   phase: TournamentPhase;
+  live_progress?: LiveProgress | null;
   total_dividend_pool: Money | null;
   is_osirion_tracked: boolean;
   last_synced_at: string | null;
