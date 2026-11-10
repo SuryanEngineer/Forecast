@@ -907,7 +907,7 @@ def check_tournament_rework(ctx: dict) -> None:
         got = {p.window.display_name: p.tournament_type for p in planned}
         check("FNCS Solo Reload Finals is tracked as FNCS Finals (even before cash is published)", got.get("FNCS Solo Reload Finals") == TournamentType.FNCS_FINALS, str(got))
         check("Reload Heats and Last Chance are FNCS Qualifiers", got.get("FNCS Solo Reload Heats Session 1") == TournamentType.FNCS_QUALIFIER and got.get("FNCS Solo Reload Last Chance Qualifier Session 2") == TournamentType.FNCS_QUALIFIER, str(got))
-        check("the Arenas Cash Cup is tracked as a Cash Cup", got.get("Arenas Cash Cup") == TournamentType.CASH_CUP, str(got))
+        check("the Arenas Cash Cup is no longer tracked", "Arenas Cash Cup" not in got, str(got))
         check("open rounds and Zero Build are never tracked", "FNCS Solo Reload Open Round 1" not in got and "FNCS Solo Reload ZB Heats" not in got and skips.get("open_round") == 1 and skips.get("zero_build") == 1, f"{got} {skips}")
         planned2, skips2 = osirion_service.plan_windows(db, wins, check_lobby=lambda w: False)
         got2 = {p.window.display_name for p in planned2}
