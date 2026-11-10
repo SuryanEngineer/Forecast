@@ -16,6 +16,7 @@ How "read" works (the app does the other half, see NotificationCenter.tsx):
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -35,6 +36,15 @@ logger = logging.getLogger("forecast.notifications")
 EVENT_RECENCY = timedelta(hours=6)
 RETENTION_DAYS = 45
 MAX_PER_USER = 300
+
+
+_TRAILING_DATE = re.compile(r"\s*[—–-]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\s*$", re.IGNORECASE)
+
+
+def _label(name: str | None) -> str:
+    """A tournament's name for message text: without the trailing UTC date the tracker appends ("... — Nov 15, 2026"), which can
+    read as a different day than the viewer's local date."""
+    return _TRAILING_DATE.sub("", name or "").strip()
 
 
 def _usd(amount) -> str:
@@ -174,8 +184,8 @@ def dividends_paid(db: Session, tournament_id: uuid.UUID) -> int:
         who = ", ".join(players[:3]) + (f" +{len(players) - 3} more" if len(players) > 3 else "")
         if notify(
             db, uid, "dividend", f"Dividends paid: +{_usd(g['total'])}",
-            f"{tournament.name} paid you {_usd(g['total'])} for {who}.",
-            data={"tournament_id": str(tournament_id), "tournament_name": tournament.name,
+            f"{_label(tournament.name)} paid you {_usd(g['total'])} for {who}.",
+            data={"tournament_id": str(tournament_id), "tournament_name": _label(tournament.name),
                   "amount": float(g["total"]), "players": players[:8]},
             ref_key=f"dividend:{tournament_id}", created_at=dated,
         ):
@@ -208,8 +218,8 @@ def game_win(db: Session, tournament: object, player: object, wins: int, total_w
     for uid in holders:
         if notify(
             db, uid, "game_win", f"{name} won a game",
-            f"{name} just won a game in {tournament.name}" + (f" ({_plural(total_wins, 'win')} so far)." if total_wins > 1 else "."),
-            data={"tournament_id": str(tournament.id), "tournament_name": tournament.name, "player_id": str(player.id),
+            f"{name} just won a game in {_label(tournament.name)}" + (f" ({_plural(total_wins, 'win')} so far)." if total_wins > 1 else "."),
+            data={"tournament_id": str(tournament.id), "tournament_name": _label(tournament.name), "player_id": str(player.id),
                   "player_name": name, "wins": total_wins},
             ref_key=f"win:{tournament.id}:{player.id}:{total_wins}",
         ):
@@ -257,16 +267,16 @@ def scan_tournament_events(db: Session) -> dict[str, int]:
             names = _player_names(db, held)
             who = ", ".join(names[:3]) + (f" +{len(names) - 3} more" if len(names) > 3 else "")
             if is_start and notify(
-                db, uid, "tournament_start", f"{t.name} has started",
-                f"{t.name} is live now. You own shares of {who}.",
-                data={"tournament_id": str(t.id), "tournament_name": t.name, "players": names[:8]},
+                db, uid, "tournament_start", f"{_label(t.name)} has started",
+                f"{_label(t.name)} is live now. You own shares of {who}.",
+                data={"tournament_id": str(t.id), "tournament_name": _label(t.name), "players": names[:8]},
                 ref_key=f"tstart:{t.id}",
             ):
                 started += 1
             if is_end and notify(
-                db, uid, "tournament_end", f"{t.name} has ended",
-                f"{t.name} is over. You own shares of {who}; dividends are paid once results are final.",
-                data={"tournament_id": str(t.id), "tournament_name": t.name, "players": names[:8]},
+                db, uid, "tournament_end", f"{_label(t.name)} has ended",
+                f"{_label(t.name)} is over. You own shares of {who}; dividends are paid once results are final.",
+                data={"tournament_id": str(t.id), "tournament_name": _label(t.name), "players": names[:8]},
                 ref_key=f"tend:{t.id}",
             ):
                 ended += 1

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Calendar } from 'lucide-react';
 import { tournamentDisplayName } from '../lib/tournamentName';
 import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
@@ -10,7 +10,7 @@ import {
 } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { HelpButton } from './HelpModal';
-import { OpenRoundsSection } from './OpenRounds';
+import { OpenRoundRow, OpenRoundsSection, RoundModal, roundName, useOpenRounds, type OpenRound } from './OpenRounds';
 import { usd } from '../lib/format';
 
 interface Props {
@@ -307,11 +307,56 @@ export function NextEventSection({ openTournament }: { openTournament: (tourname
   return <div className="space-y-4">{nextCard}{lastCard}</div>;
 }
 
+type View = 'dividends' | 'open' | 'all';
+const VIEW_KEY = 'forecast:tournament-view';
+const VIEWS: { id: View; label: string; hint: string }[] = [
+  { id: 'dividends', label: 'Pays dividends', hint: 'Tournaments that pay a dividend to the people who own the players in them.' },
+  { id: 'open', label: 'Open rounds', hint: 'Open rounds anyone can enter. They pay nothing, but many lead into tournaments that do.' },
+  { id: 'all', label: 'All', hint: 'Dividend tournaments and open rounds together. Open rounds are marked “No payout”.' },
+];
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+
+const PRESETS: { label: string; range: () => [string, string] }[] = [
+  { label: 'Today', range: () => { const t = ymd(new Date()); return [t, t]; } },
+  { label: 'Next 7 days', range: () => [ymd(new Date()), ymd(addDays(new Date(), 7))] },
+  { label: 'Last 7 days', range: () => [ymd(addDays(new Date(), -7)), ymd(new Date())] },
+  { label: 'Next 30 days', range: () => [ymd(new Date()), ymd(addDays(new Date(), 30))] },
+  { label: 'Last 30 days', range: () => [ymd(addDays(new Date(), -30)), ymd(new Date())] },
+];
+
+// One list entry: a tracked tournament, an announced one, or an open round (no payout).
+type Entry = { key: string; start: number; tracked?: CalendarTournamentResponse; announced?: AnnouncedTournament; open?: OpenRound };
+
 export function Tournaments({ openTournament }: Props) {
-  // One calendar: live events first (red), then the next event (big card), then everything else still to come in date
-  // order, then events awaiting final results, then completed events (newest first).
+  // Views: tournaments that pay dividends (default), the open rounds that pay nothing, or both together.
+  // Dividend view: live events first (red), then the next event (big card), then everything still to come in date order,
+  // then completed events (newest first). A search or a date range turns it into one flat, filtered list.
   const { data: calendar, loading } = useTournamentCalendar(true);
   const { data: announced } = useAnnouncedTournaments();
+
+  const [view, setView] = useState<View>(() => {
+    try { const v = localStorage.getItem(VIEW_KEY); return v === 'open' || v === 'all' ? v : 'dividends'; } catch { return 'dividends'; }
+  });
+  const chooseView = (v: View) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* storage unavailable */ } };
+
+  // Date range (inclusive, local calendar days, applied to the event's start time).
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const rangeActive = Boolean(from || to);
+  const inRange = useCallback((iso: string | null) => {
+    if (!from && !to) return true;
+    if (!iso) return false;
+    const t = new Date(iso).getTime();
+    if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
+    if (to && t > new Date(`${to}T23:59:59.999`).getTime()) return false;
+    return true;
+  }, [from, to]);
+
+  const { rounds: openRounds, error: openError } = useOpenRounds(view === 'all');
+  const [openedRound, setOpenedRound] = useState<OpenRound | null>(null);
 
   const toTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
     id: t.id,
@@ -326,40 +371,61 @@ export function Tournaments({ openTournament }: Props) {
     created_at: t.start_time ?? new Date().toISOString(),
   });
 
-  type Upcoming = { key: string; start: number; tracked?: CalendarTournamentResponse; announced?: AnnouncedTournament };
   // "Finalizing" (started, results still being confirmed) counts as live: same card, blank leaderboard until results arrive.
   const live = calendar.filter(t => t.phase === 'live' || t.phase === 'finalizing').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
   const completed = calendar.filter(t => t.phase === 'completed').sort((a, b) => startMs(b.start_time) - startMs(a.start_time));
-  const upcoming: Upcoming[] = [
+  const upcoming: Entry[] = [
     ...calendar.filter(t => t.phase === 'upcoming').map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })),
     ...announced.map(e => ({ key: `a-${e.event_id}`, start: startMs(e.start_time), announced: e })),
   ].sort((a, b) => a.start - b.start);
   // A live event IS the current "next event", so the Next Event card only appears when nothing is live.
-  const [next, laterUpcoming] = live.length > 0 ? [undefined, upcoming] : [upcoming[0], upcoming.slice(1)];
+  const [next, laterDividend] = live.length > 0 ? [undefined, upcoming] : [upcoming[0], upcoming.slice(1)];
 
-  const rowFor = (u: Upcoming) =>
+  const openEntries: Entry[] = view === 'all'
+    ? (openRounds ?? []).map(r => ({ key: `o-${r.leaderboard_event_id}/${r.leaderboard_event_window_id}`, start: startMs(r.start_time), open: r }))
+    : [];
+  const openUpcoming = openEntries.filter(e => e.open!.status !== 'finished');
+  const openFinished = openEntries.filter(e => e.open!.status === 'finished');
+  const comingUp = [...laterDividend, ...openUpcoming].sort((a, b) => a.start - b.start);
+  const completedAll: Entry[] = [...completed.map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })), ...openFinished].sort((a, b) => b.start - a.start);
+
+  const rowFor = (u: Entry) =>
     u.tracked
       ? <CalendarRow key={u.key} tournament={u.tracked} onOpen={() => openTournament(toTournament(u.tracked!))} />
-      : <AnnouncedRow key={u.key} event={u.announced!} />;
+      : u.open
+        ? <OpenRoundRow key={u.key} round={u.open} onOpen={() => setOpenedRound(u.open!)} />
+        : <AnnouncedRow key={u.key} event={u.announced!} />;
 
-  const empty = !loading && calendar.length === 0 && announced.length === 0;
+  const empty = !loading && calendar.length === 0 && announced.length === 0 && view !== 'open';
 
-  // Search: matches name, region or event type across every phase, shown as one flat list (live, then upcoming by date, then completed).
+  // Search (name, region or type) and the date range turn the page into one flat list: live, then what is still to come by
+  // date, then finished events newest first. Open rounds are included in the All view.
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
+  const filtering = Boolean(q) || rangeActive;
   const matches = (name: string, region: string | null, type: string) =>
-    [tournamentDisplayName(name, region), name, region ?? '', TIER_LABELS[type] ?? type].some(s => s.toLowerCase().includes(q));
-  const searchResults: React.ReactNode[] = q
+    !q || [tournamentDisplayName(name, region), name, region ?? '', TIER_LABELS[type] ?? type].some(s => s.toLowerCase().includes(q));
+  const entryMatches = (e: Entry) =>
+    e.tracked ? matches(e.tracked.name, e.tracked.region, e.tracked.tournament_type) && inRange(e.tracked.start_time)
+    : e.announced ? matches(e.announced.name, e.announced.region, e.announced.tournament_type) && inRange(e.announced.start_time)
+    : !q || roundName(e.open!).toLowerCase().includes(q) ? inRange(e.open!.start_time) : false;
+
+  const flatNodes: React.ReactNode[] = filtering
     ? [
-        ...live.filter(t => matches(t.name, t.region, t.tournament_type)),
-        ...upcoming.filter(u => (u.tracked ? matches(u.tracked.name, u.tracked.region, u.tracked.tournament_type) : matches(u.announced!.name, u.announced!.region, u.announced!.tournament_type))),
-        ...completed.filter(t => matches(t.name, t.region, t.tournament_type)),
-      ].map(item =>
-        'key' in item
-          ? rowFor(item as Upcoming)
-          : <CalendarRow key={(item as CalendarTournamentResponse).id} tournament={item as CalendarTournamentResponse} onOpen={() => openTournament(toTournament(item as CalendarTournamentResponse))} />
-      )
+        ...live.filter(t => matches(t.name, t.region, t.tournament_type) && inRange(t.start_time)).map(t => (
+          <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />
+        )),
+        ...comingUp.filter(entryMatches).map(rowFor),
+        ...completedAll.filter(entryMatches).map(rowFor),
+      ]
     : [];
+
+  const presetActive = (p: typeof PRESETS[number]) => { const [a, b] = p.range(); return from === a && to === b; };
+  const chip = (active: boolean): React.CSSProperties => ({
+    fontSize: 12, borderColor: active ? 'var(--primary)' : 'var(--border)',
+    color: active ? 'var(--foreground)' : 'var(--muted-foreground)', background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+  });
+  const dateInput = 'px-2.5 py-1.5 rounded-lg border border-border text-foreground outline-none focus:border-primary/50';
 
   return (
     <div className="p-6 page-pad max-w-[900px] mx-auto space-y-4">
@@ -376,65 +442,118 @@ export function Tournaments({ openTournament }: Props) {
         </p>
       </div>
 
-      <input
-        type="search"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Search tournaments by name, region or type"
-        aria-label="Search tournaments"
-        className="w-full px-4 py-2.5 rounded-xl border border-border text-foreground outline-none transition-colors focus:border-primary/50"
-        style={{ background: 'var(--card)', fontSize: 14 }}
-      />
+      {/* What to show: dividend tournaments, the no-payout open rounds, or both. */}
+      <div>
+        <div className="inline-flex flex-wrap gap-1.5" role="tablist" aria-label="Which tournaments to show">
+          {VIEWS.map(v => (
+            <button
+              key={v.id} role="tab" aria-selected={view === v.id} onClick={() => chooseView(v.id)}
+              className="px-3.5 py-1.5 rounded-full border font-semibold" style={chip(view === v.id)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12 }}>{VIEWS.find(v => v.id === view)!.hint}</p>
+      </div>
 
-      {loading && calendar.length === 0 && (
-        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>
-      )}
-      {empty && (
-        <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments announced yet — new ones are picked up automatically.</p>
+      {/* Date range */}
+      <div className="rounded-xl border border-border p-3 space-y-2" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground font-semibold" style={{ fontSize: 12 }}>Date range</span>
+          <label className="flex items-center gap-1.5 text-muted-foreground" style={{ fontSize: 12 }}>
+            From
+            <input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} aria-label="From date" className={dateInput} style={{ background: 'var(--card)', fontSize: 13 }} />
+          </label>
+          <label className="flex items-center gap-1.5 text-muted-foreground" style={{ fontSize: 12 }}>
+            To
+            <input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} aria-label="To date" className={dateInput} style={{ background: 'var(--card)', fontSize: 13 }} />
+          </label>
+          {rangeActive && (
+            <button onClick={() => { setFrom(''); setTo(''); }} className="px-2.5 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground" style={{ fontSize: 12 }}>
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map(p => (
+            <button key={p.label} onClick={() => { const [a, b] = p.range(); setFrom(a); setTo(b); }} className="px-3 py-1 rounded-full border" style={chip(presetActive(p))}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view !== 'open' && (
+        <input
+          type="search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search tournaments by name, region or type"
+          aria-label="Search tournaments"
+          className="w-full px-4 py-2.5 rounded-xl border border-border text-foreground outline-none transition-colors focus:border-primary/50"
+          style={{ background: 'var(--card)', fontSize: 14 }}
+        />
       )}
 
-      {q ? (
-        searchResults.length > 0
-          ? <div className="space-y-2.5">{searchResults}</div>
-          : <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments match “{query.trim()}”.</p>
+      {view === 'open' ? (
+        <OpenRoundsSection inRange={inRange} />
       ) : (<>
-      {live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
+        {loading && calendar.length === 0 && (
+          <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>
+        )}
+        {empty && (
+          <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments announced yet — new ones are picked up automatically.</p>
+        )}
+        {view === 'all' && openRounds === null && !openError && (
+          <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading open rounds…</p>
+        )}
+        {view === 'all' && openError && <p className="text-center" style={{ fontSize: 12.5, color: 'var(--loss)' }}>{openError}</p>}
 
-      {next && (
-        next.tracked ? (
-          <FeaturedEvent
-            name={next.tracked.name} type={next.tracked.tournament_type} region={next.tracked.region}
-            startTime={next.tracked.start_time}
-            pool={next.tracked.total_dividend_pool !== null ? toNumber(next.tracked.total_dividend_pool) : null}
-            onOpen={() => openTournament(toTournament(next.tracked!))}
-          />
-        ) : (
-          <FeaturedEvent
-            name={next.announced!.name} type={next.announced!.tournament_type} region={next.announced!.region}
-            startTime={next.announced!.start_time}
-            pool={next.announced!.total_dividend_pool !== null ? toNumber(next.announced!.total_dividend_pool) : null}
-            note={!next.announced!.finals_confirmed ? 'Announced: the date may change until the Finals are published.' : undefined}
-          />
-        )
-      )}
+        {filtering ? (
+          flatNodes.length > 0
+            ? <div className="space-y-2.5">{flatNodes}</div>
+            : <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>
+                Nothing matches{q ? ` “${query.trim()}”` : ''}{rangeActive ? ' in that date range' : ''}.
+              </p>
+        ) : (<>
+          {live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
 
-      {laterUpcoming.length > 0 && (
-        <div className="space-y-2.5">
-          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Coming up</p>
-          {laterUpcoming.map(rowFor)}
-        </div>
-      )}
+          {next && (
+            next.tracked ? (
+              <FeaturedEvent
+                name={next.tracked.name} type={next.tracked.tournament_type} region={next.tracked.region}
+                startTime={next.tracked.start_time}
+                pool={next.tracked.total_dividend_pool !== null ? toNumber(next.tracked.total_dividend_pool) : null}
+                onOpen={() => openTournament(toTournament(next.tracked!))}
+              />
+            ) : (
+              <FeaturedEvent
+                name={next.announced!.name} type={next.announced!.tournament_type} region={next.announced!.region}
+                startTime={next.announced!.start_time}
+                pool={next.announced!.total_dividend_pool !== null ? toNumber(next.announced!.total_dividend_pool) : null}
+                note={!next.announced!.finals_confirmed ? 'Announced: the date may change until the Finals are published.' : undefined}
+              />
+            )
+          )}
 
-      {completed.length > 0 && (
-        <div className="space-y-2.5">
-          <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
-          {completed.map(t => <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}
-        </div>
-      )}
+          {comingUp.length > 0 && (
+            <div className="space-y-2.5">
+              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Coming up</p>
+              {comingUp.map(rowFor)}
+            </div>
+          )}
+
+          {completedAll.length > 0 && (
+            <div className="space-y-2.5">
+              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
+              {completedAll.map(rowFor)}
+            </div>
+          )}
+        </>)}
       </>)}
 
-      {/* Open qualifier rounds: reference only (no payout), collapsed and off by default, kept apart from the payout events. */}
-      <div className="pt-4"><OpenRoundsSection /></div>
+      {openedRound && <RoundModal round={openedRound} onClose={() => setOpenedRound(null)} />}
     </div>
   );
 }

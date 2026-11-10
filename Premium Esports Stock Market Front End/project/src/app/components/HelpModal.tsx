@@ -501,10 +501,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
           <div className="space-y-1.5">
             <p>Every event pays from a fixed dividend pool, scaled by region, and the pool depends on how the event is run. The final of
             a set-lobby cup pays the Cash Cup pool. An open round that pays real cash, and every set-lobby round after the first round of a
-            multi-round event, pays the smaller Qualifier pool. An open round with no cash prize pays nothing, so you will only see it in the
-            open-rounds list. FNCS events pay the FNCS pool online and the Global pool at a LAN. The Arenas Cash Cup pays only its top 10 places.</p>
+            multi-round event, pays the smaller Qualifier pool. An open round with no cash prize pays nothing, so it only appears in the “Open rounds” or “All” view of the Tournaments page,
+            never in “Pays dividends”. FNCS events pay the FNCS pool online and the Global pool at a LAN.</p>
             <p>The split also follows each event's own scoring rules: an event that only scores game wins pays per game won, like
-            Performance Evaluation cups, and an event whose payout table pays a limited number of places pays only those places.</p>
+            Performance Evaluation cups, and an event whose payout table pays a limited number of places pays only those places (the Arenas Cash Cup, for example, pays its top 10 in EU, 7 in NAC and 5 in NAW).</p>
             <Fact label="Cash Cup pool (final set lobby)" value="$300,000" />
             <Fact label="Qualifier pool (open cash round / later set-lobby round)" value="$150,000" />
             <Fact label="FNCS Finals / online Major pool" value="$1,500,000" />

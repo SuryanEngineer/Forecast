@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { tournamentDisplayName } from '../lib/tournamentName';
 
-// Open qualifier rounds: anyone can enter, nothing is paid and no dividends come from them, so they live in their own
-// collapsed section (off by default) well away from the payout tournaments. Browse any round page by page, or search a
-// player's name across the finished rounds.
+// Open qualifier rounds: anyone can enter, nothing is paid and no dividends come from them. They are shown on the
+// Tournaments page when the "Open rounds" or "All" view is chosen (never mixed into the dividend list otherwise). Browse any
+// round page by page, or search a player's name across the finished rounds.
 
-interface OpenRound {
+export interface OpenRound {
   leaderboard_event_id: string;
   leaderboard_event_window_id: string;
   name: string;
@@ -20,7 +21,6 @@ interface RoundPage { round: OpenRound; page: number; total_pages: number; entri
 interface SearchHit { name: string; rank: number; points: number | null; round_name: string | null; end_time: string | null; leaderboard_event_id: string; leaderboard_event_window_id: string }
 interface SearchResponse { results: SearchHit[]; rounds_indexed: number; rounds_total?: number; note: string }
 
-const STORAGE_KEY = 'forecast:show-open-rounds';
 const STATUS_STYLE: Record<OpenRound['status'], { label: string; color: string }> = {
   live: { label: 'LIVE', color: 'var(--loss)' },
   upcoming: { label: 'UPCOMING', color: '#fbbf24' },
@@ -32,7 +32,53 @@ function when(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function RoundModal({ round, onClose, startPage = 0 }: { round: OpenRound; onClose: () => void; startPage?: number }) {
+export const roundName = (r: { name: string; regions: string[] }) => tournamentDisplayName(r.name, r.regions.length === 1 ? r.regions[0] : null);
+
+/** The open-rounds list, fetched once when `enabled` first becomes true. */
+export function useOpenRounds(enabled: boolean) {
+  const [rounds, setRounds] = useState<OpenRound[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled || rounds !== null) return;
+    api.get<OpenRound[]>('/tournaments/open-rounds')
+      .then(setRounds)
+      .catch(e => { setError(e instanceof Error ? e.message : 'Could not load open rounds'); setRounds([]); });
+  }, [enabled, rounds]);
+  return { rounds, error };
+}
+
+/** One open round as a list row (same look as a tournament row, marked "Open round · no payout"). */
+export function OpenRoundRow({ round, onOpen }: { round: OpenRound; onOpen: () => void }) {
+  const st = STATUS_STYLE[round.status];
+  const d = round.start_time ? new Date(round.start_time) : null;
+  return (
+    <button
+      onClick={onOpen}
+      className="w-full flex items-center gap-3 p-3.5 rounded-2xl border border-border text-left transition-colors hover:bg-white/[0.03]"
+      style={{ background: 'var(--card)' }}
+    >
+      <div className="flex flex-col items-center justify-center rounded-xl shrink-0" style={{ width: 60, height: 44, background: 'var(--muted)' }}>
+        <p className="font-mono font-bold" style={{ fontSize: 12, color: 'var(--foreground)', lineHeight: 1.2 }}>{d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}</p>
+        {d && <p className="font-mono" style={{ fontSize: 9.5, color: 'var(--muted-foreground)', lineHeight: 1.2 }}>{d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{roundName(round)}</p>
+          <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,255,255,0.07)', color: 'var(--muted-foreground)' }}>Open round</span>
+          {round.status !== 'finished' && (
+            <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, color: st.color, border: `1px solid ${st.color}` }}>{st.label}</span>
+          )}
+        </div>
+        <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11.5 }}>Open round · anyone can enter{round.regions.length ? ` · ${round.regions.join(', ')}` : ''}</p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-muted-foreground italic" style={{ fontSize: 11.5 }}>No payout</p>
+      </div>
+    </button>
+  );
+}
+
+export function RoundModal({ round, onClose, startPage = 0 }: { round: OpenRound; onClose: () => void; startPage?: number }) {
   const [page, setPage] = useState(startPage);
   const [data, setData] = useState<RoundPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +105,7 @@ function RoundModal({ round, onClose, startPage = 0 }: { round: OpenRound; onClo
       <div className="w-full rounded-2xl overflow-hidden flex flex-col" style={{ maxWidth: 640, maxHeight: '88vh', background: 'var(--card)', border: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div className="min-w-0">
-            <p className="text-foreground font-bold truncate" style={{ fontSize: 16 }}>{round.name}</p>
+            <p className="text-foreground font-bold truncate" style={{ fontSize: 16 }}>{roundName(round)}</p>
             <p className="text-muted-foreground" style={{ fontSize: 12 }}>
               Open round · no payout · {STATUS_STYLE[round.status].label.toLowerCase()}{round.end_time ? ` · ends ${when(round.end_time)}` : ''}
             </p>
@@ -88,30 +134,16 @@ function RoundModal({ round, onClose, startPage = 0 }: { round: OpenRound; onClo
   );
 }
 
-export function OpenRoundsSection() {
-  const [show, setShow] = useState<boolean>(() => {
-    try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }
-  });
-  const [rounds, setRounds] = useState<OpenRound[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/** The "Open rounds" view of the Tournaments page: every open round (newest first) with a status filter, player search and
+ * the page's date range. */
+export function OpenRoundsSection({ inRange }: { inRange?: (iso: string | null) => boolean }) {
+  const show = true;
+  const { rounds, error } = useOpenRounds(true);
   const [filter, setFilter] = useState<'all' | OpenRound['status']>('all');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [openRound, setOpenRound] = useState<{ round: OpenRound; page: number } | null>(null);
-
-  function toggle() {
-    setShow(s => {
-      const next = !s;
-      try { localStorage.setItem(STORAGE_KEY, next ? '1' : '0'); } catch { /* storage unavailable */ }
-      return next;
-    });
-  }
-
-  useEffect(() => {
-    if (!show || rounds !== null) return;
-    api.get<OpenRound[]>('/tournaments/open-rounds').then(setRounds).catch(e => { setError(e instanceof Error ? e.message : 'Could not load open rounds'); setRounds([]); });
-  }, [show, rounds]);
 
   // Player search across finished rounds (debounced).
   useEffect(() => {
@@ -126,24 +158,19 @@ export function OpenRoundsSection() {
     return () => clearTimeout(id);
   }, [query, show]);
 
-  const visible = useMemo(() => (rounds ?? []).filter(r => filter === 'all' || r.status === filter), [rounds, filter]);
+  const visible = useMemo(
+    () => (rounds ?? []).filter(r => (filter === 'all' || r.status === filter) && (!inRange || inRange(r.start_time))),
+    [rounds, filter, inRange],
+  );
   const roundFor = (h: SearchHit) => (rounds ?? []).find(r => r.leaderboard_event_id === h.leaderboard_event_id && r.leaderboard_event_window_id === h.leaderboard_event_window_id);
 
   return (
     <div className="rounded-2xl border border-border" style={{ background: 'rgba(255,255,255,0.02)' }}>
-      <button onClick={toggle} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" aria-expanded={show}>
-        <span>
-          <span className="text-foreground font-bold" style={{ fontSize: 14 }}>Open qualifier rounds</span>
-          <span className="text-muted-foreground ml-2" style={{ fontSize: 12 }}>No payout · anyone can enter · {show ? 'shown' : 'hidden'}</span>
-        </span>
-        {show ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-      </button>
-
       {show && (
-        <div className="px-4 pb-4 space-y-3" style={{ borderTop: '1px solid var(--border)' }}>
-          <p className="text-muted-foreground pt-3" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-            These are the open rounds that lead into the tournaments above. They pay no dividends and are only here for reference: browse a round’s
-            full standings page by page, or look a player up.
+        <div className="px-4 py-4 space-y-3">
+          <p className="text-muted-foreground" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+            Open rounds anyone can enter, including the ones that lead into the tournaments that do pay dividends. They pay nothing and are here for
+            reference: browse a round’s full standings page by page, or look a player up.
           </p>
 
           <div className="relative">
@@ -171,7 +198,7 @@ export function OpenRoundsSection() {
                     <span className="font-mono font-bold text-muted-foreground shrink-0" style={{ fontSize: 13, width: 56 }}>#{h.rank}</span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{h.name}</span>
-                      <span className="block text-muted-foreground truncate" style={{ fontSize: 11.5 }}>{h.round_name}</span>
+                      <span className="block text-muted-foreground truncate" style={{ fontSize: 11.5 }}>{h.round_name ? tournamentDisplayName(h.round_name) : ''}</span>
                     </span>
                     <span className="font-mono text-muted-foreground shrink-0" style={{ fontSize: 12 }}>{h.points ?? '–'} pts</span>
                   </button>
@@ -205,7 +232,7 @@ export function OpenRoundsSection() {
                   >
                     <span className="font-mono font-bold shrink-0 rounded-md text-center" style={{ fontSize: 10, width: 74, padding: '3px 0', color: st.color, border: `1px solid ${st.color}` }}>{st.label}</span>
                     <span className="flex-1 min-w-0">
-                      <span className="block text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{r.name}</span>
+                      <span className="block text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{roundName(r)}</span>
                       <span className="block text-muted-foreground truncate" style={{ fontSize: 11.5 }}>{when(r.start_time)}{r.regions.length ? ` · ${r.regions.join(', ')}` : ''} · no payout</span>
                     </span>
                   </button>

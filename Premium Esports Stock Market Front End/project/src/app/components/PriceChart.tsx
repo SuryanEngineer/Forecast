@@ -3,6 +3,7 @@ import { Area, AreaChart, CartesianGrid, ReferenceDot, ReferenceLine, Responsive
 import { api } from '../lib/api';
 import { useSeasonList } from '../lib/hooks';
 import { seasonMarkersBetween } from '../lib/seasons';
+import { tournamentDisplayName } from '../lib/tournamentName';
 import { toNumber, type PlayerTournamentEntryResponse, type PriceHistoryPoint } from '../lib/types';
 
 const HOUR = 3_600_000;
@@ -168,7 +169,7 @@ export function PriceChart({
               left: Math.min(Math.max(hover.x, 90), 9999), top: Math.max(hover.y - 62, 0), transform: 'translateX(-50%)',
             }}
           >
-            <p className="font-semibold text-foreground" style={{ fontSize: 12 }}>{hover.entry.tournament.name}</p>
+            <p className="font-semibold text-foreground" style={{ fontSize: 12 }}>{tournamentDisplayName(hover.entry.tournament.name, hover.entry.tournament.region)}</p>
             <p className="text-muted-foreground" style={{ fontSize: 11 }}>
               Finished <span className="font-mono font-bold" style={{ color: '#ffb020' }}>#{hover.entry.placement}</span>
               {hover.entry.total_teams > 1 ? ` of ${hover.entry.total_teams}` : ''}
