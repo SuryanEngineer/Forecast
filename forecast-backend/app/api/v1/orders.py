@@ -9,7 +9,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.order import Order, Trade
 from app.models.user import User
-from app.schemas.order import LimitOrderRequest, OrderResponse, QuickOrderRequest, TradeResponse
+from app.schemas.order import LimitOrderRequest, ModifyOrderPriceRequest, OrderResponse, QuickOrderRequest, TradeResponse
 from app.services import order_service
 from app.services.exceptions import ServiceError
 
@@ -58,6 +58,21 @@ def cancel_order(order_id: uuid.UUID, user: User = Depends(get_current_user), db
     except ServiceError as exc:
         db.rollback()
         raise _to_http_error(exc)
+    return order
+
+
+@router.post("/{order_id}/price", response_model=OrderResponse)
+def change_order_price(order_id: uuid.UUID, payload: ModifyOrderPriceRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> OrderResponse:
+    """Change a resting limit order's price in place (the old order is replaced by a new one for the remaining quantity)."""
+    try:
+        order = order_service.modify_order_price(db, user.id, order_id, payload.price)
+        db.commit()
+    except ServiceError as exc:
+        db.rollback()
+        raise _to_http_error(exc)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return order
 
 

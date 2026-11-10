@@ -500,8 +500,10 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <div className="space-y-1.5">
             <p>Every event pays from a fixed dividend pool, scaled by region. Majors pay the FNCS pool when played online and the
-            Global pool when played at a LAN. Qualifier-style events such as Last Chance pay a smaller, Cash Cup sized pool.</p>
-            <Fact label="Cash Cup / qualifier pool" value="$300,000" />
+            Global pool when played at a LAN. Set-lobby qualifiers (such as FNCS Solo Reload Heats and Last Chance) pay a smaller pool.
+            The Arenas Cash Cup is a one-round event that pays only its top 10 places.</p>
+            <Fact label="Cash Cup pool" value="$300,000" />
+            <Fact label="Qualifier pool" value="$150,000" />
             <Fact label="FNCS Finals / online Major pool" value="$1,500,000" />
             <Fact label="Global Championship / LAN Major pool" value="$3,000,000" />
           </div>

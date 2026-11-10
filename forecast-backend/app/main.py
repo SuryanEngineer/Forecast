@@ -19,7 +19,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, notifications, orders, players, stats, tournaments, treasury, wallet, ws
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.services import bot_trading_service, lease_service, maintenance_service, osirion_service, qualifier_service
+from app.services import bot_trading_service, lease_service, maintenance_service, open_rounds_service, osirion_service, qualifier_service
 
 logger = logging.getLogger("forecast.bots")
 osirion_logger = logging.getLogger("forecast.osirion")
@@ -75,7 +75,7 @@ def _run_one_osirion_sync() -> None:
             if auto_track_result.tracked or auto_track_result.entrants_seeded or auto_track_result.errors:
                 osirion_logger.info(
                     "Osirion auto-track: seen=%d tracked=%d skipped_already=%d skipped_unclassified=%d "
-                    "skipped_season_dedup=%d skipped_not_finals=%d entrants_seeded=%d errors=%s",
+                    "skipped_season_dedup=%d skipped_not_finals=%d entrants_seeded=%d errors=%s",  # (season dedup is retired: always 0)
                     auto_track_result.windows_seen, auto_track_result.tracked,
                     auto_track_result.skipped_already_tracked, auto_track_result.skipped_unclassified,
                     auto_track_result.skipped_season_dedup, auto_track_result.skipped_not_finals,
@@ -93,6 +93,13 @@ def _run_one_osirion_sync() -> None:
                 )
         except Exception:  # noqa: BLE001
             osirion_logger.exception("Qualifier sync raised")
+        # Finished open qualifier rounds: a couple of pages per pass into the small search index (no-op once done).
+        try:
+            o = open_rounds_service.index_pass(db)
+            if o["pages"]:
+                osirion_logger.info("Open-round index: pages=%d entries=%d rounds_done=%d", o["pages"], o["entries"], o["rounds_done"])
+        except Exception:  # noqa: BLE001
+            osirion_logger.exception("Open-round index pass raised")
         for result in results:
             if result.error:
                 osirion_logger.warning("Osirion sync error for tournament %s: %s", result.tournament_id, result.error)

@@ -36,7 +36,7 @@ from app.schemas.tournament import (
     TournamentResponse,
     compute_tournament_phase,
 )
-from app.services import dividend_service, economic_params_service, osirion_service, position_service
+from app.services import dividend_service, economic_params_service, open_rounds_service, osirion_service, position_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
@@ -141,6 +141,35 @@ def get_announced_tournaments(db: Session = Depends(get_db)) -> list[AnnouncedTo
     return [AnnouncedTournamentResponse(**row) for row in rows]
 
 
+@router.get("/open-rounds")
+def get_open_rounds(db: Session = Depends(get_db)) -> list[dict]:
+    """Open qualifier rounds (no payout, never tracked) of the families the platform tracks, newest first. Cached a few
+    minutes. Registered above /{tournament_id}."""
+    return open_rounds_service.list_open_rounds(db)
+
+
+@router.get("/open-rounds/entries")
+def get_open_round_entries(
+    leaderboard_event_id: str = Query(..., max_length=160),
+    leaderboard_event_window_id: str = Query(..., max_length=160),
+    page: int = Query(0, ge=0, le=5000),
+    db: Session = Depends(get_db),
+) -> dict:
+    """One page of an open round's full standings (cached proxy to Osirion; only rounds from /open-rounds are allowed)."""
+    try:
+        return open_rounds_service.get_page(db, leaderboard_event_id, leaderboard_event_window_id, page)
+    except open_rounds_service.RoundNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except open_rounds_service.Busy as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
+
+
+@router.get("/open-rounds/search")
+def search_open_rounds(q: str = Query(..., min_length=2, max_length=60), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
+    """Find a player by name across the indexed (finished) open rounds."""
+    return open_rounds_service.search(db, q, limit)
+
+
 # Typical field size when none is known yet (a finals lobby is about 100 players).
 _DEFAULT_FIELD_PLAYERS = 100
 
@@ -190,6 +219,8 @@ def get_payout_preview(
     explicit = sorted(curve)
     milestones = [p for p in (15, 20, 25, 30, 40, 50, 60, 75, 100) if p > (explicit[-1] if explicit else 0) and p < field]
     placements = [p for p in explicit if p <= field] + milestones + ([field] if field > (explicit[-1] if explicit else 0) else [])
+    if ctx.paid_places:  # a top-N event (e.g. the Arenas Cash Cup) pays nothing below its last paid place
+        placements = [p for p in placements if p <= ctx.paid_places]
     rows = []
     for place in dict.fromkeys(placements):
         fraction = dividend_calculator.placement_payout_fraction(place, field, curve)

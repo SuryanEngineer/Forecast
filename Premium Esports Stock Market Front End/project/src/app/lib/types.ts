@@ -395,6 +395,35 @@ export interface PaginatedPlacementResultResponse {
   total_pages: number;
 }
 
+// GET /leaderboard/{user_id}: the limited public profile behind the investor popup.
+export interface InvestorHolding {
+  player_id: string;
+  gamertag: string;
+  is_verified: boolean;
+  shares: number;
+  price: number;
+  value: number;
+}
+
+export interface InvestorProfile {
+  user_id: string;
+  display_name: string;
+  tag: string | null;
+  tag_color: string | null;
+  rank: number;
+  investors: number;
+  net_worth: number;
+  cash: number;
+  shares_value: number;
+  treasury_value: number;
+  dividend_earnings: number;
+  dividend_payouts: number;
+  fees_paid: number;
+  holdings_count: number;
+  holdings: InvestorHolding[];
+  points: { t: string; net_worth: number }[];
+}
+
 export interface LeaderboardEntry {
   rank: number;
   user_id: string;

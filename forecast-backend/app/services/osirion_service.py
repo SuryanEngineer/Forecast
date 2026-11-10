@@ -63,7 +63,7 @@ from app.models.tournament import (
     TournamentStatus,
     TournamentType,
 )
-from app.engine import performance_eval
+from app.engine import performance_eval, tracking_policy
 from app.services import notification_service, player_service, tournament_classification_service, tournament_service
 from app.services.player_identity import skeleton
 
@@ -1015,15 +1015,127 @@ def _has_tournament_in_quarter_and_region(
     return False
 
 
+# --- Window-level tracking plan (see app/engine/tracking_policy.py for the rules) ----------------------------------------
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_SET_LOBBY_CACHE: dict[tuple[str, str], bool] = {}
+
+
+def platform_restriction(window: AvailableWindow) -> str:
+    """Non-empty reason if the event is console-only or mobile-only (not open to PC players)."""
+    plats = {str(p).lower() for p in (window.raw_tournament.get("platforms") or [])}
+    if plats and "windows" not in plats:
+        mobile = {"android", "ios", "helios", "heliosmobile", "gfnmobile", "lunamobile", "xcloudmobile"}
+        return "mobile-only" if plats <= mobile else "console-only / no PC"
+    name = f"{window.display_name} {window.event_group}".lower()
+    for word in ("playstation", "console", "mobile", "xbox", "switch"):
+        if word in name:
+            return f"{word}-only event (by name)"
+    return ""
+
+
+def is_set_lobby(window: AvailableWindow) -> bool | None:
+    """True = a set (invited) lobby, False = an open round, None = cannot tell yet (not started / empty / API error).
+    One leaderboard request, then memoized (a verdict never changes). A window that has not begun is not fetched."""
+    key = (window.leaderboard_event_id, window.leaderboard_event_window_id)
+    if key in _SET_LOBBY_CACHE:
+        return _SET_LOBBY_CACHE[key]
+    begin = window.begin_time
+    if begin is not None and begin.tzinfo is None:
+        begin = begin.replace(tzinfo=timezone.utc)
+    if begin is not None and begin > datetime.now(timezone.utc):
+        return None
+    try:
+        page0 = osirion_client.get_leaderboard_page(key[0], key[1], 0)
+    except OsirionApiError:
+        return None
+    entries = page0.get("entries") or []
+    verdict = tracking_policy.verdict_from_field(len(entries), page0.get("totalPages"), len(entries))
+    if verdict is not None:
+        _SET_LOBBY_CACHE[key] = verdict
+    return verdict
+
+
+@dataclass
+class PlannedWindow:
+    window: AvailableWindow
+    tournament_type: TournamentType
+    siblings: list[AvailableWindow] = field(default_factory=list)  # same edition's other windows (for "already tracked")
+
+
+def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobby: bool = False, check_lobby=None) -> tuple[list[PlannedWindow], dict[str, int]]:
+    """Decide, window by window, what to track and as which tier. Returns (plan, skip counters).
+
+    * Zero Build, console/mobile-only and windows without leaderboard ids are never tracked.
+    * FNCS Reload family: Finals -> FNCS_FINALS (no cash requirement, listed before Osirion publishes payouts);
+      Heats / Last Chance / Semifinal -> FNCS_QUALIFIER, only when a set lobby; open rounds are skipped.
+    * Everything else must pay real cash; one tournament per edition (windows less than 36h apart are one multi-day
+      event), classified by the admin-editable rules, inside the NAC/EU scope (LAN/global tiers exempt).
+    `strict_set_lobby` (used for already-finished windows) additionally rejects qualifiers whose size is unknown."""
+    check = check_lobby or is_set_lobby
+    skips: dict[str, int] = {}
+
+    def skip(reason: str, n: int = 1) -> None:
+        skips[reason] = skips.get(reason, 0) + n
+
+    planned: list[PlannedWindow] = []
+    generic: dict[str, list[AvailableWindow]] = {}
+    for w in windows:
+        if not w.leaderboard_event_id or not w.leaderboard_event_window_id:
+            skip("no_leaderboard_ids")
+            continue
+        if w.is_zero_build:
+            skip("zero_build")
+            continue
+        if platform_restriction(w):
+            skip("platform")
+            continue
+        role = tracking_policy.reload_family_role(f"{w.classification_text} {w.raw_event_window.get('playlistId', '')}")
+        if role is None:
+            generic.setdefault(w.event_id, []).append(w)
+            continue
+        if not tracking_policy.reload_region_ok(w.regions, ALLOWED_TRACKING_REGIONS):
+            skip("region")
+            continue
+        if role == tracking_policy.ROLE_OPEN:
+            skip("open_round")
+            continue
+        if role == tracking_policy.ROLE_FINAL:
+            planned.append(PlannedWindow(w, TournamentType.FNCS_FINALS, [w]))
+            continue
+        verdict = check(w)
+        if verdict is False or (verdict is None and strict_set_lobby):
+            skip("not_set_lobby")
+            continue
+        planned.append(PlannedWindow(w, TournamentType.FNCS_QUALIFIER, [w]))
+
+    for group in generic.values():
+        eligible = [w for w in group if w.has_cash_payout]
+        skip("no_cash", len(group) - len(eligible))
+        for cluster in tracking_policy.cluster_by_gap(eligible, lambda x: x.begin_time, lambda x: x.end_time):
+            best = max(cluster, key=lambda x: (x.top_cash_amount, x.begin_time or _EPOCH))
+            skip("same_edition", len(cluster) - 1)
+            ttype = tournament_classification_service.classify(db, best.classification_text)
+            if ttype is None:
+                skip("unclassified")
+                continue
+            if not _in_tracking_region_scope(ttype, best.regions):
+                skip("region")
+                continue
+            planned.append(PlannedWindow(best, ttype, list(cluster)))
+    return planned, skips
+
+
 @dataclass
 class AutoTrackResult:
     windows_seen: int = 0
     tracked: int = 0
     skipped_already_tracked: int = 0
     skipped_unclassified: int = 0
-    skipped_season_dedup: int = 0
-    skipped_not_finals: int = 0  # heat/qualifier (token-only payout) or Zero Build -- never auto-tracked
+    skipped_season_dedup: int = 0  # (the once-per-quarter FNCS rule is gone; always 0, kept for the admin schema)
+    skipped_not_finals: int = 0  # Zero Build, console/mobile-only, no cash and not a set-lobby qualifier, ...
     skipped_region: int = 0  # classified fine, but outside ALLOWED_TRACKING_REGIONS and not a LAN/global tier
+    skipped_open_round: int = 0  # open qualifier rounds (browse-only, never tracked)
     entrants_seeded: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -1103,85 +1215,36 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
 
     result.windows_seen = len(windows)
 
-    mappings = db.query(OsirionTournamentMapping).all()
-    tracked_keys = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in mappings}
-    tracked_key_to_tournament_id = {
-        (m.leaderboard_event_id, m.leaderboard_event_window_id): m.tournament_id for m in mappings
-    }
+    tracked_keys = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()}
 
-    windows_by_event: dict[str, list[AvailableWindow]] = {}
-    for w in windows:
-        windows_by_event.setdefault(w.event_id, []).append(w)
+    planned, skips = plan_windows(db, windows)
+    result.skipped_unclassified = skips.get("unclassified", 0)
+    result.skipped_region = skips.get("region", 0)
+    result.skipped_open_round = skips.get("open_round", 0)
+    result.skipped_not_finals = sum(
+        n for k, n in skips.items() if k not in ("unclassified", "region", "open_round", "same_edition")
+    )
 
-    eligible_by_event: dict[str, list[AvailableWindow]] = {}
-    for event_id, group in windows_by_event.items():
-        eligible = [w for w in group if w.has_cash_payout and not w.is_zero_build]
-        result.skipped_not_finals += len(group) - len(eligible)
-        if eligible:
-            eligible_by_event[event_id] = eligible
-
-    for event_id, eligible in eligible_by_event.items():
-        heat_windows = [w for w in windows_by_event[event_id] if not w.has_cash_payout]
-
-        already_tracked_window = next(
-            (w for w in eligible if (w.leaderboard_event_id, w.leaderboard_event_window_id) in tracked_keys), None
-        )
-        if already_tracked_window is not None:
-            result.skipped_already_tracked += 1
-            tournament_id = tracked_key_to_tournament_id.get(
-                (already_tracked_window.leaderboard_event_id, already_tracked_window.leaderboard_event_window_id)
-            )
-            tournament = db.get(Tournament, tournament_id) if tournament_id else None
-            if tournament is not None and tournament.status != TournamentStatus.FINALIZED and heat_windows:
-                result.entrants_seeded += _seed_entrants_from_heat_windows(db, tournament, heat_windows)
-            continue
-
-        window = max(eligible, key=lambda w: w.top_cash_amount)
+    for item in planned:
+        window = item.window
         key = (window.leaderboard_event_id, window.leaderboard_event_window_id)
-        if not window.leaderboard_event_id or not window.leaderboard_event_window_id:
-            result.skipped_not_finals += 1
+        # Any window of the same edition already tracked (e.g. an earlier, lower-paying day) counts as tracked.
+        if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in tracked_keys for s in (item.siblings or [window])):
+            result.skipped_already_tracked += 1
             continue
-
-        tournament_type = tournament_classification_service.classify(db, window.classification_text)
-        if tournament_type is None:
-            result.skipped_unclassified += 1
-            continue
-
-        if not _in_tracking_region_scope(tournament_type, window.regions):
-            result.skipped_region += 1
-            continue
-
-        region_key = _region_key(window.regions)
-        if tournament_type == TournamentType.FNCS_FINALS:
-            quarter_key = _season_quarter_key(window.begin_time or datetime.now(timezone.utc))
-            already_has_globals = _has_tournament_in_quarter_and_region(
-                db, TournamentType.GLOBAL_CHAMPIONSHIP, quarter_key, region_key
-            )
-            already_has_fncs_finals = _has_tournament_in_quarter_and_region(
-                db, TournamentType.FNCS_FINALS, quarter_key, region_key
-            )
-            if already_has_globals or already_has_fncs_finals:
-                result.skipped_season_dedup += 1
-                continue
-
         region = window.regions[0] if len(window.regions) == 1 else None
         try:
-            mapping = track_tournament(
+            track_tournament(
                 db,
                 name=window.display_name,
-                tournament_type=tournament_type,
+                tournament_type=item.tournament_type,
                 region=region,
                 window=window,
                 created_by_admin_id=None,
             )
             tracked_keys.add(key)
             result.tracked += 1
-            logger.info("Auto-tracked new tournament '%s' as %s", window.display_name, tournament_type.value)
-
-            if heat_windows:
-                tournament = db.get(Tournament, mapping.tournament_id)
-                if tournament is not None:
-                    result.entrants_seeded += _seed_entrants_from_heat_windows(db, tournament, heat_windows)
+            logger.info("Auto-tracked new tournament '%s' as %s", window.display_name, item.tournament_type.value)
         except Exception as exc:  # noqa: BLE001 -- one bad window must not abort the whole pass
             db.rollback()
             result.errors.append(f"{window.display_name}: {exc}")
@@ -1242,45 +1305,26 @@ def find_historical_backfill_candidates(db: Session) -> BackfillScanResult:
         (m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()
     }
 
-    windows_by_event: dict[str, list[AvailableWindow]] = {}
-    for w in windows:
-        windows_by_event.setdefault(w.event_id, []).append(w)
-
-    for event_id, group in windows_by_event.items():
-        eligible = [w for w in group if w.has_cash_payout and not w.is_zero_build]
-        if not eligible:
-            scan.skipped_not_eligible += len(group)
-            continue
-
-        window = max(eligible, key=lambda w: w.top_cash_amount)
-        scan.events_seen += 1
-
-        if not window.leaderboard_event_id or not window.leaderboard_event_window_id:
-            scan.skipped_not_eligible += 1
-            continue
-
-        key = (window.leaderboard_event_id, window.leaderboard_event_window_id)
-        if key in existing_keys:
-            scan.already_tracked += 1
-            continue
-
-        end_time = window.end_time
+    # Only windows that have already ENDED belong to history; strict: a qualifier must be a confirmed set lobby.
+    def _ended(w: AvailableWindow) -> bool:
+        end_time = w.end_time
         if end_time is not None and end_time.tzinfo is None:
             end_time = end_time.replace(tzinfo=timezone.utc)
-        if end_time is None or end_time >= now:
-            scan.skipped_not_eligible += 1
-            continue
+        return end_time is not None and end_time < now
 
-        tournament_type = tournament_classification_service.classify(db, window.classification_text)
-        if tournament_type is None:
-            scan.skipped_unclassified += 1
-            continue
+    ended = [w for w in windows if _ended(w)]
+    scan.skipped_not_eligible += len(windows) - len(ended)
+    planned, skips = plan_windows(db, ended, strict_set_lobby=True)
+    scan.skipped_unclassified = skips.get("unclassified", 0)
+    scan.skipped_not_eligible += sum(n for k, n in skips.items() if k not in ("unclassified", "same_edition"))
+    scan.events_seen = len(planned)
 
-        if not _in_tracking_region_scope(tournament_type, window.regions):
-            scan.skipped_not_eligible += 1
+    for item in planned:
+        window = item.window
+        if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in existing_keys for s in (item.siblings or [window])):
+            scan.already_tracked += 1
             continue
-
-        scan.candidates.append(BackfillCandidate(window=window, tournament_type=tournament_type))
+        scan.candidates.append(BackfillCandidate(window=window, tournament_type=item.tournament_type))
 
     return scan
 
@@ -1429,9 +1473,9 @@ def list_announced_events(db: Session, force: bool = False) -> list[dict]:
     The auto-tracker only creates a Tournament once a window shows a real cash payout table, and Osirion often publishes
     that after the event is announced -- so for a while an announced Finals exists on Osirion but not in our calendar
     (the calendar then looked empty between seasons). This lists those so the calendar can show them as "announced"
-    immediately. Same qualification rules as auto-tracking (no Zero Build, classified into a tier, in the NAC/EU scope,
-    the once-per-quarter FNCS Finals rule), minus the cash-payout requirement. One row per event, preferring its
-    cash-paying window and otherwise its latest window (the Finals come last). Cached for 15 minutes so the public
+    immediately. Same window-level qualification rules as auto-tracking (see plan_windows: no Zero Build, FNCS Reload
+    Finals and set-lobby qualifiers, classified into a tier, in the NAC/EU scope), minus the cash-payout requirement.
+    One row per edition. Cached for 15 minutes so the public
     calendar never hammers Osirion; any Osirion error returns whatever was cached."""
     import time as _time
 
@@ -1448,34 +1492,44 @@ def list_announced_events(db: Session, force: bool = False) -> list[dict]:
 
     now = datetime.now(timezone.utc)
     tracked_keys = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in db.query(OsirionTournamentMapping).all()}
-    by_event: dict[str, list[AvailableWindow]] = {}
-    for w in windows:
-        if w.is_zero_build:
-            continue
+    def _upcoming(w: AvailableWindow) -> bool:
         when = w.end_time or w.begin_time
-        if when is None or when <= now:
-            continue  # already over (or undated): not an announcement
-        by_event.setdefault(w.event_id, []).append(w)
+        if when is not None and when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when is not None and when > now  # already over (or undated): not an announcement
 
-    # Events that already have ANY window tracked are in the calendar as real tournaments.
-    tracked_events = {w.event_id for w in windows if (w.leaderboard_event_id, w.leaderboard_event_window_id) in tracked_keys}
+    # Same window-level rules as auto-tracking, minus the cash requirement for Finals/qualifiers of the FNCS Reload
+    # family (listed before Osirion publishes payouts). Generic events still need a published cash table to be planned,
+    # so a not-yet-priced generic event is listed via the fallback below.
+    upcoming = [w for w in windows if _upcoming(w)]
+    planned, _skips = plan_windows(db, upcoming)
+    planned_keys = {(p.window.leaderboard_event_id, p.window.leaderboard_event_window_id) for p in planned}
+    # Generic (non-FNCS-Reload) announced windows without a cash table yet: plan them as if they paid.
+    def _near_planned(w: AvailableWindow) -> bool:
+        """Same edition as an already-planned window (same event, begins within 36h of it)."""
+        for p in planned:
+            if p.window.event_id != w.event_id or p.window.begin_time is None or w.begin_time is None:
+                continue
+            if abs((p.window.begin_time - w.begin_time).total_seconds()) < 36 * 3600:
+                return True
+        return False
+
+    uncashed = [w for w in upcoming if not w.has_cash_payout and not w.is_zero_build and w.leaderboard_event_id
+                and tracking_policy.reload_family_role(w.classification_text) is None and not _near_planned(w)]
+    for w in uncashed:
+        w.has_cash_payout = True  # local planning copy semantics: only used to classify/scope the announcement
+    extra, _ = plan_windows(db, uncashed)
+    for w in uncashed:
+        w.has_cash_payout = False
+    planned += [p for p in extra if (p.window.leaderboard_event_id, p.window.leaderboard_event_window_id) not in planned_keys]
 
     rows: list[dict] = []
-    for event_id, group in by_event.items():
-        if event_id in tracked_events:
-            continue
-        cash = [w for w in group if w.has_cash_payout]
-        window = max(cash, key=lambda w: w.top_cash_amount) if cash else max(group, key=lambda w: w.begin_time or w.end_time)
-        tournament_type = tournament_classification_service.classify(db, window.classification_text)
-        if tournament_type is None or not _in_tracking_region_scope(tournament_type, window.regions):
-            continue
-        region_key = _region_key(window.regions)
-        if tournament_type == TournamentType.FNCS_FINALS:
-            quarter_key = _season_quarter_key(window.begin_time or now)
-            if _has_tournament_in_quarter_and_region(db, TournamentType.GLOBAL_CHAMPIONSHIP, quarter_key, region_key) or _has_tournament_in_quarter_and_region(
-                db, TournamentType.FNCS_FINALS, quarter_key, region_key
-            ):
-                continue
+    for item in planned:
+        window = item.window
+        tournament_type = item.tournament_type
+        if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in tracked_keys for s in (item.siblings or [window])):
+            continue  # already in the calendar as a real tournament
+        event_id = window.event_id
         region = window.regions[0] if len(window.regions) == 1 else None
         pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type, region)
         if pool is not None:

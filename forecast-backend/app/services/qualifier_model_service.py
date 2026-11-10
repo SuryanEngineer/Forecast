@@ -27,6 +27,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.engine import payout_policy
 from app.engine.dividend_calculator import placement_payout_fraction
 from app.engine.qualifier_math import (
     DEFAULT_QUALIFY_PRIOR,
@@ -277,7 +278,7 @@ def build_views(
             s_hat = expected_strength(model.a, model.b, q, team_prior, n_rounds=len(rs))
             field_n = max(len(placed[tid]), model.typical_field)
             plc_hat = placement_from_strength(s_hat, field_n)
-            frac_hat = float(placement_payout_fraction(plc_hat, field_n, curve))
+            frac_hat = float(placement_payout_fraction(plc_hat, field_n, payout_policy.curve_for(curve, t.name)))
             base = career_fraction.get(pid)
             ratio_if_q = max(0.2, min(3.0, frac_hat / base)) if base and base > 0 else 1.0
             perf = max(0.0, min(3.0, p_q * ratio_if_q))

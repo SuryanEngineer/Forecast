@@ -149,6 +149,7 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
     # field for this tournament.
     max_placement = len(results)
 
+    pool_ctx = dividend_service.PoolContext(db, tournament)  # parameters loaded once, not once per placement
     new_payouts: list[DividendPayout] = []
     for result in results:
         existing_payout = (
@@ -158,7 +159,7 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
         )
         if existing_payout is not None:
             continue
-        payout = dividend_service.create_payout_for_placement(db, tournament, result, max_placement)
+        payout = dividend_service.create_payout_for_placement(db, tournament, result, max_placement, pool_ctx)
         new_payouts.append(payout)
 
     # A real commit, not just a flush: `enqueue_dividend_payout` below may

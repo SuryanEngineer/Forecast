@@ -3,6 +3,7 @@ import { api, getToken, responseCache } from './api';
 import type {
   AnnouncedTournament,
   CalendarTournamentResponse,
+  InvestorProfile,
   LeaderboardEntry,
   LiveLeaderboardResponse,
   MarketSnapshot,
@@ -197,6 +198,12 @@ export function useAnnouncedTournaments() {
 
 export function useLeaderboard() {
   return usePolledFetch<LeaderboardEntry[]>('/leaderboard', [], 30_000);
+}
+
+// The limited public profile of one leaderboard investor (rank, cash, shares held, net worth over `hours`, dividends, fees)
+// -- GET /leaderboard/{user_id}. hours=0 means since they joined.
+export function useInvestorProfile(userId: string | null, hours: number) {
+  return usePolledFetch<InvestorProfile | null>(userId ? `/leaderboard/${userId}?hours=${hours}` : null, null, 60_000);
 }
 
 const EMPTY_SEASON_INFO: SeasonInfo = { season: null, ranks: [], points_per_percent: 100 };

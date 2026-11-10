@@ -808,6 +808,160 @@ def check_bots() -> None:
         db.close()
 
 
+@guarded
+def check_investor_profile(ctx: dict) -> None:
+    section("Investor profile (public popup)")
+    if not ctx:
+        check("trading context available", False)
+        return
+    from app.core import ttl_cache
+    from app.models.bot import BotProfile
+    from app.services.house_account import get_or_create_house_user
+
+    db = SessionLocal()
+    try:
+        ttl_cache.clear()
+        portfolio_service.clear_cache()
+        r = client.get(f"/api/v1/leaderboard/{ctx['alice']}?hours=0")  # no login: the leaderboard is public
+        d = r.json() if r.status_code == 200 else {}
+        check("a public profile loads without logging in", r.status_code == 200 and d.get("display_name"), r.text[:200])
+        check("it shows rank, net worth, cash and shares value", all(k in d for k in ("rank", "investors", "net_worth", "cash", "shares_value")) and d.get("rank", 0) >= 1, str(d)[:200])
+        check("net worth = cash + shares + treasury", abs(d.get("net_worth", 0) - (d.get("cash", 0) + d.get("shares_value", 0) + d.get("treasury_value", 0))) < 0.02, str({k: d.get(k) for k in ("net_worth", "cash", "shares_value", "treasury_value")}))
+        mine = next((h for h in d.get("holdings", []) if h["shares"] == 10), None)
+        check("it lists what they hold, with shares, price and value", mine is not None and mine["gamertag"] and mine["price"] > 0 and mine["value"] > 0, str(d.get("holdings"))[:200])
+        st = stats_service.user_stats(db, db.get(User, ctx["alice"]))
+        check("dividends and fees match the owner's own stats page", abs(d.get("dividend_earnings", -1) - st["dividend_earnings"]) < 0.01 and abs(d.get("fees_paid", -1) - st["fees_paid"]) < 0.01 and d.get("dividend_earnings", 0) > 0, f"{d.get('dividend_earnings')} vs {st['dividend_earnings']}; {d.get('fees_paid')} vs {st['fees_paid']}")
+        pts = d.get("points", [])
+        check("the value chart has points and ends at the net worth", len(pts) >= 2 and abs(pts[-1]["net_worth"] - d["net_worth"]) < 0.05, str(pts[-2:]))
+        r2 = client.get(f"/api/v1/leaderboard/{ctx['alice']}?hours=24").json()
+        check("a shorter range still works and ends at the same net worth", len(r2.get("points", [])) >= 1 and abs(r2["points"][-1]["net_worth"] - d["net_worth"]) < 0.05)
+        private = ("email", "orders", "trades", "activity", "password", "average_cost", "held_balance")
+        check("nothing private leaks (no email, orders, trades, activity or cost basis)", not any(k in d for k in private) and not any(k in h for h in d.get("holdings", []) for k in private), str(list(d.keys())))
+        check("an unknown investor is a 404", client.get(f"/api/v1/leaderboard/{uuid.uuid4()}").status_code == 404)
+        house = get_or_create_house_user(db)
+        check("the House account can't be looked up", client.get(f"/api/v1/leaderboard/{house.id}").status_code == 404)
+        bot = db.query(BotProfile).first()
+        if bot is not None:
+            check("a bot trader can't be looked up", client.get(f"/api/v1/leaderboard/{bot.user_id}").status_code == 404)
+        check("a silly range is refused", client.get(f"/api/v1/leaderboard/{ctx['alice']}?hours=999999").status_code == 422)
+        check("something that is not a user id is a 404", client.get("/api/v1/leaderboard/not-an-id").status_code == 404)
+        check("the plain leaderboard still works next to it", client.get("/api/v1/leaderboard").status_code == 200)
+    finally:
+        db.close()
+
+
+@guarded
+def check_tournament_rework(ctx: dict) -> None:
+    section("Tournament rework (top-10 Arenas, $150k qualifiers, set-lobby tracking, open rounds, edit order price)")
+    from types import SimpleNamespace
+
+    from app.models.notification import Notification
+    from app.models.order import Order, OrderStatus
+    from app.services import dividend_service, notification_service, open_rounds_service, osirion_service
+    from app.services.exceptions import OrderNotCancellableError, OrderNotFoundError, ServiceError
+
+    db = SessionLocal()
+    try:
+        # ---- payouts
+        check("the qualifier pool defaults to $150,000", economic_params_service.get_param(db, "dividend.qualifier_pool") == Decimal("150000"))
+        arenas = tournament_service.create_tournament(db, "Arenas Cash Cup - Nov 14, 2026", TournamentType.CASH_CUP, region=None)
+        ctx_a = dividend_service.PoolContext(db, arenas)
+        db.commit()
+        place = lambda p: SimpleNamespace(placement=p, prize_won=None, raw_stats=None)  # noqa: E731
+        paid = [ctx_a.pool_for(place(p), 100) for p in range(1, 101)]
+        check("the Arenas Cash Cup pays only its top 10 places", ctx_a.paid_places == 10 and all(x > 0 for x in paid[:10]) and all(x == 0 for x in paid[10:]), str([str(x) for x in paid[8:13]]))
+        check("...and the top 10 add up to the whole pool", abs(sum(paid) - ctx_a.effective_prize_pool) <= Decimal("1"), f"{sum(paid)} vs {ctx_a.effective_prize_pool}")
+        other = tournament_service.create_tournament(db, "Reload Cash Cup - Nov 14, 2026", TournamentType.CASH_CUP, region=None)
+        ctx_o = dividend_service.PoolContext(db, other)
+        check("other cash cups still pay the whole field", ctx_o.paid_places is None and ctx_o.pool_for(place(40), 100) > 0)
+        qual = tournament_service.create_tournament(db, "FNCS Solo Reload Heats", TournamentType.FNCS_QUALIFIER, region=None)
+        ctx_q = dividend_service.PoolContext(db, qual)
+        check("a qualifier's pool is $150,000", ctx_q.effective_prize_pool == Decimal("150000") * economic_params_service.get_region_multiplier(db, None), str(ctx_q.effective_prize_pool))
+        db.commit()
+
+        # ---- notification back-dating (retroactive dividends show as of the day they were earned)
+        if ctx:
+            when = datetime.now(timezone.utc) - timedelta(days=7)
+            notification_service.notify(db, ctx["alice"], "dividend", "back-dated", "x", created_at=when)
+            db.commit()
+            n = db.query(Notification).filter(Notification.user_id == ctx["alice"], Notification.title == "back-dated").one_or_none()
+            nat = n.created_at if n is not None and n.created_at.tzinfo else (n.created_at.replace(tzinfo=timezone.utc) if n is not None else None)
+            check("a notification can be dated in the past", nat is not None and abs((nat - when).total_seconds()) < 5, str(nat))
+
+        # ---- tracking policy on synthetic Osirion windows
+        base = datetime.now(timezone.utc) + timedelta(days=3)
+
+        def win(name, cash=False, zb=False, regions=("NAC",), event="E1", hours=0, top=0):
+            return osirion_service.AvailableWindow(
+                event_id=event, event_window_id=f"{event}-w{name}", round=0, leaderboard_event_id=f"lb-{event}", leaderboard_event_window_id=f"lw-{name}",
+                is_main=True, begin_time=base + timedelta(hours=hours), end_time=base + timedelta(hours=hours + 3), display_name=name,
+                regions=list(regions), has_cash_payout=cash, top_cash_amount=Decimal(top), is_zero_build=zb, event_group="",
+            )
+
+        wins = [
+            win("FNCS Solo Reload Finals", event="R"), win("FNCS Solo Reload Heats Session 1", event="R", hours=-30),
+            win("FNCS Solo Reload Last Chance Qualifier Session 2", event="R", hours=-20), win("FNCS Solo Reload Open Round 1", event="R", hours=-60),
+            win("FNCS Solo Reload ZB Heats", zb=True, event="Z"), win("Arenas Cash Cup", cash=True, event="A", hours=200, top=2000),
+        ]
+        planned, skips = osirion_service.plan_windows(db, wins, check_lobby=lambda w: True)
+        got = {p.window.display_name: p.tournament_type for p in planned}
+        check("FNCS Solo Reload Finals is tracked as FNCS Finals (even before cash is published)", got.get("FNCS Solo Reload Finals") == TournamentType.FNCS_FINALS, str(got))
+        check("Reload Heats and Last Chance are FNCS Qualifiers", got.get("FNCS Solo Reload Heats Session 1") == TournamentType.FNCS_QUALIFIER and got.get("FNCS Solo Reload Last Chance Qualifier Session 2") == TournamentType.FNCS_QUALIFIER, str(got))
+        check("the Arenas Cash Cup is tracked as a Cash Cup", got.get("Arenas Cash Cup") == TournamentType.CASH_CUP, str(got))
+        check("open rounds and Zero Build are never tracked", "FNCS Solo Reload Open Round 1" not in got and "FNCS Solo Reload ZB Heats" not in got and skips.get("open_round") == 1 and skips.get("zero_build") == 1, f"{got} {skips}")
+        planned2, skips2 = osirion_service.plan_windows(db, wins, check_lobby=lambda w: False)
+        got2 = {p.window.display_name for p in planned2}
+        check("a qualifier that is not a set lobby is skipped", "FNCS Solo Reload Heats Session 1" not in got2 and skips2.get("not_set_lobby") == 2 and "FNCS Solo Reload Finals" in got2, f"{got2} {skips2}")
+
+        # ---- open rounds endpoints (no Osirion key here: empty, never an error)
+        ttl_cache_clear = __import__("app.core.ttl_cache", fromlist=["clear"]).clear
+        ttl_cache_clear()
+        r = client.get("/api/v1/tournaments/open-rounds")
+        check("open-rounds list answers (a list)", r.status_code == 200 and isinstance(r.json(), list), r.text[:200])
+        check("an unknown open round is a 404", client.get("/api/v1/tournaments/open-rounds/entries?leaderboard_event_id=x&leaderboard_event_window_id=y").status_code == 404)
+        check("one-letter player search is refused", client.get("/api/v1/tournaments/open-rounds/search?q=a").status_code == 422)
+        rs = client.get("/api/v1/tournaments/open-rounds/search?q=zzzz")
+        check("player search answers with no matches", rs.status_code == 200 and rs.json()["results"] == [], rs.text[:200])
+        check("the open-round indexer runs without error", isinstance(open_rounds_service.index_pass(db), dict))
+
+        # ---- edit a resting order's price in place
+        if ctx:
+            book_registry.reset_book_cache()
+            p = player_service.create_player(db, gamertag="EditPro", total_shares_outstanding=1000, ipo_price=Decimal("10.0000"), power_rating=60)
+            db.commit()
+            carl = ctx["carl"]
+            w0 = db.query(Wallet).filter(Wallet.user_id == carl).one()
+            held0 = w0.held_balance
+            o = order_service.place_limit_order(db, carl, p.id, OrderSide.BUY, Decimal("10.00"), 5)
+            db.commit()
+            db.refresh(w0)
+            held1 = w0.held_balance
+            n = order_service.modify_order_price(db, carl, o.id, Decimal("10.20"))
+            db.commit()
+            db.refresh(w0)
+            old = db.get(Order, o.id)
+            check("editing the price replaces the order at the new price for the same quantity", n.id != o.id and n.limit_price == Decimal("10.20") and n.quantity == 5 and n.status == OrderStatus.OPEN and old.status == OrderStatus.CANCELLED, f"{n.limit_price} {n.quantity} {n.status} {old.status}")
+            fee = economic_params_service.get_param(db, "fees.transaction_fee_pct")
+            check("the cash on hold follows the new price", abs((w0.held_balance - held1) - Decimal("5") * Decimal("0.20") * (1 + fee)) < Decimal("0.02") and held1 > held0, f"{held0} {held1} {w0.held_balance}")
+            bids = client.get(f"/api/v1/markets/{p.id}/book").json()["bids"]
+            check("the book shows only the new price", len(bids) == 1 and Decimal(str(bids[0]["price"])) == Decimal("10.20"), str(bids))
+            quiet = db.query(Notification).filter(Notification.user_id == carl, Notification.ref_key == f"cancel:{o.id}").count()
+            check("an edit does not send a 'you cancelled' notification", quiet == 0)
+            check("editing to the same price is refused", isinstance(_raises(lambda: order_service.modify_order_price(db, carl, n.id, Decimal("10.20"))), OrderNotCancellableError))
+            db.rollback()
+            check("editing someone else's order is refused", isinstance(_raises(lambda: order_service.modify_order_price(db, ctx["alice"], n.id, Decimal("10.30"))), OrderNotFoundError))
+            db.rollback()
+            err = _raises(lambda: order_service.modify_order_price(db, carl, n.id, Decimal("0.10")))  # below the $0.50 minimum
+            db.rollback()
+            still = db.get(Order, n.id)
+            bids2 = client.get(f"/api/v1/markets/{p.id}/book").json()["bids"]
+            check("a refused new price leaves the original order untouched", isinstance(err, (ServiceError, ValueError)) and still.status == OrderStatus.OPEN and len(bids2) == 1 and Decimal(str(bids2[0]["price"])) == Decimal("10.20"), f"{err!r} {still.status} {bids2}")
+            order_service.cancel_order(db, carl, n.id)
+            db.commit()
+    finally:
+        db.close()
+
+
 def main() -> int:
     print(f"System check using throwaway database: {_DB_FILE}")
     Base.metadata.create_all(bind=engine)
@@ -821,6 +975,8 @@ def main() -> int:
     check_book_price_and_retention(ctx)
     check_analytics_and_delete()
     check_bots()
+    check_investor_profile(ctx)
+    check_tournament_rework(ctx)
 
     failed = [(l, d) for l, ok, d in RESULTS if not ok]
     print("\n" + "=" * 70)

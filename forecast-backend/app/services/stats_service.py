@@ -54,6 +54,21 @@ def _f(x: Decimal | None) -> float:
     return float(x or ZERO)
 
 
+def ledger_totals(db: Session, user_id: uuid.UUID) -> dict:
+    """Lifetime dividends (and how many payouts) and fees for one user, straight from the ledger. Light enough for public views
+    (same definitions as user_stats)."""
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).one_or_none()
+    if wallet is None:
+        return {"dividends": ZERO, "dividend_payouts": 0, "fees": ZERO}
+    dividends, payouts = db.query(
+        func.coalesce(func.sum(LedgerEntry.amount), 0), func.count(LedgerEntry.id)
+    ).filter(LedgerEntry.wallet_id == wallet.id, LedgerEntry.entry_type == LedgerEntryType.DIVIDEND_CREDIT).one()
+    fees = db.query(func.coalesce(func.sum(LedgerEntry.amount), 0)).filter(
+        LedgerEntry.wallet_id == wallet.id, LedgerEntry.entry_type == LedgerEntryType.FEE, LedgerEntry.amount < 0
+    ).scalar()
+    return {"dividends": Decimal(str(dividends or 0)), "dividend_payouts": int(payouts or 0), "fees": -Decimal(str(fees or 0))}
+
+
 def user_stats(db: Session, user: User) -> dict:
     uid = user.id
     wallet = db.query(Wallet).filter(Wallet.user_id == uid).one_or_none()

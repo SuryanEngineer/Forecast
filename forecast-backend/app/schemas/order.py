@@ -16,6 +16,10 @@ class LimitOrderRequest(BaseModel):
     expires_in_minutes: int | None = Field(default=None, ge=1, le=90 * 24 * 60)
 
 
+class ModifyOrderPriceRequest(BaseModel):
+    price: Decimal = Field(gt=0)
+
+
 class QuickOrderRequest(BaseModel):
     player_id: uuid.UUID
     side: OrderSide

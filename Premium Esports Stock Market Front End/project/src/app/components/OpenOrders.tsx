@@ -55,6 +55,8 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
   const { orders, reload } = useOpenOrders(playerId);
   const [busy, setBusy] = useState<string | 'all' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null); // order id whose price is being edited
+  const [draft, setDraft] = useState('');
 
   const ids = useMemo(() => (orders ?? []).map(o => o.player_id), [orders]);
   const { data: markets } = useMarketsByIds(ids);
@@ -72,6 +74,20 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
   async function cancel(id: string) {
     setBusy(id); setError(null);
     await cancelOne(id);
+    await finish();
+  }
+
+  async function savePrice(o: OrderResponse) {
+    const price = parseFloat(draft);
+    if (!Number.isFinite(price) || price <= 0) { setError('Enter a price above $0.'); return; }
+    if (price === toNumber(o.limit_price ?? 0)) { setEditing(null); return; }
+    setBusy(o.id); setError(null);
+    try {
+      await api.post(`/orders/${o.id}/price`, { price });
+      setEditing(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change that order’s price');
+    }
     await finish();
   }
 
@@ -155,14 +171,54 @@ export function OpenOrders({ openPlayer, playerId }: { openPlayer?: (id: string)
             <span className="font-mono font-bold text-foreground shrink-0 text-right" style={{ fontSize: 13.5, minWidth: 96 }} title={buy ? 'Cash this buy order will spend if it fills in full (before fees)' : 'What this sell order will bring in if it fills in full (before fees)'}>
               {usd(worth(o))}
             </span>
-            <button
-              onClick={() => cancel(o.id)}
-              disabled={busy !== null}
-              className="px-4 py-2 rounded-lg font-bold transition-opacity hover:opacity-90 disabled:opacity-50 shrink-0"
-              style={{ fontSize: 12.5, background: 'rgba(255,61,92,0.15)', border: '1px solid var(--loss)', color: 'var(--loss)' }}
-            >
-              {busy === o.id ? 'Cancelling…' : 'Cancel order'}
-            </button>
+            {editing === o.id ? (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-muted-foreground font-mono" style={{ fontSize: 13 }}>$</span>
+                <input
+                  autoFocus
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') savePrice(o); if (e.key === 'Escape') setEditing(null); }}
+                  className="rounded-lg font-mono text-foreground"
+                  style={{ width: 92, fontSize: 13, padding: '6px 8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(251,191,36,0.6)' }}
+                  aria-label="New price per share"
+                />
+                <button
+                  onClick={() => savePrice(o)}
+                  disabled={busy !== null}
+                  className="px-3 py-2 rounded-lg font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{ fontSize: 12.5, background: AMBER, color: '#111' }}
+                >
+                  {busy === o.id ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditing(null)} disabled={busy !== null} className="px-2 py-2 text-muted-foreground" style={{ fontSize: 12.5 }}>
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => { setEditing(o.id); setDraft(String(toNumber(o.limit_price ?? 0))); setError(null); }}
+                  disabled={busy !== null}
+                  className="px-3 py-2 rounded-lg font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{ fontSize: 12.5, background: 'rgba(251,191,36,0.14)', border: '1px solid rgba(251,191,36,0.6)', color: AMBER }}
+                  title="Change this order's price without cancelling it"
+                >
+                  Edit price
+                </button>
+                <button
+                  onClick={() => cancel(o.id)}
+                  disabled={busy !== null}
+                  className="px-4 py-2 rounded-lg font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{ fontSize: 12.5, background: 'rgba(255,61,92,0.15)', border: '1px solid var(--loss)', color: 'var(--loss)' }}
+                >
+                  {busy === o.id ? 'Cancelling…' : 'Cancel order'}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}

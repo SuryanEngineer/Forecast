@@ -48,6 +48,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.engine import payout_policy
 from app.engine.dividend_calculator import placement_payout_fraction
 from app.models.bot import BotProfile
 from app.models.dividend import DividendPayout, DividendPayoutStatus
@@ -176,6 +177,19 @@ def _tournament_pool_amounts(db: Session, tournament_ids: list[uuid.UUID]) -> di
     return pools
 
 
+def _tournament_curves(db: Session, tournament_ids, base_curve: dict) -> dict[uuid.UUID, dict]:
+    """{tournament_id: payout curve} for the few tournaments that pay only their top N places (see engine/payout_policy.py);
+    every other tournament simply uses `base_curve` (look it up with `.get(tid, base_curve)`)."""
+    ids = list(tournament_ids)
+    if not ids:
+        return {}
+    out: dict[uuid.UUID, dict] = {}
+    for tid, name in db.query(Tournament.id, Tournament.name).filter(Tournament.id.in_(ids)).all():
+        if payout_policy.paid_places(name) is not None:
+            out[tid] = payout_policy.curve_for(base_curve, name)
+    return out
+
+
 def _career_stats(
     db: Session, player_ids: list[uuid.UUID]
 ) -> tuple[dict[uuid.UUID, Decimal], dict[uuid.UUID, float], dict[uuid.UUID, float], dict[uuid.UUID, float]]:
@@ -218,6 +232,7 @@ def _career_stats(
     }
     pools = _tournament_pool_amounts(db, list(tournament_ids))
     curve = economic_params_service.get_placement_curve(db)
+    special_curves = _tournament_curves(db, tournament_ids, curve)
     decay = Decimal(str(HISTORY_RECENCY_DECAY))
 
     expected_value: dict[uuid.UUID, Decimal] = {}
@@ -232,7 +247,7 @@ def _career_stats(
         strengths: list[tuple[float, float]] = []
         for rank, (tournament_id, placement) in enumerate(recent):
             max_placement = max(1, field_size.get(tournament_id, 1))
-            fraction = placement_payout_fraction(placement, max_placement, curve)
+            fraction = placement_payout_fraction(placement, max_placement, special_curves.get(tournament_id, curve))
             weight = decay**rank
             weighted_sum += pools.get(tournament_id, Decimal("0")) * fraction * weight
             weight_total += weight
@@ -279,6 +294,7 @@ def _result_income(
     field = {tid: n for tid, n in db.query(PlacementResult.tournament_id, func.count(PlacementResult.id)).filter(PlacementResult.tournament_id.in_(tids)).group_by(PlacementResult.tournament_id).all()} if tids else {}
     pools = _tournament_pool_amounts(db, list(tids)) if tids else {}
     curve = economic_params_service.get_placement_curve(db)
+    special_curves = _tournament_curves(db, tids, curve)
     first_seen: datetime | None = None
     for pid, tid, placement, start, end in rows:
         start = _aware(start)
@@ -290,7 +306,7 @@ def _result_income(
         # A recorded result has already happened: never date it in the future (a tournament with no end time that is
         # finalized within a day of its start would otherwise count for nothing, and the news re-rate would miss it).
         done = min(done, datetime.now(timezone.utc))
-        value = float(pools.get(tid, Decimal("0")) * placement_payout_fraction(placement, max(1, field.get(tid, 1)), curve))
+        value = float(pools.get(tid, Decimal("0")) * placement_payout_fraction(placement, max(1, field.get(tid, 1)), special_curves.get(tid, curve)))
         events[pid].append((done, value))
     return events, first_seen
 

@@ -65,19 +65,22 @@ def notify(
     data: dict | None = None,
     ref_key: str | None = None,
     read: bool = False,
+    created_at: datetime | None = None,
 ) -> bool:
     """Adds one notification (caller must already know `user_id` is a real user). `read=True` creates it already read
-    (used for things the user just did themselves). Returns False if it was a duplicate (`ref_key`) or failed."""
+    (used for things the user just did themselves). `created_at` back-dates it (a retroactive dividend shows as of the day
+    it was earned). Returns False if it was a duplicate (`ref_key`) or failed."""
     try:
         with db.begin_nested():
             if ref_key is not None and (
                 db.query(Notification.id).filter(Notification.user_id == user_id, Notification.ref_key == ref_key).first()
             ):
                 return False
+            extra = {"created_at": created_at} if created_at is not None else {}
             db.add(
                 Notification(
                     id=uuid.uuid4(), user_id=user_id, kind=kind, title=title[:200], body=body, data=data,
-                    ref_key=ref_key, read_at=datetime.now(timezone.utc) if read else None,
+                    ref_key=ref_key, read_at=datetime.now(timezone.utc) if read else None, **extra,
                 )
             )
             db.flush()
@@ -156,6 +159,14 @@ def dividends_paid(db: Session, tournament_id: uuid.UUID) -> int:
             g["players"].append(tag)
     real = real_user_ids(db, per_user.keys())
     sent = 0
+    # Dated to when the money was earned (the tournament's finish), not when the job ran: a retroactive payout for an
+    # event a week ago appears a week ago. Only back-dated when clearly in the past and still inside the retention window
+    # (anything older would be pruned at once, so it is stamped now instead).
+    from app.services import dividend_service
+
+    when = dividend_service.tournament_finished_at(db, tournament)
+    age = datetime.now(timezone.utc) - when
+    dated = when if timedelta(minutes=10) < age < timedelta(days=RETENTION_DAYS) else None
     for uid, g in per_user.items():
         if uid not in real:
             continue
@@ -166,7 +177,7 @@ def dividends_paid(db: Session, tournament_id: uuid.UUID) -> int:
             f"{tournament.name} paid you {_usd(g['total'])} for {who}.",
             data={"tournament_id": str(tournament_id), "tournament_name": tournament.name,
                   "amount": float(g["total"]), "players": players[:8]},
-            ref_key=f"dividend:{tournament_id}",
+            ref_key=f"dividend:{tournament_id}", created_at=dated,
         ):
             sent += 1
     return sent

@@ -10,6 +10,7 @@ import {
 } from '../lib/types';
 import { LiveLeaderboard } from './LiveLeaderboard';
 import { HelpButton } from './HelpModal';
+import { OpenRoundsSection } from './OpenRounds';
 import { usd } from '../lib/format';
 
 interface Props {
@@ -431,6 +432,9 @@ export function Tournaments({ openTournament }: Props) {
         </div>
       )}
       </>)}
+
+      {/* Open qualifier rounds: reference only (no payout), collapsed and off by default, kept apart from the payout events. */}
+      <div className="pt-4"><OpenRoundsSection /></div>
     </div>
   );
 }

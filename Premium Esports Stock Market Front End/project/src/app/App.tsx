@@ -161,7 +161,13 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
           }}
         />
       )}
-      {teamModalUserId && <TeamModal userId={teamModalUserId} onClose={() => setTeamModalUserId(null)} />}
+      {teamModalUserId && (
+        <TeamModal
+          userId={teamModalUserId}
+          onClose={() => setTeamModalUserId(null)}
+          onOpenPlayer={id => { setTeamModalUserId(null); setPlayerModalId(id); }}
+        />
+      )}
       {selectedTournament && (
         <TournamentDetailModal
           tournament={selectedTournament}

@@ -132,9 +132,10 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "simulation's locked-in economics (3 FNCS/chapter x $1.5M = $4.5M).",
     ),
     "dividend.qualifier_pool": (
-        Decimal("300000"),
-        "Fixed synthetic dividend pool paid out for a qualifier-style event (e.g. Global Championship Last Chance): "
-        "Cash Cup sized, because it is a stepping stone to a bigger event rather than the event itself.",
+        Decimal("150000"),
+        "Fixed synthetic dividend pool paid out for a qualifier-style set-lobby event (e.g. FNCS Solo Reload Heats / "
+        "Last Chance Qualifier): half a Cash Cup, because it is a stepping stone to a bigger event rather than the "
+        "event itself.",
     ),
     "dividend.global_pool": (
         Decimal("3000000"),

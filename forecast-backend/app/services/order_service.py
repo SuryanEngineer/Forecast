@@ -698,6 +698,47 @@ def cancel_order(db: Session, user_id: uuid.UUID, order_id: uuid.UUID) -> Order:
     return _cancel_resting(db, order, reason="you cancelled it", by_user=True)
 
 
+def modify_order_price(db: Session, user_id: uuid.UUID, order_id: uuid.UUID, new_price: Decimal) -> Order:
+    """Change the price of a resting limit order without the user cancelling and re-entering it by hand.
+
+    Done as one step: the old order is taken off the book (quietly -- no "you cancelled" notification) and a new one for
+    the REMAINING quantity is placed at the new price, keeping the same side and expiry. All the normal checks run on the
+    new price (price band, self-trade, funds/shares), and if the new order is refused or fails, nothing is committed (the
+    route rolls back, so the original order stays exactly as it was) and the cached book is dropped to be rebuilt. If the
+    new price crosses the book it fills immediately, exactly like placing it fresh. Returns the NEW order."""
+    lease_service.require_primary()
+    order = db.get(Order, order_id)
+    if order is None or order.user_id != user_id:
+        raise OrderNotFoundError(str(order_id))
+    if order.order_kind != OrderKind.LIMIT:
+        raise OrderNotCancellableError("quick orders settle instantly and cannot be edited")
+    if order.status not in (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED):
+        raise OrderNotCancellableError(f"order is already {order.status.value}")
+    new_price = Decimal(new_price)
+    if new_price <= 0:
+        raise ValueError("price must be positive")
+    if new_price < market_policy.MIN_PRICE:
+        raise ValueError(f"minimum share price is ${market_policy.MIN_PRICE}")  # refused before the book is touched
+    if new_price == order.limit_price:
+        raise OrderNotCancellableError("that is already the order's price")
+    remaining = order.quantity - order.filled_quantity
+    if remaining <= 0:
+        raise OrderNotCancellableError("order has nothing left to fill")
+
+    player_id, side, expires_at = order.player_id, order.side, order.expires_at
+    _cancel_resting(db, order, reason="its price was changed", by_user=True, notify=False)
+    try:
+        minutes_left = None
+        if expires_at is not None:
+            exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+            minutes_left = max(1, int((exp - datetime.now(timezone.utc)).total_seconds() // 60))
+        return _place_limit_order(db, user_id, player_id, side, new_price, remaining, expires_in_minutes=minutes_left)
+    except BaseException:
+        # The cancel above already touched the in-memory book; the caller rolls the database back, so rebuild it.
+        book_registry.drop_book(player_id)
+        raise
+
+
 def expire_due_orders(db: Session, now: datetime | None = None, limit: int = 200) -> int:
     """Cancels every open / part-filled limit order whose `expires_at` has passed, releasing its cash or shares exactly like
     a manual cancel. Run every ~20s by the market-lease holder (main._order_expiry_loop). Returns how many were cancelled."""
@@ -926,7 +967,7 @@ def reconcile_holds(db: Session, force: bool = False) -> dict[str, int]:
     return {"cancelled": cancelled, "released": released}
 
 
-def _cancel_resting(db: Session, order: Order, reason: str = "it was taken off the book", by_user: bool = False) -> Order:
+def _cancel_resting(db: Session, order: Order, reason: str = "it was taken off the book", by_user: bool = False, notify: bool = True) -> Order:
     """Takes a resting limit order off the book and releases what it was holding (shared by cancel, expiry and the
     hold reconciler). `reason` / `by_user` only decide what the user's notification says (a bot's order never notifies)."""
     user_id = order.user_id
@@ -960,6 +1001,6 @@ def _cancel_resting(db: Session, order: Order, reason: str = "it was taken off t
         order.cancelled_at = datetime.now(timezone.utc)
         db.flush()
 
-    if not order.is_bot and notification_service.real_user_ids(db, [order.user_id]):
+    if notify and not order.is_bot and notification_service.real_user_ids(db, [order.user_id]):
         notification_service.order_cancelled(db, order, reason, by_user)
     return order

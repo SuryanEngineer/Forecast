@@ -20,3 +20,4 @@ from app.models.tournament_classification import TournamentClassificationRule, R
 from app.models.account import UserSession, EmailCode, PortfolioSnapshot, Season, SeasonEntry  # noqa: F401
 from app.models.qualifier import QualifierWindow, QualifierResult  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
+from app.models.open_round import OpenRoundIndexState, OpenRoundEntry  # noqa: F401

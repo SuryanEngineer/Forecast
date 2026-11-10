@@ -13,7 +13,7 @@ from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy.orm import Session
 
-from app.engine import performance_eval
+from app.engine import payout_policy, performance_eval
 from app.engine.dividend_calculator import compute_dividend_distribution, compute_player_pool
 from app.models.dividend import DividendLineItem, DividendPayout, DividendPayoutStatus
 from app.models.player import Player
@@ -59,7 +59,9 @@ class PoolContext:
     previewing a 100-team leaderboard doesn't re-query the economy parameters per row)."""
 
     def __init__(self, db: Session, tournament: Tournament) -> None:
-        self.placement_curve = economic_params_service.get_placement_curve(db)
+        # The global curve, or its top-N version for an event that pays only its top places (see engine/payout_policy.py).
+        self.placement_curve = payout_policy.curve_for(economic_params_service.get_placement_curve(db), tournament.name)
+        self.paid_places = payout_policy.paid_places(tournament.name)
         fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
         if fixed_pool is not None:
             fixed_pool = fixed_pool * economic_params_service.get_region_multiplier(db, tournament.region)
@@ -91,50 +93,15 @@ class PoolContext:
 
 
 def create_payout_for_placement(
-    db: Session, tournament: Tournament, placement_result: PlacementResult, max_placement: int
+    db: Session, tournament: Tournament, placement_result: PlacementResult, max_placement: int, ctx: "PoolContext | None" = None
 ) -> DividendPayout:
     player = db.get(Player, placement_result.player_id)
-    # Admin-editable curve (see economic_params_service.py) -- only used
-    # as a fallback when the admin hasn't entered an exact prize_won for
-    # this placement.
-    placement_curve = economic_params_service.get_placement_curve(db)
-
-    # Per the locked-in economy design, Cash Cup / FNCS / Global Championship
-    # tournaments pay out of a FIXED synthetic pool ($300k / $1.5M / $3M,
-    # admin-tunable -- see economic_params_service.FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE),
-    # not a real-world Fortnite prize pool. Other tournament types (MAJOR,
-    # OTHER) keep the original behavior of using the admin-entered
-    # Tournament.prize_pool. Either way, an exact per-player `prize_won`
-    # entered by an admin always takes precedence over both.
-    fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
-    if fixed_pool is not None:
-        # Region scale factor: an EU/NAC Cash Cup pays the full fixed pool;
-        # a smaller region's Cash Cup pays a scaled-down amount of that same
-        # pool (see economic_params_service.DEFAULT_REGION_MULTIPLIERS).
-        # Only applies to the fixed synthetic pools -- an admin-entered
-        # prize_pool (MAJOR/OTHER types) is already a real, region-specific
-        # number and isn't rescaled.
-        region_multiplier = economic_params_service.get_region_multiplier(db, tournament.region)
-        fixed_pool = fixed_pool * region_multiplier
-    effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
-
-    if tournament.tournament_type == TournamentType.PERFORMANCE_EVAL:
-        # Set-lobby cup: the pool is paid per game WON (a quarter of the cup's pool per win, split across the winning
-        # team), never by final placement. A player who won nothing gets a zero pool (the row still exists so the
-        # tournament can finalize). See app/engine/performance_eval.py.
-        pool = performance_eval.player_pool(
-            placement_result.raw_stats,
-            economic_params_service.get_param(db, "dividend.performance_eval_pool"),
-            economic_params_service.get_param(db, "dividend.performance_eval_win_share"),
-        )
-    else:
-        pool = compute_player_pool(
-            placement=placement_result.placement,
-            prize_won=placement_result.prize_won,
-            tournament_prize_pool=effective_prize_pool,
-            max_placement=max_placement,
-            placement_curve=placement_curve,
-        )
+    # One shared way to price a placement (also used by every preview and valuation): the fixed synthetic pool for the
+    # tier ($150k qualifier / $300k Cash Cup / $1.5M FNCS / $3M Global, admin-tunable -- see
+    # economic_params_service.FIXED_POOL_PARAM_BY_TOURNAMENT_TYPE) scaled by region, split by the placement curve (top-N
+    # events such as the Arenas Cash Cup pay only their top places), or per game won for a Performance Evaluation cup.
+    # An exact per-player `prize_won` entered by an admin always takes precedence.
+    pool = (ctx or PoolContext(db, tournament)).pool_for(placement_result, max_placement)
     payout = DividendPayout(
         id=uuid.uuid4(),
         tournament_id=tournament.id,
