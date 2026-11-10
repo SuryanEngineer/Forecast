@@ -191,6 +191,7 @@ export type TournamentPhase = 'upcoming' | 'live' | 'finalizing' | 'completed';
 // a winner (set lobby) or an open round's lobbies have closed and the final games had time to finish.
 export interface LiveProgress {
   lobby: 'set' | 'open' | 'unknown' | null;
+  stage?: 'final' | 'round' | 'unknown' | null;
   games_expected: number | null;
   games_done: number | null;
   over: boolean | null;

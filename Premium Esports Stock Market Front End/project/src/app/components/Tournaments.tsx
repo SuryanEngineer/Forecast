@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Calendar } from 'lucide-react';
-import { tournamentDisplayName } from '../lib/tournamentName';
+import { titledName, tournamentDisplayName } from '../lib/tournamentName';
 import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
 import {
   toNumber,
@@ -65,7 +65,7 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
           <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(0,200,255,0.15)', color: 'var(--primary)' }}>NEXT EVENT</span>
           <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(type)}</span>
         </div>
-        <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(name, region)}</h2>
+        <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{titledName(name, region, type)}</h2>
         {region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{region}</p>}
       </div>
       {pool !== null && pool > 0 && (
@@ -126,7 +126,7 @@ function LiveEvent({ tournament, onOpen }: { tournament: CalendarTournamentRespo
               <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>● LIVE</span>
               <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(tournament.tournament_type)}</span>
             </div>
-            <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
+            <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{titledName(tournament.name, tournament.region, tournament.tournament_type, tournament.live_progress?.lobby, tournament.live_progress?.stage)}</h2>
             {tournament.region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{tournament.region}</p>}
           </div>
           {pool !== null && pool > 0 && (
@@ -207,7 +207,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{titledName(tournament.name, tournament.region, tournament.tournament_type, tournament.live_progress?.lobby, tournament.live_progress?.stage)}</p>
           {isLive && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
               ● Live
@@ -263,7 +263,7 @@ function AnnouncedRow({ event }: { event: AnnouncedTournament }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournamentDisplayName(event.name, event.region)}</p>
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{titledName(event.name, event.region, event.tournament_type)}</p>
           <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(0,200,255,0.12)', color: 'var(--primary)' }}>
             Announced
           </span>
@@ -292,7 +292,7 @@ const startMs = (iso: string | null) => (iso ? new Date(iso).getTime() : Number.
 
 const calendarToTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
   id: t.id, name: t.name, tournament_type: t.tournament_type, region: t.region, start_time: t.start_time, end_time: t.end_time,
-  prize_pool: t.total_dividend_pool, status: t.status, phase: t.phase, created_at: t.start_time ?? new Date().toISOString(),
+  prize_pool: t.total_dividend_pool, status: t.status, phase: t.phase, live_progress: t.live_progress, created_at: t.start_time ?? new Date().toISOString(),
 });
 
 /** The top of the Events page, reusable elsewhere (the landing page): live events with their leaderboard in red, or, when
@@ -394,6 +394,7 @@ export function Tournaments({ openTournament }: Props) {
     prize_pool: t.total_dividend_pool,
     status: t.status,
     phase: t.phase,
+    live_progress: t.live_progress,
     created_at: t.start_time ?? new Date().toISOString(),
   });
 

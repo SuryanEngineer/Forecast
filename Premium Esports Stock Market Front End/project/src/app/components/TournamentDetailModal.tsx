@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { api } from '../lib/api';
 import { useLiveLeaderboard, useMarketsByIds } from '../lib/hooks';
 import { toNumber, type TournamentResponse } from '../lib/types';
-import { tournamentDisplayName } from '../lib/tournamentName';
+import { titledName } from '../lib/tournamentName';
 import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
 import { TeamLeaderboard } from './TeamLeaderboard';
@@ -305,7 +305,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
               <X className="w-5 h-5 text-muted-foreground" />
             </button>
           </div>
-          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
+          <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{titledName(tournament.name, tournament.region, tournament.tournament_type, tournament.live_progress?.lobby, tournament.live_progress?.stage)}</h2>
           <div className="flex items-center gap-4 mt-2 flex-wrap text-muted-foreground" style={{ fontSize: 12.5 }}>
             {tournament.region && <span>{tournament.region}</span>}
             {tournament.start_time && (

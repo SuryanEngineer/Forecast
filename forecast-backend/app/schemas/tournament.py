@@ -47,6 +47,7 @@ def progress_view(rules: dict | None) -> dict | None:
     p = r.get("progress") or {}
     out = {
         "lobby": r.get("lobby"),
+        "stage": r.get("stage"),  # final | round | unknown
         "games_expected": r.get("expected_games") or None,
         "games_done": p.get("games_done"),
         "over": p.get("over"),
