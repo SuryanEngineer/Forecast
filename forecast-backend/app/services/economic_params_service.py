@@ -243,6 +243,18 @@ def get_fixed_tournament_pool(db: Session, tournament_type: str, region: str | N
     return get_param(db, param_key)
 
 
+def get_tournament_pool(db: Session, tournament_type: str, region: str | None = None, format_rules: dict | None = None) -> Decimal | None:
+    """The dividend pool a tournament pays, region multiplier included -- THE one lookup every payout, preview, valuation
+    and calendar row uses. A tournament tracked under the format rules (engine/format_policy.py) carries its own pool
+    parameter (Cash Cup / qualifier pool by lobby type and stage); otherwise the tier's fixed pool applies. None means the
+    tournament uses its own admin-entered prize_pool."""
+    param_key = (format_rules or {}).get("pool_param")
+    base = get_param(db, param_key) if param_key in DEFAULTS else get_fixed_tournament_pool(db, tournament_type, region)
+    if base is None:
+        return None
+    return base * get_region_multiplier(db, region)
+
+
 def get_param(db: Session, key: str) -> Decimal:
     row = db.get(PlatformParameter, key)
     if row is None:

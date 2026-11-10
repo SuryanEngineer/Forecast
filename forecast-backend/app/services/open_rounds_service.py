@@ -8,6 +8,9 @@ the heats of tracked cash events), never for Zero Build or console/mobile-only e
 Osirion has no search endpoint and no way to filter a leaderboard, so:
   * LIVE / any round: a cached page proxy (`get_page`) -- one Osirion request per page, cached, and capped per minute so it can
     never starve the tournament sync loop (they share Osirion's 45 requests/minute budget).
+  * Which rounds are listed: every non-cash BR / Reload window of the year (not Zero Build, not console / mobile, not victory /
+    skin cups) that belongs to a series we track -- same event, same event group, or same game-mode series (arena / trio / solo /
+    reload / fncs ...) as a tracked tournament -- plus the FNCS Reload family's open rounds.
   * FINISHED rounds: a throttled background pass (`index_pass`, a couple of pages per sync cycle) stores the top of each recently
     finished round -- name, rank, points -- in a small table that `search` queries. Rounds older than INDEX_DAYS are dropped and
     each round is read only as deep as INDEX_MAX_PAGES, so the table stays small. Search says honestly how deep it covers.
@@ -72,6 +75,17 @@ def select_open_rounds(db: Session, windows: list) -> list:
     planned_events = {p.window.event_id for p in planned}
     paying_events = tracked_events | planned_events
 
+    # What the tournaments we track look like, so their open rounds can be recognised even when Osirion files them under a
+    # different event id (an Arenas Cash Cup's open / test rounds are separate events from the cash final itself):
+    #   * the same event group (e.g. Season42_ArenaCashCup),
+    #   * the same game-mode series (arena / trio / solo / reload / fncs ...), among all tracked and planned tournaments.
+    by_key = {(w.leaderboard_event_id, w.leaderboard_event_window_id): w for w in windows}
+    tracked_windows = [by_key[k] for k in (tracked_keys | planned_keys) if k in by_key]
+    tracked_groups = {w.event_group for w in tracked_windows if w.event_group}
+    series_texts = [f"{w.event_group} {w.event_id} {w.display_name}" for w in tracked_windows]
+    series_texts += [f"{m.osirion_event_id} {m.osirion_display_name or ''}" for m in mappings]
+    tracked_series = {s for s in (tracking_policy.series_key(t) for t in series_texts) if s}
+
     out = []
     for w in windows:
         key = (w.leaderboard_event_id, w.leaderboard_event_window_id)
@@ -79,10 +93,17 @@ def select_open_rounds(db: Session, windows: list) -> list:
             continue
         if w.is_zero_build or osirion_service.platform_restriction(w) or w.has_cash_payout:
             continue
+        text = f"{w.event_group} {w.event_id} {w.display_name}"
+        if tracking_policy.is_excluded_family(text):
+            continue
         if not tracking_policy.reload_region_ok(w.regions, osirion_service.ALLOWED_TRACKING_REGIONS):
             continue
         role = tracking_policy.reload_family_role(w.classification_text)
-        if role in (tracking_policy.ROLE_OPEN, tracking_policy.ROLE_QUALIFIER) or (role is None and w.event_id in paying_events):
+        if role in (tracking_policy.ROLE_OPEN, tracking_policy.ROLE_QUALIFIER):
+            out.append(w)
+        elif w.event_id in paying_events or (w.event_group and w.event_group in tracked_groups):
+            out.append(w)
+        elif tracking_policy.series_key(text) in tracked_series:
             out.append(w)
     return out
 
@@ -96,7 +117,7 @@ def list_open_rounds(db: Session, force: bool = False) -> list[dict]:
         except Exception:  # noqa: BLE001
             return []
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(days=INDEX_DAYS)
+        cutoff = datetime(now.year, 1, 1, tzinfo=timezone.utc)  # every open round of the year (only the search INDEX is recent-only)
         rows = []
         for w in select_open_rounds(db, windows):
             when = _aware(w.end_time or w.begin_time)
@@ -113,7 +134,7 @@ def list_open_rounds(db: Session, force: bool = False) -> list[dict]:
                 "status": _status(w.begin_time, w.end_time, now),
             })
         rows.sort(key=lambda r: _aware(r["start_time"]) or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
-        return rows
+        return rows[:600]
 
     if force:
         return compute()
@@ -215,7 +236,11 @@ def index_pass(db: Session) -> dict:
     result = {"pages": 0, "entries": 0, "rounds_done": 0}
     try:
         now = datetime.now(timezone.utc)
-        finished = [r for r in list_open_rounds(db) if r["status"] == "finished"][:INDEX_MAX_ROUNDS]
+        recent = now - timedelta(days=INDEX_DAYS)
+        finished = [
+            r for r in list_open_rounds(db)
+            if r["status"] == "finished" and (_aware(r["end_time"]) is None or _aware(r["end_time"]) >= recent)
+        ][:INDEX_MAX_ROUNDS]
         keep = {(r["leaderboard_event_id"], r["leaderboard_event_window_id"]) for r in finished}
         # Drop rounds that fell out of the window (and their rows).
         for s in db.query(OpenRoundIndexState).all():

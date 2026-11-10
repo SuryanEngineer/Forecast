@@ -35,8 +35,10 @@ def create_tournament(
     created_by_admin_id: uuid.UUID | None = None,
     result_source: ResultSource = ResultSource.MANUAL,
     is_historical_archive: bool = False,
+    format_rules: dict | None = None,
 ) -> Tournament:
     tournament = Tournament(
+        format_rules=format_rules,
         id=uuid.uuid4(),
         name=name,
         tournament_type=tournament_type,

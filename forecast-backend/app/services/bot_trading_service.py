@@ -162,14 +162,14 @@ def _tournament_pool_amounts(db: Session, tournament_ids: list[uuid.UUID]) -> di
     if not tournament_ids:
         return {}
     pools: dict[uuid.UUID, Decimal] = {}
-    for t_id, tournament_type, region, prize_pool in (
-        db.query(Tournament.id, Tournament.tournament_type, Tournament.region, Tournament.prize_pool)
+    for t_id, tournament_type, region, prize_pool, rules in (
+        db.query(Tournament.id, Tournament.tournament_type, Tournament.region, Tournament.prize_pool, Tournament.format_rules)
         .filter(Tournament.id.in_(tournament_ids))
         .all()
     ):
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type, region)
+        fixed_pool = economic_params_service.get_tournament_pool(db, tournament_type, region, rules)
         if fixed_pool is not None:
-            pools[t_id] = fixed_pool * economic_params_service.get_region_multiplier(db, region)
+            pools[t_id] = fixed_pool
         elif prize_pool is not None:
             pools[t_id] = prize_pool
         else:
@@ -184,9 +184,9 @@ def _tournament_curves(db: Session, tournament_ids, base_curve: dict) -> dict[uu
     if not ids:
         return {}
     out: dict[uuid.UUID, dict] = {}
-    for tid, name in db.query(Tournament.id, Tournament.name).filter(Tournament.id.in_(ids)).all():
-        if payout_policy.paid_places(name) is not None:
-            out[tid] = payout_policy.curve_for(base_curve, name)
+    for tid, name, rules in db.query(Tournament.id, Tournament.name, Tournament.format_rules).filter(Tournament.id.in_(ids)).all():
+        if payout_policy.paid_places_for(name, rules) is not None:
+            out[tid] = payout_policy.curve_for_rules(base_curve, name, rules)
     return out
 
 

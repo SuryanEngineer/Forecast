@@ -57,3 +57,20 @@ def curve_for(curve: dict[int, Decimal], name: str | None) -> dict[int, Decimal]
     """The curve to use for the event called `name`: the global curve, or its top-N version for a top-N event."""
     n = paid_places(name)
     return curve if n is None else top_n_curve(curve, n)
+
+
+def paid_places_for(name: str | None, rules: dict | None = None) -> int | None:
+    """Paid places for an event: the by-name rule first, else the number of places the window's own payout table pays
+    (stored in its format rules when it was tracked), else None (the whole field is paid)."""
+    stored = (rules or {}).get("paid_places")
+    try:
+        if stored:
+            return int(stored)  # the event's own payout table (it differs by region: Arenas pays 10 EU / 7 NAC / 5 NAW)
+    except (TypeError, ValueError):
+        pass
+    return paid_places(name)  # fallback for events tracked without a payout table
+
+
+def curve_for_rules(curve: dict[int, Decimal], name: str | None, rules: dict | None = None) -> dict[int, Decimal]:
+    n = paid_places_for(name, rules)
+    return curve if n is None else top_n_curve(curve, n)

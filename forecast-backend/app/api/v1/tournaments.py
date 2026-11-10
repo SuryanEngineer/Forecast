@@ -105,10 +105,9 @@ def _build_calendar(db: Session, include_completed: bool) -> list[CalendarTourna
 
     rows: list[CalendarTournamentResponse] = []
     for tournament in tournaments:
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
+        fixed_pool = economic_params_service.get_tournament_pool(db, tournament.tournament_type, tournament.region, tournament.format_rules)
         if fixed_pool is not None:
-            region_multiplier = economic_params_service.get_region_multiplier(db, tournament.region)
-            total_pool: Decimal | None = fixed_pool * region_multiplier
+            total_pool: Decimal | None = fixed_pool
         else:
             total_pool = tournament.prize_pool
 
@@ -196,7 +195,7 @@ def get_payout_preview(
     ctx = dividend_service.PoolContext(db, tournament)
     db.commit()  # parameter defaults may have been seeded
 
-    if tournament.tournament_type == TournamentType.PERFORMANCE_EVAL:
+    if ctx.is_performance_eval:
         pool, share = ctx.eval_pool, ctx.eval_win_share
         size = performance_eval.DEFAULT_TEAM_SIZE
         per_win = performance_eval.per_player_win_value(pool, share, size)

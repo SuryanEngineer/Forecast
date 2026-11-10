@@ -63,7 +63,7 @@ from app.models.tournament import (
     TournamentStatus,
     TournamentType,
 )
-from app.engine import performance_eval, tracking_policy
+from app.engine import format_policy, performance_eval, tracking_policy
 from app.services import notification_service, player_service, tournament_classification_service, tournament_service
 from app.services.player_identity import skeleton
 
@@ -143,6 +143,10 @@ class AvailableWindow:
     top_cash_amount: Decimal = Decimal("0")
     is_zero_build: bool = False
     event_group: str = ""
+    # From the window's published scoring rules / payout table (see engine/format_policy.py): 'wins' = only game wins
+    # score, else 'placement'; cash_places = the worst rank that still wins real money (0 = unknown / no cash).
+    scoring: str = "placement"
+    cash_places: int = 0
     # The original, unflattened Osirion dicts this window came from --
     # kept only so track_tournament can hand them to
     # TournamentResultArchive at track time (see that model's docstring
@@ -200,6 +204,21 @@ def _cash_payout_info(score_location: dict) -> tuple[bool, Decimal]:
                 if amount is not None and amount > top_amount:
                     top_amount = amount
     return has_cash, top_amount
+
+
+def _cash_places(score_location: dict) -> int:
+    """Worst rank that still earns real money in this score location's rank payout table (0 when none)."""
+    worst = 0
+    for table in score_location.get("payoutTables") or []:
+        for rank_entry in table.get("ranks") or []:
+            threshold = rank_entry.get("threshold")
+            if not isinstance(threshold, int) or threshold <= 0:
+                continue
+            for payout in rank_entry.get("payouts") or []:
+                reward_type = (payout.get("rewardType") or "").strip().lower()
+                if reward_type and reward_type != "token" and (_to_decimal(payout.get("quantity")) or 0) > 0:
+                    worst = max(worst, threshold)
+    return worst
 
 
 _ZERO_BUILD_MARKERS = ("zb", "no build", "nobuild", "no-build")
@@ -322,6 +341,8 @@ def _list_windows_for_region(region: str | None, include_historic_data: bool) ->
                     top_cash_amount=top_cash_amount,
                     is_zero_build=is_zero_build,
                     event_group=tournament.get("eventGroup") or "",
+                    scoring=format_policy.scoring_kind(chosen),
+                    cash_places=_cash_places(chosen),
                     raw_tournament=tournament,
                     raw_event_window=event_window,
                 )
@@ -339,6 +360,7 @@ def track_tournament(
     window: AvailableWindow,
     created_by_admin_id: uuid.UUID | None,
     is_historical_archive: bool = False,
+    format_rules: dict | None = None,
 ) -> OsirionTournamentMapping:
     """Creates a new internal Tournament (result_source=API_IMPORT) plus
     its OsirionTournamentMapping, in one call. `name`/`tournament_type`
@@ -361,6 +383,7 @@ def track_tournament(
         created_by_admin_id=created_by_admin_id,
         result_source=ResultSource.API_IMPORT,
         is_historical_archive=is_historical_archive,
+        format_rules=format_rules,
     )
 
     mapping = OsirionTournamentMapping(
@@ -681,6 +704,9 @@ class SyncResult:
 # A finals lobby is ~100 players (Reload 40). Anything with more than this many ENTRIES is an open field.
 _MAX_FINALS_FIELD_ENTRIES = 200
 
+# Pages of an open (cash-paying) round that are synced and paid: the top of the standings only.
+OPEN_ROUND_SYNC_PAGES = 2
+
 
 def _lan_hold_applies(tournament: Tournament, skip_finalize: bool) -> bool:
     """True for a LIVE (dividend-paying) sync of a LAN/global-tier tournament.
@@ -755,6 +781,12 @@ def sync_tournament(
     # tournament's finalization -- walk every page no matter how long it
     # takes, so finalizing is never based on a partial field.
     max_pages = None if window_ended else settings.OSIRION_MAX_PAGES_PER_TOURNAMENT_PER_SYNC
+    # An OPEN round that pays cash has tens of thousands of entrants, but only its top places earn anything: sync just the
+    # first pages (enough to cover every paid place) and treat that as the whole result.
+    open_round = (tournament.format_rules or {}).get("lobby") == format_policy.LOBBY_OPEN
+    if open_round:
+        max_pages = OPEN_ROUND_SYNC_PAGES
+        create_missing_players = False  # never grow the roster from an open field: only players we already list can earn
 
     reached_end_of_leaderboard = False
     try:
@@ -772,6 +804,26 @@ def sync_tournament(
             if len(entries) > 150:
                 notify_wins = False   # a big open field: no per-player win notices
 
+            # A tournament listed before its field was visible carries a provisional format; the first page settles it.
+            if page == 0 and (tournament.format_rules or {}).get("provisional"):
+                verdict = tracking_policy.verdict_from_field(len(entries), total_pages, len(entries))
+                if verdict is not None:
+                    old = tournament.format_rules or {}
+                    new = format_policy.decide(
+                        lobby=format_policy.lobby_label(verdict), has_cash=bool(old.get("cash")), stage_index=0,
+                        scoring=old.get("scoring") or format_policy.SCORING_PLACEMENT,
+                    )
+                    if new is None:
+                        tournament.is_historical_archive = True  # an open round that pays nothing: not a tournament
+                        db.commit()
+                        result.error = "open round with no cash prize -- not tracked"
+                        return result
+                    new["paid_places"] = old.get("paid_places")
+                    tournament.format_rules = new
+                    db.commit()
+                    if new["lobby"] == format_policy.LOBBY_OPEN:
+                        open_round, max_pages, create_missing_players = True, OPEN_ROUND_SYNC_PAGES, False
+
             # Open-field guard (live path, non-LAN only): a finals lobby is <=~100 players, so a leaderboard
             # with far more than a couple hundred entries is an open cup/qualifier that must never become
             # tradeable players (that is how the roster once reached 89k). Pre-start tracking of upcoming
@@ -780,6 +832,7 @@ def sync_tournament(
             if (
                 page == 0
                 and not skip_finalize
+                and not open_round
                 and tournament.tournament_type not in _REGION_EXEMPT_TOURNAMENT_TYPES
                 and total_pages > 1
                 and len(entries) * (total_pages - 1) > _MAX_FINALS_FIELD_ENTRIES
@@ -875,7 +928,7 @@ def sync_tournament(
 
             page += 1
 
-        reached_end_of_leaderboard = page >= total_pages
+        reached_end_of_leaderboard = page >= total_pages or (open_round and page >= OPEN_ROUND_SYNC_PAGES)
 
         # Permanently capture the raw response fetched so far too -- see
         # TournamentResultArchive's docstring. Includes entries that never
@@ -1015,6 +1068,70 @@ def _has_tournament_in_quarter_and_region(
     return False
 
 
+# --- Placeholders: an event we know is coming before Osirion publishes it ------------------------------------------------
+
+PLACEHOLDER_MATCH_HOURS = 36
+
+
+def _placeholder_candidates(db: Session, tournament_type: TournamentType) -> list[Tournament]:
+    """Admin-created (manual) tournaments of this tier that are still waiting for their Osirion window."""
+    mapped = db.query(OsirionTournamentMapping.tournament_id)
+    return (
+        db.query(Tournament)
+        .filter(
+            Tournament.tournament_type == tournament_type,
+            Tournament.is_historical_archive.is_(False),
+            Tournament.status == TournamentStatus.SCHEDULED,
+            Tournament.result_source == ResultSource.MANUAL,
+            ~Tournament.id.in_(mapped),
+        )
+        .all()
+    )
+
+
+def find_placeholder(db: Session, window: AvailableWindow, tournament_type: TournamentType) -> Tournament | None:
+    """The placeholder (if any) this Osirion window is the real version of: same tier, starting within 36 hours of it
+    (closest wins)."""
+    if window.begin_time is None:
+        return None
+    begin = window.begin_time if window.begin_time.tzinfo else window.begin_time.replace(tzinfo=timezone.utc)
+    best, best_gap = None, None
+    for t in _placeholder_candidates(db, tournament_type):
+        if t.start_time is None:
+            continue
+        start = t.start_time if t.start_time.tzinfo else t.start_time.replace(tzinfo=timezone.utc)
+        gap = abs((start - begin).total_seconds())
+        if gap <= PLACEHOLDER_MATCH_HOURS * 3600 and (best_gap is None or gap < best_gap):
+            best, best_gap = t, gap
+    return best
+
+
+def adopt_placeholder(db: Session, tournament: Tournament, window: AvailableWindow, format_rules: dict | None = None) -> OsirionTournamentMapping:
+    """Link a placeholder to its real Osirion window instead of creating a second tournament: it keeps its id (and anything
+    that already points at it), takes the window's name / times, and syncs like any tracked tournament from now on."""
+    if format_rules is not None:
+        tournament.format_rules = format_rules
+    tournament.name = window.display_name
+    tournament.start_time = window.begin_time
+    tournament.end_time = window.end_time
+    tournament.result_source = ResultSource.API_IMPORT
+    mapping = OsirionTournamentMapping(
+        id=uuid.uuid4(), tournament_id=tournament.id, osirion_event_id=window.event_id,
+        osirion_event_window_id=window.event_window_id, leaderboard_event_id=window.leaderboard_event_id,
+        leaderboard_event_window_id=window.leaderboard_event_window_id, osirion_display_name=window.display_name,
+        window_begin_time=window.begin_time, window_end_time=window.end_time,
+    )
+    db.add(mapping)
+    if window.raw_tournament or window.raw_event_window:
+        db.add(TournamentResultArchive(
+            id=uuid.uuid4(), tournament_id=tournament.id,
+            raw_tournament_metadata={"tournament": window.raw_tournament, "event_window": window.raw_event_window},
+        ))
+    db.commit()
+    db.refresh(mapping)
+    return mapping
+
+
 # --- Window-level tracking plan (see app/engine/tracking_policy.py for the rules) ----------------------------------------
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -1061,6 +1178,7 @@ class PlannedWindow:
     window: AvailableWindow
     tournament_type: TournamentType
     siblings: list[AvailableWindow] = field(default_factory=list)  # same edition's other windows (for "already tracked")
+    format_rules: dict | None = None  # lobby / stage / cash / scoring / pool (engine/format_policy.py), stored on the tournament
 
 
 def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobby: bool = False, check_lobby=None) -> tuple[list[PlannedWindow], dict[str, int]]:
@@ -1101,29 +1219,82 @@ def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobb
             skip("open_round")
             continue
         if role == tracking_policy.ROLE_FINAL:
-            planned.append(PlannedWindow(w, TournamentType.FNCS_FINALS, [w]))
+            planned.append(PlannedWindow(w, TournamentType.FNCS_FINALS, [w], format_policy.tier_record(
+                lobby=format_policy.LOBBY_SET, has_cash=w.has_cash_payout, scoring=w.scoring)))
             continue
         verdict = check(w)
         if verdict is False or (verdict is None and strict_set_lobby):
             skip("not_set_lobby")
             continue
-        planned.append(PlannedWindow(w, TournamentType.FNCS_QUALIFIER, [w]))
+        planned.append(PlannedWindow(w, TournamentType.FNCS_QUALIFIER, [w], format_policy.tier_record(
+            lobby=format_policy.LOBBY_SET if verdict else format_policy.LOBBY_UNKNOWN, has_cash=w.has_cash_payout,
+            scoring=w.scoring, stage="round")))
 
     for group in generic.values():
-        eligible = [w for w in group if w.has_cash_payout]
-        skip("no_cash", len(group) - len(eligible))
-        for cluster in tracking_policy.cluster_by_gap(eligible, lambda x: x.begin_time, lambda x: x.end_time):
-            best = max(cluster, key=lambda x: (x.top_cash_amount, x.begin_time or _EPOCH))
-            skip("same_edition", len(cluster) - 1)
-            ttype = tournament_classification_service.classify(db, best.classification_text)
+        for cluster in tracking_policy.cluster_by_gap(group, lambda x: x.begin_time, lambda x: x.end_time):
+            # `cluster` = one edition's windows in time order (a multi-day final, or a multi-round event).
+            first = cluster[0]
+            if not any(w.has_cash_payout for w in cluster):
+                skip("no_cash", len(cluster))
+                continue
+            ttype = tournament_classification_service.classify(db, first.classification_text)
             if ttype is None:
-                skip("unclassified")
+                skip("unclassified", len(cluster))
                 continue
-            if not _in_tracking_region_scope(ttype, best.regions):
-                skip("region")
+            if ttype == TournamentType.PERFORMANCE_EVAL:
+                skip("performance_eval", len(cluster))  # Performance Evaluation cups are not auto-tracked
                 continue
-            planned.append(PlannedWindow(best, ttype, list(cluster)))
+            if not _in_tracking_region_scope(ttype, first.regions):
+                skip("region", len(cluster))
+                continue
+            if ttype not in _FORMAT_RULED_TYPES:
+                # FNCS / Global / Major: the tier's own pool applies; one tracked window (the best-paying) per edition.
+                cashing = [w for w in cluster if w.has_cash_payout]
+                best = max(cashing, key=lambda x: (x.top_cash_amount, x.begin_time or _EPOCH))
+                skip("same_edition", len(cluster) - 1)
+                rec = format_policy.tier_record(lobby=format_policy.LOBBY_UNKNOWN, has_cash=True, scoring=best.scoring)
+                planned.append(PlannedWindow(best, ttype, list(cluster), rec))
+                continue
+
+            # Everything else is run by the format rules: lobby type x stage x cash decides the pool (format_policy).
+            kept: dict[tuple, tuple[AvailableWindow, dict]] = {}
+            members: dict[tuple, list[AvailableWindow]] = {}  # windows collapsed into each kept one ("already tracked" check)
+            for idx, w in enumerate(cluster):
+                verdict = check(w)
+                if verdict is None and strict_set_lobby:
+                    skip("lobby_unknown")
+                    continue
+                rec = format_policy.decide(
+                    lobby=format_policy.lobby_label(verdict), has_cash=w.has_cash_payout, stage_index=idx, scoring=w.scoring
+                )
+                if rec is None:
+                    skip("open_no_cash" if verdict is False else "no_cash")
+                    continue
+                if w.cash_places and 3 <= w.cash_places <= 200:
+                    rec["paid_places"] = w.cash_places  # the payout table pays this many places: the pool is split among them
+                if rec["cash"]:
+                    key = (rec["lobby"], True)  # days of one cash final / one open cash round collapse into the best-paying one
+                    members.setdefault(key, []).append(w)
+                    held = kept.get(key)
+                    if held is not None:
+                        skip("same_edition")
+                        if (held[0].top_cash_amount, held[0].begin_time or _EPOCH) >= (w.top_cash_amount, w.begin_time or _EPOCH):
+                            continue
+                    kept[key] = (w, rec)
+                else:
+                    key = (rec["lobby"], False, w.event_window_id)  # a later no-cash set-lobby round of its own
+                    members[key] = [w]
+                    kept[key] = (w, rec)
+            for key, (w, rec) in kept.items():
+                if not _in_tracking_region_scope(ttype, w.regions):
+                    skip("region")
+                    continue
+                planned.append(PlannedWindow(w, ttype, list(members.get(key) or [w]), rec))
     return planned, skips
+
+
+# Tiers whose pool comes from the event's format (lobby / stage / cash). FNCS, Global and Major events keep their tier pool.
+_FORMAT_RULED_TYPES = {TournamentType.CASH_CUP, TournamentType.OTHER}
 
 
 @dataclass
@@ -1234,14 +1405,19 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
             continue
         region = window.regions[0] if len(window.regions) == 1 else None
         try:
-            track_tournament(
-                db,
-                name=window.display_name,
-                tournament_type=item.tournament_type,
-                region=region,
-                window=window,
-                created_by_admin_id=None,
-            )
+            placeholder = find_placeholder(db, window, item.tournament_type)
+            if placeholder is not None:
+                adopt_placeholder(db, placeholder, window, item.format_rules)  # the real window of an event we already listed
+            else:
+                track_tournament(
+                    db,
+                    name=window.display_name,
+                    tournament_type=item.tournament_type,
+                    region=region,
+                    window=window,
+                    created_by_admin_id=None,
+                    format_rules=item.format_rules,
+                )
             tracked_keys.add(key)
             result.tracked += 1
             logger.info("Auto-tracked new tournament '%s' as %s", window.display_name, item.tournament_type.value)
@@ -1262,6 +1438,7 @@ class BackfillCandidate:
 
     window: AvailableWindow
     tournament_type: TournamentType
+    format_rules: dict | None = None
 
 
 @dataclass
@@ -1324,7 +1501,7 @@ def find_historical_backfill_candidates(db: Session) -> BackfillScanResult:
         if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in existing_keys for s in (item.siblings or [window])):
             scan.already_tracked += 1
             continue
-        scan.candidates.append(BackfillCandidate(window=window, tournament_type=item.tournament_type))
+        scan.candidates.append(BackfillCandidate(window=window, tournament_type=item.tournament_type, format_rules=item.format_rules))
 
     return scan
 
@@ -1367,6 +1544,7 @@ def backfill_historical_tournaments(db: Session, candidates: list[BackfillCandid
                 window=window,
                 created_by_admin_id=None,
                 is_historical_archive=True,
+                format_rules=candidate.format_rules,
             )
             sync_result = sync_tournament(db, mapping, skip_finalize=True)
             result.tracked += 1
@@ -1529,11 +1707,11 @@ def list_announced_events(db: Session, force: bool = False) -> list[dict]:
         tournament_type = item.tournament_type
         if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in tracked_keys for s in (item.siblings or [window])):
             continue  # already in the calendar as a real tournament
+        if find_placeholder(db, window, tournament_type) is not None:
+            continue  # an admin-created placeholder already shows this event; it is linked once the tracker sees the window
         event_id = window.event_id
         region = window.regions[0] if len(window.regions) == 1 else None
-        pool = economic_params_service.get_fixed_tournament_pool(db, tournament_type, region)
-        if pool is not None:
-            pool = pool * economic_params_service.get_region_multiplier(db, region)
+        pool = economic_params_service.get_tournament_pool(db, tournament_type, region, item.format_rules)
         rows.append(
             {
                 "event_id": event_id,

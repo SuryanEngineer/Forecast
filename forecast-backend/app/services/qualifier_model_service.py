@@ -278,7 +278,7 @@ def build_views(
             s_hat = expected_strength(model.a, model.b, q, team_prior, n_rounds=len(rs))
             field_n = max(len(placed[tid]), model.typical_field)
             plc_hat = placement_from_strength(s_hat, field_n)
-            frac_hat = float(placement_payout_fraction(plc_hat, field_n, payout_policy.curve_for(curve, t.name)))
+            frac_hat = float(placement_payout_fraction(plc_hat, field_n, payout_policy.curve_for_rules(curve, t.name, getattr(t, "format_rules", None))))
             base = career_fraction.get(pid)
             ratio_if_q = max(0.2, min(3.0, frac_hat / base)) if base and base > 0 else 1.0
             perf = max(0.0, min(3.0, p_q * ratio_if_q))

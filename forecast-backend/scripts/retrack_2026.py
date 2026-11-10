@@ -39,7 +39,7 @@ sys.path.insert(0, ".")
 from sqlalchemy import func  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
-from app.engine import tracking_policy  # noqa: E402
+from app.engine import format_policy, tracking_policy  # noqa: E402
 from app.models.account import PortfolioSnapshot  # noqa: E402
 from app.models.bot import BotProfile  # noqa: E402
 from app.models.dividend import DividendLineItem, DividendPayout  # noqa: E402
@@ -114,6 +114,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm", action="store_true")
     ap.add_argument("--since", help="Events starting on/after this date (YYYY-MM-DD) are paid; earlier ones are archived. Default: when the first real user joined.")
+    ap.add_argument("--include-performance-evals", action="store_true", help="Also add / pay Performance Evaluation cups (left out by default).")
     args = ap.parse_args()
 
     db = SessionLocal()
@@ -157,21 +158,63 @@ def main() -> None:
         print("  skipped: " + (", ".join(f"{k}={v}" for k, v in sorted(skips.items())) or "nothing"))
         tracked = {(m.leaderboard_event_id, m.leaderboard_event_window_id) for m in mappings}
         todo_pay, todo_archive = [], []
+        if not args.include_performance_evals:
+            n_pe = sum(1 for p in planned if p.tournament_type == TournamentType.PERFORMANCE_EVAL)
+            planned = [p for p in planned if p.tournament_type != TournamentType.PERFORMANCE_EVAL]
+            print(f"  (leaving out {n_pe} Performance Evaluation cups; add --include-performance-evals to include them)")
+        rules_by_key: dict = {}
         for p in planned:
+            wkey = (p.window.leaderboard_event_id, p.window.leaderboard_event_window_id)
+            rules_by_key[wkey] = p.format_rules
             if any((s.leaderboard_event_id, s.leaderboard_event_window_id) in tracked for s in (p.siblings or [p.window])):
                 continue
             (todo_pay if _aware(p.window.begin_time or p.window.end_time) >= site_start else todo_archive).append(p)
+
+        def _pool_text(p) -> str:
+            pool = economic_params_service.get_tournament_pool(
+                db, p.tournament_type, p.window.regions[0] if len(p.window.regions) == 1 else None, p.format_rules)
+            return f"${float(pool):,.0f}" if pool is not None else "n/a"
+
         for label, items in (("PAY (started after launch)", todo_pay), ("ARCHIVE (before launch)", todo_archive)):
             print(f"  {label}: {len(items)}")
             for p in sorted(items, key=lambda x: x.window.begin_time or x.window.end_time):
                 w = p.window
-                print(f"    - {w.begin_time:%Y-%m-%d %H:%M}  {w.display_name}  [{','.join(w.regions)}]  as {p.tournament_type.value}")
+                print(f"    - {w.begin_time:%Y-%m-%d %H:%M}  {w.display_name}  [{','.join(w.regions)}]  as {p.tournament_type.value}  "
+                      f"pool {_pool_text(p)}  ({format_policy.describe(p.format_rules)}"
+                      f"{', pays top ' + str(p.format_rules['paid_places']) if (p.format_rules or {}).get('paid_places') else ''})")
+
+        # Tournaments you already track: show / set the pool the format rules give them (never touch one already paid).
+        print("\n== 2b. Tracked tournaments: pool under the format rules ==")
+        changed_rules = 0
+        for m in mappings:
+            rec = rules_by_key.get((m.leaderboard_event_id, m.leaderboard_event_window_id))
+            t = db.get(Tournament, m.tournament_id)
+            if rec is None or t is None or t.format_rules:
+                continue
+            paid = _has_payouts(db, t.id)
+            old = economic_params_service.get_tournament_pool(db, t.tournament_type, t.region, None)
+            new = economic_params_service.get_tournament_pool(db, t.tournament_type, t.region, rec)
+            same = old == new
+            if same and not rec.get("paid_places"):
+                continue
+            tag = "ALREADY PAID -- left alone" if paid else ("-> setting" if args.confirm else "-> would set")
+            print(f"  - {t.name}: ${float(old or 0):,.0f} -> ${float(new or 0):,.0f}  ({format_policy.describe(rec)})  {tag}")
+            if not paid:
+                changed_rules += 1
+                if args.confirm:
+                    t.format_rules = rec
+        if args.confirm:
+            db.commit()
+        if not changed_rules:
+            print("  nothing to change")
 
         # ---- 3. archived but should have paid ------------------------------------------------------------------------
         print("\n== 3. Archived tournaments that started after launch but never paid ==")
         reopen = []
         for t in db.query(Tournament).filter(Tournament.is_historical_archive.is_(True)).all():
             if _aware(t.start_time) is None or _aware(t.start_time) < site_start or _has_payouts(db, t.id):
+                continue
+            if t.tournament_type == TournamentType.PERFORMANCE_EVAL and not args.include_performance_evals:
                 continue
             m = db.query(OsirionTournamentMapping).filter(OsirionTournamentMapping.tournament_id == t.id).one_or_none()
             if m is None:
@@ -191,7 +234,7 @@ def main() -> None:
         if todo_archive:
             print("\nArchiving pre-launch events ...")
             res = osirion_service.backfill_historical_tournaments(
-                db, [osirion_service.BackfillCandidate(window=p.window, tournament_type=p.tournament_type) for p in todo_archive]
+                db, [osirion_service.BackfillCandidate(window=p.window, tournament_type=p.tournament_type, format_rules=p.format_rules) for p in todo_archive]
             )
             print(f"  archived {res.tracked}, errors {len(res.errors)}")
             for e in res.errors:
@@ -206,6 +249,7 @@ def main() -> None:
                 mapping = osirion_service.track_tournament(
                     db, name=w.display_name, tournament_type=p.tournament_type,
                     region=w.regions[0] if len(w.regions) == 1 else None, window=w, created_by_admin_id=None,
+                    format_rules=p.format_rules,
                 )
                 res = osirion_service.sync_tournament(db, mapping)
                 t = db.get(Tournament, mapping.tournament_id)
@@ -222,6 +266,11 @@ def main() -> None:
             print(f"  - reopening {t.name}")
             try:
                 t.is_historical_archive = False
+                if not t.format_rules:
+                    # an event still in progress isn't in the ended-window plan: give it the cautious cash-round rule and let
+                    # the first sync settle open vs set lobby from its leaderboard
+                    t.format_rules = rules_by_key.get((m.leaderboard_event_id, m.leaderboard_event_window_id)) or format_policy.decide(
+                        lobby=format_policy.LOBBY_UNKNOWN, has_cash=True, stage_index=0)
                 if t.status == TournamentStatus.FINALIZED:
                     t.status = TournamentStatus.RESULTS_PENDING
                 m.last_sync_complete = False

@@ -60,17 +60,20 @@ class PoolContext:
 
     def __init__(self, db: Session, tournament: Tournament) -> None:
         # The global curve, or its top-N version for an event that pays only its top places (see engine/payout_policy.py).
-        self.placement_curve = payout_policy.curve_for(economic_params_service.get_placement_curve(db), tournament.name)
-        self.paid_places = payout_policy.paid_places(tournament.name)
-        fixed_pool = economic_params_service.get_fixed_tournament_pool(db, tournament.tournament_type, tournament.region)
-        if fixed_pool is not None:
-            fixed_pool = fixed_pool * economic_params_service.get_region_multiplier(db, tournament.region)
+        self.placement_curve = payout_policy.curve_for_rules(economic_params_service.get_placement_curve(db), tournament.name, tournament.format_rules)
+        self.paid_places = payout_policy.paid_places_for(tournament.name, tournament.format_rules)
+        rules = tournament.format_rules or {}
+        fixed_pool = economic_params_service.get_tournament_pool(db, tournament.tournament_type, tournament.region, rules)
         self.effective_prize_pool = fixed_pool if fixed_pool is not None else tournament.prize_pool
         self.platform_fee_pct = economic_params_service.get_param(db, "dividend.platform_fee_pct")
-        # Performance Evaluation cups pay per game WON out of their own pool (no region scaling), not per placement.
-        self.is_performance_eval = tournament.tournament_type == TournamentType.PERFORMANCE_EVAL
+        # Performance Evaluation cups -- and any event whose scoring rewards only game wins -- pay per game WON, not per
+        # placement. A PE cup uses its own pool (no region scaling); another win-scored event splits ITS pool the same way.
+        self.is_performance_eval = tournament.tournament_type == TournamentType.PERFORMANCE_EVAL or rules.get("scoring") == "wins"
         if self.is_performance_eval:
-            self.eval_pool = economic_params_service.get_param(db, "dividend.performance_eval_pool")
+            if tournament.tournament_type == TournamentType.PERFORMANCE_EVAL:
+                self.eval_pool = economic_params_service.get_param(db, "dividend.performance_eval_pool")
+            else:
+                self.eval_pool = self.effective_prize_pool or Decimal("0")
             self.eval_win_share = economic_params_service.get_param(db, "dividend.performance_eval_win_share")
 
     def pool_for(self, placement_result: PlacementResult, max_placement: int) -> Decimal:

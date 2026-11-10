@@ -82,6 +82,11 @@ class Tournament(Base):
     # admin endpoints (GET /admin/osirion/tracked-tournaments) still show
     # everything, unfiltered, for oversight.
     is_historical_archive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # How this event is run and therefore what it pays (see app/engine/format_policy.py): {lobby: set|open|unknown,
+    # stage: final|round|unknown, cash: bool, scoring: wins|placement, pool_param: <platform parameter key or null>,
+    # provisional: bool}. Null = the tier's own default pool and the placement curve (every tournament tracked before the
+    # format rules, and FNCS / Global / Major / manual ones).
+    format_rules: Mapped[dict | None] = mapped_column(JSONType(), nullable=True)
 
     # passive_deletes=True on both: without it, SQLAlchemy's ORM tries to
     # manage the delete-cascade itself by loading every related row and

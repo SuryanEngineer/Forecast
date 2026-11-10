@@ -7,7 +7,7 @@ from decimal import Decimal as D
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.engine import payout_policy, tracking_policy as tp
+from app.engine import format_policy as fp, payout_policy, tracking_policy as tp
 from app.engine.dividend_calculator import DEFAULT_PLACEMENT_CURVE, placement_payout_fraction
 
 
@@ -33,6 +33,17 @@ class TestReloadRole(unittest.TestCase):
         self.assertTrue(tp.reload_region_ok([], allowed))
         self.assertTrue(tp.reload_region_ok(["NAC", "BR"], allowed))
         self.assertFalse(tp.reload_region_ok(["OCE"], allowed))
+
+
+class TestSeries(unittest.TestCase):
+    def test_series_and_exclusions(self):
+        self.assertEqual(tp.series_key("Season42_ArenaTestCup epicgames_S42_ArenaTestCup_NAC Arenas Test Cup"), "arena")
+        self.assertEqual(tp.series_key("Season42_ArenaCashCup"), "arena")
+        self.assertEqual(tp.series_key("S41_TriosCashCup"), "trio")
+        self.assertIsNone(tp.series_key("Season42_Something"))
+        self.assertTrue(tp.is_excluded_family("Mobile Reload (Elite Stronghold) Victory Cup"))
+        self.assertTrue(tp.is_excluded_family("Season41_SkinCup"))
+        self.assertFalse(tp.is_excluded_family("Arenas Test Cup"))
 
 
 class TestSetLobby(unittest.TestCase):
@@ -81,6 +92,55 @@ class TestPayoutPolicy(unittest.TestCase):
     def test_other_events_use_global_curve(self):
         base = dict(DEFAULT_PLACEMENT_CURVE)
         self.assertEqual(payout_policy.curve_for(base, "FNCS Solo Reload Finals"), base)
+
+
+class TestFormatPolicy(unittest.TestCase):
+    def test_decide_rules(self):
+        d = fp.decide
+        # open round
+        self.assertIsNone(d(lobby="open", has_cash=False, stage_index=0))
+        self.assertEqual(d(lobby="open", has_cash=True, stage_index=0)["pool_param"], fp.POOL_ROUND)  # $150k
+        # set lobby
+        self.assertEqual(d(lobby="set", has_cash=True, stage_index=2)["pool_param"], fp.POOL_FINAL)   # $300k final
+        self.assertEqual(d(lobby="set", has_cash=True, stage_index=2)["stage"], "final")
+        self.assertIsNone(d(lobby="set", has_cash=False, stage_index=0))                               # 1st round, no cash
+        later = d(lobby="set", has_cash=False, stage_index=1)
+        self.assertEqual(later["pool_param"], fp.POOL_ROUND)                                           # later round $150k
+        self.assertFalse(later["cash"])
+        # field not visible yet: cautious pool, flagged provisional
+        unk = d(lobby="unknown", has_cash=True, stage_index=0)
+        self.assertTrue(unk["provisional"])
+        self.assertEqual(unk["pool_param"], fp.POOL_ROUND)
+        self.assertIsNone(d(lobby="unknown", has_cash=False, stage_index=0))
+
+    def test_tier_record_keeps_tier_pool(self):
+        self.assertIsNone(fp.tier_record(lobby="set", has_cash=True)["pool_param"])
+
+    def test_scoring_kind(self):
+        def sl(*rules):
+            return {"scoringRules": list(rules)}
+        win_only = sl({"trackedStat": "PLACEMENT_STAT_INDEX", "rewardTiers": [{"keyValue": 1, "pointsEarned": 1}]})
+        self.assertEqual(fp.scoring_kind(win_only), "wins")
+        placement = sl({"trackedStat": "PLACEMENT_STAT_INDEX", "rewardTiers": [{"keyValue": 1, "pointsEarned": 3}, {"keyValue": 5, "pointsEarned": 2}]})
+        self.assertEqual(fp.scoring_kind(placement), "placement")
+        elims = sl({"trackedStat": "TEAM_ELIMS_STAT_INDEX", "rewardTiers": [{"keyValue": 1, "pointsEarned": 1}]},
+                   {"trackedStat": "PLACEMENT_STAT_INDEX", "rewardTiers": [{"keyValue": 1, "pointsEarned": 1}]})
+        self.assertEqual(fp.scoring_kind(elims), "placement")
+        self.assertEqual(fp.scoring_kind({}), "placement")
+        self.assertEqual(fp.scoring_kind(None), "placement")
+
+    def test_paid_places_from_rules(self):
+        self.assertEqual(payout_policy.paid_places_for("Some Cup", {"paid_places": 25}), 25)
+        self.assertEqual(payout_policy.paid_places_for("Arenas Cash Cup", {"paid_places": 7}), 7)  # the event's own table wins
+        self.assertEqual(payout_policy.paid_places_for("Arenas Cash Cup", {}), 10)  # by-name rule is the fallback
+        self.assertEqual(payout_policy.paid_places_for("Arenas Cash Cup", None), 10)
+        self.assertIsNone(payout_policy.paid_places_for("Some Cup", {}))
+        curve = payout_policy.curve_for_rules(dict(DEFAULT_PLACEMENT_CURVE), "Some Cup", {"paid_places": 25})
+        self.assertEqual(sorted(curve), list(range(1, 26)))
+        self.assertEqual(sum(curve.values()), D("1"))
+
+    def test_describe(self):
+        self.assertIn("open lobby", fp.describe({"lobby": "open", "stage": "round", "cash": True, "scoring": "placement"}))
 
 
 if __name__ == "__main__":

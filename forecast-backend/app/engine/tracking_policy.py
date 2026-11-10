@@ -51,6 +51,27 @@ def reload_family_role(text: str | None) -> str | None:
     return None
 
 
+_SERIES_WORDS = ("arena", "trio", "duo", "squad", "solo", "reload", "fncs", "champion", "ewc", "globalchampionship")
+_EXCLUDED_FAMILY_WORDS = ("victorycup", "skincup", "mobile", "console", "playstation")
+
+
+def series_key(text: str | None) -> str | None:
+    """Which game-mode series a window belongs to ('arena', 'trio', 'solo', 'reload', ...), found in its event id / group /
+    title. Osirion gives a cup's open rounds, test cups and final different event ids but the same series word, so this is how
+    open rounds are tied to the tournaments we track."""
+    s = squash(text)
+    for word in _SERIES_WORDS:
+        if word in s:
+            return word
+    return None
+
+
+def is_excluded_family(text: str | None) -> bool:
+    """Victory / skin cups and mobile / console events: never tracked, never listed as open rounds."""
+    s = squash(text)
+    return any(w in s for w in _EXCLUDED_FAMILY_WORDS)
+
+
 def looks_like_open_round(text: str | None) -> bool:
     """Name says open round (e.g. 'Open Round 1', 'Open Heat')."""
     return "open" in squash(text)
