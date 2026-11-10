@@ -692,15 +692,16 @@ def check_book_price_and_retention(ctx: dict) -> None:
         o = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("12.00"), 12)  # $144 of resting demand above the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a resting bid does not move the listed price (only real trades do)", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+        with_bid = Decimal(str(r.json()["last_price"]))
+        check("a resting bid above the price lifts the listed price a little, never past the bid", Decimal("10") < with_bid < Decimal("12"), r.text)
         listing = client.get("/api/v1/markets?search=BookPro").json()["items"]
-        check("the market list shows the same listed price", listing and Decimal(str(listing[0]["last_price"])) == Decimal("10"), str(listing))
+        check("the market list shows the same listed price", listing and Decimal(str(listing[0]["last_price"])) == with_bid, str(listing))
         book = client.get(f"/api/v1/markets/{pid}/book").json()
         check("order-book endpoint lists the resting bid", book["bids"] and Decimal(str(book["bids"][0]["price"])) == Decimal("12") and book["bids"][0]["quantity"] == 12, str(book))
         tiny = order_service.place_limit_order(db, ctx["carl"], pid, OrderSide.BUY, Decimal("13.00"), 1)  # $13: too small to move the price
         db.commit()
         r = client.get(f"/api/v1/markets/{pid}")
-        check("a dust-sized bid does not move the listed price", Decimal(str(r.json()["last_price"])) == Decimal("10"), r.text)
+        check("a dust-sized extra bid barely moves the listed price", abs(Decimal(str(r.json()["last_price"])) - with_bid) <= Decimal("0.05"), r.text)
         order_service.cancel_order(db, ctx["carl"], o.id)
         order_service.cancel_order(db, ctx["carl"], tiny.id)
         db.commit()

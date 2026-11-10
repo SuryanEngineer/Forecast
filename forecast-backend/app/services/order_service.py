@@ -641,10 +641,13 @@ def quote_quick_order(db: Session, player_id: uuid.UUID, side: OrderSide, quanti
         out.update(reason="Not enough shares are available to fill an order this size. Try fewer shares, or use a limit order.",
                    subtotal=None, fee=None, total=None, average_price=None)
         return out
-    fee = notional * fee_pct
-    total = notional + fee if side == OrderSide.BUY else notional - fee
+    # Round the parts first, then add them, so the figures shown always add up to the cent
+    # (rounding subtotal, fee and total separately could leave them a cent apart).
+    subtotal = notional.quantize(cent)
+    fee = (notional * fee_pct).quantize(cent)
+    total = subtotal + fee if side == OrderSide.BUY else subtotal - fee
     out.update(
-        subtotal=notional.quantize(cent), fee=fee.quantize(cent), total=total.quantize(cent),
+        subtotal=subtotal, fee=fee, total=total,
         average_price=(notional / Decimal(quantity)).quantize(cent),
     )
     return out

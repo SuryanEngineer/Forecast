@@ -126,6 +126,7 @@ function LiveStandingsSection({
 interface TournamentEntrant {
   player_id: string;
   gamertag: string;
+  is_verified?: boolean;
 }
 
 interface PayoutPreviewData {
