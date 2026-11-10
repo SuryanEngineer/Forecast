@@ -73,11 +73,14 @@ def is_excluded_family(text: str | None) -> bool:
 
 
 # Events the product no longer shows at all: never tracked, never announced, and their open / test rounds are not listed.
-_HIDDEN_FAMILY_WORDS = ("arenacashcup", "arenascashcup", "arenatestcup", "arenastestcup")
+_HIDDEN_FAMILY_WORDS = (
+    "arenacashcup", "arenascashcup", "arenatestcup", "arenastestcup",
+    "trioscashcup", "triocashcup", "triostestcup", "triotestcup",
+)
 
 
 def is_hidden_family(text: str | None) -> bool:
-    """The Arenas Cash Cup and its Arenas Test Cup rounds (removed from the product, Nov 2026)."""
+    """The Arenas and Trios Cash Cups and their test rounds: fully open lobbies, removed from the product (Nov 2026)."""
     s = squash(text)
     return any(w in s for w in _HIDDEN_FAMILY_WORDS)
 

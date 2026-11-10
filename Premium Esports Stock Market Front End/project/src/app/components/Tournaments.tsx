@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Calendar } from 'lucide-react';
-import { titledName, tournamentDisplayName } from '../lib/tournamentName';
+import { lobbyLabel, titledName, tournamentDisplayName, type LobbyLabel } from '../lib/tournamentName';
 import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
 import {
   toNumber,
@@ -117,17 +117,30 @@ function FeaturedEvent({ name, type, region, startTime, pool, note, onOpen }: {
 /** Same card, in red, for an event that is running right now, with the top of its live leaderboard. */
 function LiveEvent({ tournament, onOpen }: { tournament: CalendarTournamentResponse; onOpen: () => void }) {
   const pool = tournament.total_dividend_pool !== null ? toNumber(tournament.total_dividend_pool) : null;
+  const lobby = lobbyLabel(tournament.name, tournament.tournament_type, tournament.live_progress?.lobby);
+  const progress = progressText(tournament.live_progress, tournament.end_time, tournament.phase);
+  const startedAt = tournament.start_time
+    ? new Date(tournament.start_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+    : null;
+  // Past its lobby close but still running = games in progress; a finalizing event is wrapping up (results being confirmed).
+  const wrapping = tournament.phase === 'finalizing';
   return (
-    <div className="rounded-2xl border p-6" style={{ background: 'linear-gradient(135deg, rgba(255,71,87,0.09), rgba(155,111,255,0.04)), var(--card)', borderColor: 'rgba(255,71,87,0.4)' }}>
+    <div className="rounded-2xl border p-4 sm:p-6" style={{ background: 'linear-gradient(135deg, rgba(255,71,87,0.09), rgba(155,111,255,0.04)), var(--card)', borderColor: 'rgba(255,71,87,0.4)' }}>
       <button onClick={onOpen} className="w-full text-left">
-        <div className="flex items-start gap-3 mb-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>● LIVE</span>
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2 mb-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: wrapping ? 'rgba(255,171,64,0.15)' : 'rgba(255,71,87,0.15)', color: wrapping ? '#ffab40' : '#ff4757' }}>
+                {wrapping ? '⏳ Finalizing' : '● LIVE'}
+              </span>
               <span className="px-2.5 py-0.5 rounded-full font-bold uppercase" style={{ fontSize: 10, background: 'rgba(155,111,255,0.15)', color: 'var(--accent)' }}>{TYPE_PILL(tournament.tournament_type)}</span>
+              {lobby && <LobbyPill label={lobby} />}
             </div>
-            <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{titledName(tournament.name, tournament.region, tournament.tournament_type, tournament.live_progress?.lobby, tournament.live_progress?.stage)}</h2>
-            {tournament.region && <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>{tournament.region}</p>}
+            <h2 className="text-foreground font-bold" style={{ fontSize: 20, lineHeight: 1.3 }}>{tournamentDisplayName(tournament.name, tournament.region)}</h2>
+            <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>
+              {[tournament.region, startedAt ? `Started ${startedAt}` : null].filter(Boolean).join(' · ')}
+            </p>
+            {progress && <p className="mt-1" style={{ fontSize: 12.5, color: '#ff8a96' }}>{progress}</p>}
           </div>
           {pool !== null && pool > 0 && (
             <div className="text-right ml-auto shrink-0">
@@ -152,6 +165,34 @@ const TIER_LABELS: Record<string, string> = {
   performance_eval: 'Performance Eval',
   other: 'Other',
 };
+
+/** "Open lobby" (anyone can enter) or "Set lobby" (a fixed field), next to an event's name. */
+function LobbyPill({ label }: { label: LobbyLabel }) {
+  const open = label === 'Open lobby';
+  return (
+    <span
+      className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0"
+      style={{ fontSize: 9, background: open ? 'rgba(255,255,255,0.07)' : 'rgba(0,200,255,0.12)', color: open ? 'var(--muted-foreground)' : 'var(--primary)' }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** "Show N more" / "Show less" under a list that is collapsed by default. */
+function MoreToggle({ count, open, onToggle, noun }: { count: number; open: boolean; onToggle: () => void; noun: string }) {
+  if (count <= 0) return null;
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full py-2.5 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-white/[0.03] transition-colors font-semibold"
+      style={{ fontSize: 12.5 }}
+      aria-expanded={open}
+    >
+      {open ? 'Show less' : `Show ${count} more ${noun}`}
+    </button>
+  );
+}
 
 /** One line on how far an event has got. Open rounds say when lobbies close (their games can't be counted); set-lobby events
  * with a known game count say which game they're on and that they end when the last game has a winner. */
@@ -193,6 +234,7 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
   const dateLabel = startDate ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD';
   const timeLabel = startDate ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
   const progressLine = progressText(tournament.live_progress, tournament.end_time, tournament.phase);
+  const lobby = lobbyLabel(tournament.name, tournament.tournament_type, tournament.live_progress?.lobby);
 
   return (
     <button
@@ -207,7 +249,8 @@ function CalendarRow({ tournament, onOpen }: { tournament: CalendarTournamentRes
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{titledName(tournament.name, tournament.region, tournament.tournament_type, tournament.live_progress?.lobby, tournament.live_progress?.stage)}</p>
+          <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{tournamentDisplayName(tournament.name, tournament.region)}</p>
+          {lobby && <LobbyPill label={lobby} />}
           {isLive && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,71,87,0.15)', color: '#ff4757' }}>
               ● Live
@@ -416,6 +459,16 @@ export function Tournaments({ openTournament }: Props) {
   const comingUp = [...laterDividend, ...openUpcoming].sort((a, b) => a.start - b.start);
   const completedAll: Entry[] = [...completed.map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })), ...openFinished].sort((a, b) => b.start - a.start);
 
+  // Collapsed by default so the page isn't a wall of rows: the next 7 days of upcoming events and the last 3 days of completed
+  // ones show first; the rest sits behind "Show more".
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [showAllCompleted, setShowAllCompleted] = useState(false);
+  const nowMs = Date.now();
+  const comingSoon = comingUp.filter(e => e.start <= nowMs + 7 * 86_400_000);
+  const comingLater = comingUp.filter(e => e.start > nowMs + 7 * 86_400_000);
+  const completedRecent = completedAll.filter(e => e.start >= nowMs - 3 * 86_400_000);
+  const completedOlder = completedAll.filter(e => e.start < nowMs - 3 * 86_400_000);
+
   const rowFor = (u: Entry) =>
     u.tracked
       ? <CalendarRow key={u.key} tournament={u.tracked} onOpen={() => openTournament(toTournament(u.tracked!))} />
@@ -566,15 +619,27 @@ export function Tournaments({ openTournament }: Props) {
 
           {comingUp.length > 0 && (
             <div className="space-y-2.5">
-              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Coming up</p>
-              {comingUp.map(rowFor)}
+              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>
+                Coming up{comingLater.length > 0 && !showAllUpcoming ? ' · next 7 days' : ''}
+              </p>
+              {comingSoon.length === 0 && !showAllUpcoming && (
+                <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>Nothing in the next 7 days.</p>
+              )}
+              {(showAllUpcoming ? comingUp : comingSoon).map(rowFor)}
+              <MoreToggle count={comingLater.length} open={showAllUpcoming} onToggle={() => setShowAllUpcoming(v => !v)} noun="upcoming" />
             </div>
           )}
 
           {completedAll.length > 0 && (
             <div className="space-y-2.5">
-              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Completed</p>
-              {completedAll.map(rowFor)}
+              <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>
+                Completed{completedOlder.length > 0 && !showAllCompleted ? ' · last 3 days' : ''}
+              </p>
+              {completedRecent.length === 0 && !showAllCompleted && (
+                <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>Nothing finished in the last 3 days.</p>
+              )}
+              {(showAllCompleted ? completedAll : completedRecent).map(rowFor)}
+              <MoreToggle count={completedOlder.length} open={showAllCompleted} onToggle={() => setShowAllCompleted(v => !v)} noun="completed" />
             </div>
           )}
         </>)}

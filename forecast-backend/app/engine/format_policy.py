@@ -71,9 +71,9 @@ def decide(*, lobby: str, has_cash: bool, stage_index: int, scoring: str = SCORI
     """Format record for a generic (non-FNCS) window, or None = do not track.
     `stage_index` is the window's position (0 = first) among the windows of its edition, in time order."""
     if lobby == LOBBY_OPEN:
-        if not has_cash:
-            return None
-        return _rec(lobby, "round", True, POOL_ROUND, scoring, False)
+        # A fully open lobby (anyone can enter, only the top places are paid) is never a tournament here, cash or not:
+        # it is browse-only (the open-rounds list), like the Arenas / Trios Cash Cups.
+        return None
     if lobby == LOBBY_SET:
         if has_cash:
             # one set-lobby window is kept per edition (the best-paying), and that is its final

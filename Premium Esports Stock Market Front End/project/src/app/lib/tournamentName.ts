@@ -10,26 +10,23 @@ export function stripTrailingDate(name: string): string {
   return name.replace(TRAILING_DATE, '').trim();
 }
 
-export type StageLabel = 'Open round' | 'Qualifier' | 'Finals';
+export type LobbyLabel = 'Open lobby' | 'Set lobby';
 
-/** Which stage of its event a tournament is. The tracker's own record wins (open lobby, final vs round); otherwise the tier
- * and the words in the name decide. null when it can't be told. */
-export function stageLabel(name: string, type?: string | null, lobby?: string | null, stage?: string | null): StageLabel | null {
-  const n = name.toLowerCase();
-  if (lobby === 'open' || /\bopen\b/.test(n)) return 'Open round';
-  if (stage === 'final' || type === 'fncs_finals' || type === 'global_championship' || type === 'major' || /\bfinals?\b/.test(n)) return 'Finals';
-  if (stage === 'round' || type === 'fncs_qualifier' || /qualifier|heats?\b|last chance|session|round/.test(n)) return 'Qualifier';
+/** Whether an event is an open lobby (anyone can enter) or a set lobby (a fixed field). The tracker's own record wins; without
+ * it, the name ("open") and the tier (finals / qualifiers we track are all set lobbies) decide. null when it can't be told. */
+export function lobbyLabel(name: string, type?: string | null, lobby?: string | null): LobbyLabel | null {
+  if (lobby === 'open') return 'Open lobby';
+  if (lobby === 'set') return 'Set lobby';
+  if (/\bopen\b/i.test(name)) return 'Open lobby';
+  if (type === 'fncs_finals' || type === 'fncs_qualifier' || type === 'global_championship' || type === 'major' || type === 'performance_eval') return 'Set lobby';
   return null;
 }
 
-/** Display name plus its stage when the name doesn't already say it: "NAC Reload Cash Cup · Open round". */
-export function titledName(name: string, region?: string | null, type?: string | null, lobby?: string | null, stage?: string | null): string {
+/** Display name plus its lobby type: "NAC FNCS Solo Reload Finals · Set lobby", "FNCS Solo Reload Open Round 1 · Open lobby". */
+export function titledName(name: string, region?: string | null, type?: string | null, lobby?: string | null, _stage?: string | null): string {
   const base = tournamentDisplayName(name, region);
-  const label = stageLabel(name, type, lobby, stage);
-  if (!label) return base;
-  const n = base.toLowerCase();
-  const says = label === 'Open round' ? /\bopen\b/.test(n) : label === 'Finals' ? /\bfinals?\b/.test(n) : /qualifier|heats?\b/.test(n);
-  return says ? base : `${base} · ${label}`;
+  const label = lobbyLabel(name, type, lobby);
+  return label ? `${base} · ${label}` : base;
 }
 
 export function tournamentDisplayName(name: string, region?: string | null): string {

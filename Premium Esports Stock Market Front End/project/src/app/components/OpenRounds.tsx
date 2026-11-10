@@ -64,7 +64,7 @@ export function OpenRoundRow({ round, onOpen }: { round: OpenRound; onOpen: () =
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
           <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{roundName(round)}</p>
-          <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,255,255,0.07)', color: 'var(--muted-foreground)' }}>Open round</span>
+          <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, background: 'rgba(255,255,255,0.07)', color: 'var(--muted-foreground)' }}>Open lobby</span>
           {round.status !== 'finished' && (
             <span className="px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0" style={{ fontSize: 9, color: st.color, border: `1px solid ${st.color}` }}>{st.label}</span>
           )}

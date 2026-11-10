@@ -97,9 +97,9 @@ class TestPayoutPolicy(unittest.TestCase):
 class TestFormatPolicy(unittest.TestCase):
     def test_decide_rules(self):
         d = fp.decide
-        # open round
+        # fully open lobby: never tracked, cash or not
         self.assertIsNone(d(lobby="open", has_cash=False, stage_index=0))
-        self.assertEqual(d(lobby="open", has_cash=True, stage_index=0)["pool_param"], fp.POOL_ROUND)  # $150k
+        self.assertIsNone(d(lobby="open", has_cash=True, stage_index=0))
         # set lobby
         self.assertEqual(d(lobby="set", has_cash=True, stage_index=2)["pool_param"], fp.POOL_FINAL)   # $300k final
         self.assertEqual(d(lobby="set", has_cash=True, stage_index=2)["stage"], "final")
@@ -216,7 +216,9 @@ class TestHiddenFamily(unittest.TestCase):
     def test_arenas_removed(self):
         for text in ("Arenas Cash Cup — Nov 10, 2026", "epicgames_S43_ArenaCashCup_EU", "Season42_ArenaCashCup", "Arenas Test Cup", "S42_ArenaTestCup_Event9_EU"):
             self.assertTrue(tp.is_hidden_family(text), text)
-        for text in ("Trios Cash Cup", "Solo Series", "FNCS Division 1", "Arenas Performance Evaluation", None):
+        for text in ("Trios Cash Cup — Nov 7, 2026", "epicgames_S43_TriosCashCup_EU", "Trio Cash Cup"):
+            self.assertTrue(tp.is_hidden_family(text), text)
+        for text in ("Solo Series", "FNCS Division 1", "Arenas Performance Evaluation", None):
             self.assertFalse(tp.is_hidden_family(text), text)
 
 

@@ -747,6 +747,11 @@ def sync_tournament(
     tournament = db.get(Tournament, mapping.tournament_id)
     if tournament is None or tournament.status == TournamentStatus.FINALIZED:
         return result
+    if (tournament.format_rules or {}).get("lobby") == format_policy.LOBBY_OPEN and not tournament.is_historical_archive:
+        # A fully open lobby is never a tournament here (it can only have been tracked before this rule): hide, don't sync.
+        tournament.is_historical_archive = True
+        db.commit()
+        return result
 
     now = datetime.now(timezone.utc)
     lan_hold = _lan_hold_applies(tournament, skip_finalize)
@@ -814,9 +819,9 @@ def sync_tournament(
                         scoring=old.get("scoring") or format_policy.SCORING_PLACEMENT,
                     )
                     if new is None:
-                        tournament.is_historical_archive = True  # an open round that pays nothing: not a tournament
+                        tournament.is_historical_archive = True  # a fully open lobby: not a tournament here
                         db.commit()
-                        result.error = "open round with no cash prize -- not tracked"
+                        logger.info("Tournament %s (%s) is an open lobby -- hidden and not synced", tournament.id, tournament.name)
                         return result
                     new["paid_places"] = old.get("paid_places")
                     new["expected_games"] = old.get("expected_games")
@@ -1307,7 +1312,7 @@ def plan_windows(db: Session, windows: list[AvailableWindow], *, strict_set_lobb
                     lobby=format_policy.lobby_label(verdict), has_cash=w.has_cash_payout, stage_index=idx, scoring=w.scoring
                 )
                 if rec is None:
-                    skip("open_no_cash" if verdict is False else "no_cash")
+                    skip("open_lobby" if verdict is False else "no_cash")
                     continue
                 if w.cash_places and 3 <= w.cash_places <= 200:
                     rec["paid_places"] = w.cash_places  # the payout table pays this many places: the pool is split among them
@@ -1445,9 +1450,9 @@ def auto_track_new_tournaments(db: Session) -> AutoTrackResult:
     planned, skips = plan_windows(db, windows)
     result.skipped_unclassified = skips.get("unclassified", 0)
     result.skipped_region = skips.get("region", 0)
-    result.skipped_open_round = skips.get("open_round", 0)
+    result.skipped_open_round = skips.get("open_round", 0) + skips.get("open_lobby", 0)
     result.skipped_not_finals = sum(
-        n for k, n in skips.items() if k not in ("unclassified", "region", "open_round", "same_edition")
+        n for k, n in skips.items() if k not in ("unclassified", "region", "open_round", "open_lobby", "same_edition")
     )
 
     for item in planned:
