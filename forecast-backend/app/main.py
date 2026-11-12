@@ -10,6 +10,7 @@ that setup).
 import asyncio
 import logging
 import random
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -319,6 +320,29 @@ app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(ws.router, prefix=API_PREFIX)
 
 
+_STARTED_AT = time.time()
+
+
+def _proc_status() -> dict:
+    """Process memory straight from Linux (/proc/self/status); empty on Windows/macOS."""
+    out: dict = {}
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                if key in ("VmRSS", "VmHWM", "Threads"):
+                    out[key] = int(rest.split()[0])
+    except (OSError, ValueError, IndexError):
+        return {}
+    return out
+
+
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "env": settings.ENV}
+    # Memory is here because Render's free plan shows no memory graph: poll this URL to watch for growth. rss_mb = memory now,
+    # peak_mb = the highest it has been since the process started (a restart resets both; uptime_s says how long ago).
+    p = _proc_status()
+    out: dict = {"status": "ok", "env": settings.ENV, "uptime_s": int(time.time() - _STARTED_AT)}
+    if p:
+        out.update(rss_mb=round(p.get("VmRSS", 0) / 1024), peak_mb=round(p.get("VmHWM", 0) / 1024), threads=p.get("Threads"))
+    return out
