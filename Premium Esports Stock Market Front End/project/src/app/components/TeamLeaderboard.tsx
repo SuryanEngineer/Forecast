@@ -474,7 +474,9 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
 
   // Live: open on the newest game (the one being played) unless the viewer picked another.
   const game = data.games.find(g => g.game === selected) ?? (live ? data.games[data.games.length - 1] : data.games[0]);
-  const inProgress = game.complete === false;
+  // "In progress" only while the tournament itself is live; in a finished one a game without a winner is just incomplete data.
+  const inProgress = live && game.complete === false;
+  const noWinner = !live && game.complete === false;
   // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
   const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
@@ -506,7 +508,7 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
         </p>
       ) : (
         <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
-          Game {game.game} &middot; {game.teams.length} teams
+          Game {game.game} &middot; {game.teams.length} teams{noWinner ? ' · no winner was recorded for this game' : ''}
           {game.ended_at ? ` · ended ${new Date(game.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
         </p>
       )}
