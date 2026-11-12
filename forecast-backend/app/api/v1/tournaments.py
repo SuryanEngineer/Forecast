@@ -16,7 +16,7 @@ from app.models.osirion import OsirionTournamentMapping
 from app.models.player import Player
 from app.models.tournament import PlacementResult, Tournament, TournamentEntrant, TournamentStatus
 from app.models.user import User
-from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse
+from app.schemas.osirion import LiveLeaderboardEntry, LiveLeaderboardResponse, LiveTeamEntry, LiveTeamMember
 from app.schemas.tournament import (
     AnnouncedTournamentResponse,
     CalendarTournamentResponse,
@@ -534,6 +534,7 @@ def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)
                 game=number,
                 session_id=None if key.startswith("idx") else key,
                 ended_at=entry["ended"],
+                complete=any(r.game_placement == 1 for r in team_rows),
                 teams=team_rows,
             )
         )
@@ -648,18 +649,20 @@ def get_live_leaderboard(
         db.query(OsirionTournamentMapping).filter(OsirionTournamentMapping.tournament_id == tournament_id).one_or_none()
     )
 
-    base_query = (
+    # Group players into TEAMS first (a duo/squad is one row), then page over teams. raw_stats is the heavy per-game
+    # JSON and isn't needed here.
+    all_rows = (
         db.query(PlacementResult, Player)
+        .options(defer(PlacementResult.raw_stats))
         .join(Player, Player.id == PlacementResult.player_id)
         .filter(PlacementResult.tournament_id == tournament_id)
-    )
-    total_entries = base_query.count()
-    rows = (
-        base_query.order_by(PlacementResult.placement.asc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        .order_by(PlacementResult.placement.asc(), PlacementResult.team_id.asc())
         .all()
     )
+    all_teams = _group_teams(all_rows)
+    total_entries = len(all_teams)
+    page_teams = all_teams[(page - 1) * page_size: page * page_size]
+    rows = [pair for team in page_teams for pair in team]
 
     return LiveLeaderboardResponse(
         tournament_id=tournament.id,
@@ -684,6 +687,18 @@ def get_live_leaderboard(
                 eliminations=result.eliminations,
             )
             for result, player in rows
+        ],
+        teams=[
+            LiveTeamEntry(
+                placement=team[0][0].placement,
+                team_id=team[0][0].team_id or None,
+                points=team[0][0].points,
+                eliminations=team[0][0].eliminations,
+                members=[
+                    LiveTeamMember(player_id=p.id, gamertag=p.gamertag, is_verified=p.is_verified) for _, p in team
+                ],
+            )
+            for team in page_teams
         ],
     )
 

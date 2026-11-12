@@ -21,7 +21,8 @@ import { TournamentDetailModal } from './components/TournamentDetailModal';
 import { IntroTour, introSeenKey } from './components/IntroTour';
 import { HelpCenter } from './components/HelpModal';
 import { StatsPage } from './components/StatsPage';
-import { BellButton, NotificationsPage, ToastStack } from './components/NotificationCenter';
+import { BellButton, NotificationsPage, ToastStack, type NotificationTarget } from './components/NotificationCenter';
+import { api } from './lib/api';
 import { NotificationsProvider } from './lib/notifications';
 import { SettingsPage } from './components/SettingsPage';
 import { LegalModal, type LegalDoc } from './components/LegalModal';
@@ -79,7 +80,18 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
     setCurrentPage(page as Page);
   }
 
-  const PAGE_TITLES: Record<string, string> = { dashboard: 'Home', markets: 'Market', portfolio: 'My Portfolio', leaderboards: 'Leaderboard', stats: 'My Stats', tournaments: 'Events', settings: 'Settings', notifications: 'Notifications' };
+  // Clicking a notification: a tournament one goes to the Tournaments tab and opens that tournament; a player one (a buy,
+  // a sell, a cancelled order) opens that player's stock.
+  function openNotificationTarget(target: NotificationTarget) {
+    if (target.type === 'player') { setPlayerModalId(target.id); return; }
+    setCurrentPage('tournaments');
+    setMenuOpen(false);
+    api.get<TournamentResponse>(`/tournaments/${target.id}`)
+      .then(t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); })
+      .catch(() => { /* the tournament is gone; the Tournaments tab is still shown */ });
+  }
+
+  const PAGE_TITLES: Record<string, string> = { dashboard: 'Home', markets: 'Market', portfolio: 'My Portfolio', leaderboards: 'Leaderboard', stats: 'My Stats', tournaments: 'Tournaments', settings: 'Settings', notifications: 'Notifications' };
   const cash = wallet ? toNumber(wallet.cash_balance) : null;
   const goTo = (page: string) => { setCurrentPage(page as Page); setMenuOpen(false); };
 
@@ -145,7 +157,7 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
           : <Portfolio navigate={navigate} openPlayer={setPlayerModalId} />)}
         {currentPage === 'leaderboards' && <Leaderboards openPlayer={setPlayerModalId} openTeam={setTeamModalUserId} />}
         {currentPage === 'stats' && (isGuest ? <AccountRequired title="My Stats" text="Your trading history, earnings and records show up here once you have an account." /> : <StatsPage />)}
-        {currentPage === 'notifications' && (isGuest ? <AccountRequired title="Notifications" text="Your trades, dividends and tournament updates show up here once you have an account." /> : <NotificationsPage />)}
+        {currentPage === 'notifications' && (isGuest ? <AccountRequired title="Notifications" text="Your trades, dividends and tournament updates show up here once you have an account." /> : <NotificationsPage onOpenItem={openNotificationTarget} />)}
         {currentPage === 'settings' && (isGuest ? <AccountRequired title="Settings" text="Create an account to manage your profile and settings." /> : <SettingsPage />)}
         {currentPage === 'tournaments' && <Tournaments navigate={navigate} openTournament={t => { setTournamentFocusPlayerId(null); setSelectedTournament(t); }} />}
       </main>
@@ -194,7 +206,7 @@ function AuthenticatedApp({ guest }: { guest?: { goLogin: (mode?: 'login' | 'reg
         />
       )}
       {prompt !== null && <AccountPrompt feature={prompt || undefined} onClose={() => setPrompt(null)} />}
-      {!isGuest && <ToastStack onOpenInbox={() => setCurrentPage('notifications')} />}
+      {!isGuest && <ToastStack onOpenInbox={() => setCurrentPage('notifications')} onOpenItem={openNotificationTarget} />}
     </div>
     </Notifications>
     </GuestContext.Provider>

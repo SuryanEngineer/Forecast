@@ -280,6 +280,16 @@ export interface LiveLeaderboardResponse {
   page_size: number;
   total_pages: number;
   entries: LiveLeaderboardEntry[];
+  /** One row per TEAM (solo/duo/squad); paging and `total_entries` count teams. */
+  teams: LiveTeamEntry[];
+}
+
+export interface LiveTeamEntry {
+  placement: number;
+  team_id: string | null;
+  points: Money | null;
+  eliminations: number | null;
+  members: { player_id: string; gamertag: string; is_verified?: boolean }[];
 }
 
 // GET /tournaments/{id}/results -- also paginated, same reasoning as
@@ -368,6 +378,8 @@ export interface GameResultsResponse {
   game: number;
   session_id: string | null;
   ended_at: string | null;
+  /** false while the game is being played: `teams` is then only the teams eliminated so far. */
+  complete?: boolean;
   teams: GameTeamRowResponse[];
 }
 

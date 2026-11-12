@@ -92,6 +92,22 @@ class LiveLeaderboardEntry(BaseModel):
     eliminations: int | None = None
 
 
+class LiveTeamMember(BaseModel):
+    player_id: uuid.UUID
+    gamertag: str
+    is_verified: bool = False
+
+
+class LiveTeamEntry(BaseModel):
+    """One leaderboard row: a whole team (solo / duo / squad) with its cumulative stats shown once."""
+
+    placement: int
+    team_id: str | None = None
+    points: Decimal | None = None
+    eliminations: int | None = None
+    members: list[LiveTeamMember]
+
+
 class LiveLeaderboardResponse(BaseModel):
     tournament_id: uuid.UUID
     tournament_name: str
@@ -115,7 +131,10 @@ class LiveLeaderboardResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
-    entries: list[LiveLeaderboardEntry]
+    # `total_entries` / paging count TEAMS (a duo/squad is one row, not one row per player).
+    entries: list[LiveLeaderboardEntry]  # the players of this page's teams, flat (kept for older clients)
+    teams: list[LiveTeamEntry] = Field(default_factory=list)
+
 
 
 class TournamentResultArchiveResponse(BaseModel):

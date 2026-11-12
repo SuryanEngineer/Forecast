@@ -8,7 +8,7 @@ import { toNumber, type TournamentResponse } from '../lib/types';
 import { titledName } from '../lib/tournamentName';
 import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
-import { TeamLeaderboard } from './TeamLeaderboard';
+import { GamesTab, TeamLeaderboard } from './TeamLeaderboard';
 import { usd } from '../lib/format';
 
 interface Props {
@@ -69,56 +69,89 @@ function PageControls({
 // LiveLeaderboardEntry has no team_id/prize_won/percentile yet (those only
 // exist once PlacementResult rows are written at finalization).
 function LiveStandingsSection({
+  tournamentId,
   data,
   loading,
+  failures,
   page,
   onPage,
   onOpenPlayer,
 }: {
+  tournamentId: string;
   data: ReturnType<typeof useLiveLeaderboard>['data'];
   loading: boolean;
+  failures: number;
   page: number;
   onPage: (p: number) => void;
   onOpenPlayer: (id: string) => void;
 }) {
-  if (loading && !data) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading live standings…</p>;
-  }
-  if (!data || data.entries.length === 0) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings are available yet. Check back once the tournament is underway.</p>;
-  }
+  const [tab, setTab] = useState<'standings' | 'games'>('standings');
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
-          Live standings ({data.total_entries.toLocaleString()})
-        </p>
-      </div>
-      <div className="space-y-1.5">
-        {data.entries.map(entry => (
+    <div className="space-y-3">
+      <div className="flex gap-1.5 p-1 rounded-xl w-full sm:w-fit" style={{ background: 'var(--muted)' }}>
+        {([['standings', 'Live standings'], ['games', 'Game log']] as const).map(([id, label]) => (
           <button
-            key={entry.player_id}
-            onClick={() => onOpenPlayer(entry.player_id)}
-            className="w-full flex items-center gap-3 p-3 rounded-2xl text-left hover:bg-white/[0.03] transition-colors"
-            style={{ background: 'var(--muted)' }}
+            key={id}
+            onClick={() => setTab(id)}
+            className="rounded-lg font-semibold transition-colors"
+            style={{
+              fontSize: 12.5,
+              padding: '8px 12px', flex: 1,
+              background: tab === id ? 'var(--card)' : 'transparent',
+              color: tab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
+            }}
           >
-            <div
-              className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-              style={{ fontSize: 12, ...placementBadgeStyle(entry.placement) }}
-            >
-              #{entry.placement}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-foreground font-semibold truncate" style={{ fontSize: 13.5 }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
-              <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-                {entry.eliminations !== null ? `${entry.eliminations} elims` : ''}
-                {entry.points !== null ? `${entry.eliminations !== null ? ' · ' : ''}${toNumber(entry.points)} pts` : ''}
-              </p>
-            </div>
+            {label}
           </button>
         ))}
       </div>
-      <PageControls page={page} totalPages={data.total_pages} total={data.total_entries} onPage={onPage} />
+      {tab === 'games' ? (
+        <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} live />
+      ) : !data ? (
+        // Nothing loaded yet: "Loading…" (it keeps retrying on its own), and only after several failed tries "Failed to fetch".
+        // The moment a retry succeeds `data` is set and this message is gone.
+        <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>
+          {failures >= 3 ? 'Failed to fetch the live standings. Retrying…' : 'Loading live standings…'}
+        </p>
+      ) : !data.teams || data.teams.length === 0 ? (
+        <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings are available yet. Check back once the tournament is underway.</p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
+            Live standings ({data.total_entries.toLocaleString()} {data.teams.every(t => t.members.length === 1) ? 'players' : 'teams'})
+          </p>
+          <div className="space-y-1.5">
+            {data.teams.map(team => (
+              <div
+                key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}
+                className="w-full flex items-center gap-3 p-3 rounded-2xl"
+                style={{ background: 'var(--muted)' }}
+              >
+                <div
+                  className="w-9 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
+                  style={{ fontSize: 12, ...placementBadgeStyle(team.placement) }}
+                >
+                  #{team.placement}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {team.members.map(m => (
+                      <button key={m.player_id} onClick={() => onOpenPlayer(m.player_id)} className="text-foreground font-semibold truncate hover:opacity-80" style={{ fontSize: 13.5 }}>
+                        {m.gamertag}<VerifiedBadge show={m.is_verified} />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+                    {team.eliminations !== null ? `${team.eliminations} elims` : ''}
+                    {team.points !== null ? `${team.eliminations !== null ? ' · ' : ''}${toNumber(team.points)} pts` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <PageControls page={page} totalPages={data.total_pages} total={data.total_entries} onPage={onPage} />
+        </div>
+      )}
     </div>
   );
 }
@@ -234,7 +267,7 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
   // finalized tournament uses -- whatever's been recorded so far, without
   // polling something that's no longer moving.
   const isLive = tournament.phase === 'live';
-  const { data: liveData, loading: liveLoading } = useLiveLeaderboard(
+  const { data: liveData, loading: liveLoading, failures: liveFailures } = useLiveLeaderboard(
     isLive ? tournament.id : null,
     livePage,
     DETAIL_PAGE_SIZE
@@ -358,8 +391,10 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
             </div>
           ) : isLive ? (
             <LiveStandingsSection
+              tournamentId={tournament.id}
               data={liveData}
               loading={liveLoading}
+              failures={liveFailures}
               page={livePage}
               onPage={setLivePage}
               onOpenPlayer={onOpenPlayer}

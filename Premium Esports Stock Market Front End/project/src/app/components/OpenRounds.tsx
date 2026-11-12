@@ -135,8 +135,8 @@ export function RoundModal({ round, onClose, startPage = 0 }: { round: OpenRound
 }
 
 /** The "Open rounds" view of the Tournaments page: every open round (newest first) with a status filter, player search and
- * the page's date range. */
-export function OpenRoundsSection({ inRange }: { inRange?: (iso: string | null) => boolean }) {
+ * player search. */
+export function OpenRoundsSection() {
   const show = true;
   const { rounds, error } = useOpenRounds(true);
   const [filter, setFilter] = useState<'all' | OpenRound['status']>('all');
@@ -159,8 +159,8 @@ export function OpenRoundsSection({ inRange }: { inRange?: (iso: string | null) 
   }, [query, show]);
 
   const visible = useMemo(
-    () => (rounds ?? []).filter(r => (filter === 'all' || r.status === filter) && (!inRange || inRange(r.start_time))),
-    [rounds, filter, inRange],
+    () => (rounds ?? []).filter(r => filter === 'all' || r.status === filter),
+    [rounds, filter],
   );
   const roundFor = (h: SearchHit) => (rounds ?? []).find(r => r.leaderboard_event_id === h.leaderboard_event_id && r.leaderboard_event_window_id === h.leaderboard_event_window_id);
 

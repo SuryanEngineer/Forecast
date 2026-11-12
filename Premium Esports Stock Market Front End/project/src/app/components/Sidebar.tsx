@@ -22,7 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'portfolio', label: 'My Portfolio', icon: Briefcase },
   { id: 'leaderboards', label: 'Leaderboard', icon: Trophy },
   { id: 'stats', label: 'My Stats', icon: BarChart3 },
-  { id: 'tournaments', label: 'Events', icon: Zap },
+  { id: 'tournaments', label: 'Tournaments', icon: Zap },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 

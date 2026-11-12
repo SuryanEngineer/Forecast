@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar } from 'lucide-react';
 import { lobbyLabel, titledName, tournamentDisplayName, type LobbyLabel } from '../lib/tournamentName';
 import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
@@ -338,8 +338,8 @@ const calendarToTournament = (t: CalendarTournamentResponse): TournamentResponse
   prize_pool: t.total_dividend_pool, status: t.status, phase: t.phase, live_progress: t.live_progress, created_at: t.start_time ?? new Date().toISOString(),
 });
 
-/** The top of the Events page, reusable elsewhere (the landing page): live events with their leaderboard in red, or, when
- * nothing is live, the next event with its countdown. Same cards, same rules as the Events page. */
+/** The top of the Tournaments page, reusable elsewhere (the landing page): live tournaments with their leaderboard in red, or,
+ * when nothing is live, the next one with its countdown. Same cards, same rules as the Tournaments page. */
 export function NextEventSection({ openTournament }: { openTournament: (tournament: TournamentResponse) => void }) {
   const { data: calendar } = useTournamentCalendar(true);
   const { data: announced } = useAnnouncedTournaments();
@@ -377,52 +377,24 @@ export function NextEventSection({ openTournament }: { openTournament: (tourname
 }
 
 type View = 'dividends' | 'open' | 'all';
-const VIEW_KEY = 'forecast:tournament-view';
 const VIEWS: { id: View; label: string; hint: string }[] = [
+  { id: 'all', label: 'All', hint: 'Dividend tournaments and open rounds together. Open rounds are marked “No payout”.' },
   { id: 'dividends', label: 'Pays dividends', hint: 'Tournaments that pay a dividend to the people who own the players in them.' },
   { id: 'open', label: 'Open rounds', hint: 'Open rounds anyone can enter. They pay nothing, but many lead into tournaments that do.' },
-  { id: 'all', label: 'All', hint: 'Dividend tournaments and open rounds together. Open rounds are marked “No payout”.' },
-];
-
-const pad = (n: number) => String(n).padStart(2, '0');
-const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-
-const PRESETS: { label: string; range: () => [string, string] }[] = [
-  { label: 'Today', range: () => { const t = ymd(new Date()); return [t, t]; } },
-  { label: 'Next 7 days', range: () => [ymd(new Date()), ymd(addDays(new Date(), 7))] },
-  { label: 'Last 7 days', range: () => [ymd(addDays(new Date(), -7)), ymd(new Date())] },
-  { label: 'Next 30 days', range: () => [ymd(new Date()), ymd(addDays(new Date(), 30))] },
-  { label: 'Last 30 days', range: () => [ymd(addDays(new Date(), -30)), ymd(new Date())] },
 ];
 
 // One list entry: a tracked tournament, an announced one, or an open round (no payout).
 type Entry = { key: string; start: number; tracked?: CalendarTournamentResponse; announced?: AnnouncedTournament; open?: OpenRound };
 
 export function Tournaments({ openTournament }: Props) {
-  // Views: tournaments that pay dividends (default), the open rounds that pay nothing, or both together.
-  // Dividend view: live events first (red), then the next event (big card), then everything still to come in date order,
-  // then completed events (newest first). A search or a date range turns it into one flat, filtered list.
+  // Views: everything (default, every visit), only tournaments that pay dividends, or only the no-payout open rounds.
+  // Live events first (red), then the next event (big card), then everything still to come in date order, then completed
+  // events (newest first). A search turns it into one flat, filtered list.
   const { data: calendar, loading } = useTournamentCalendar(true);
   const { data: announced } = useAnnouncedTournaments();
 
-  const [view, setView] = useState<View>(() => {
-    try { const v = localStorage.getItem(VIEW_KEY); return v === 'open' || v === 'all' ? v : 'dividends'; } catch { return 'dividends'; }
-  });
-  const chooseView = (v: View) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* storage unavailable */ } };
-
-  // Date range (inclusive, local calendar days, applied to the event's start time).
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const rangeActive = Boolean(from || to);
-  const inRange = useCallback((iso: string | null) => {
-    if (!from && !to) return true;
-    if (!iso) return false;
-    const t = new Date(iso).getTime();
-    if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
-    if (to && t > new Date(`${to}T23:59:59.999`).getTime()) return false;
-    return true;
-  }, [from, to]);
+  const [view, setView] = useState<View>('all');
+  const chooseView = (v: View) => setView(v);
 
   const { rounds: openRounds, error: openError } = useOpenRounds(view === 'all');
   const [openedRound, setOpenedRound] = useState<OpenRound | null>(null);
@@ -478,21 +450,21 @@ export function Tournaments({ openTournament }: Props) {
 
   const empty = !loading && calendar.length === 0 && announced.length === 0 && view !== 'open';
 
-  // Search (name, region or type) and the date range turn the page into one flat list: live, then what is still to come by
-  // date, then finished events newest first. Open rounds are included in the All view.
+  // Search (name, region or type) turns the page into one flat list: live, then what is still to come by date, then
+  // finished events newest first. Open rounds are included in the All view.
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
-  const filtering = Boolean(q) || rangeActive;
+  const filtering = Boolean(q);
   const matches = (name: string, region: string | null, type: string) =>
     !q || [tournamentDisplayName(name, region), name, region ?? '', TIER_LABELS[type] ?? type].some(s => s.toLowerCase().includes(q));
   const entryMatches = (e: Entry) =>
-    e.tracked ? matches(e.tracked.name, e.tracked.region, e.tracked.tournament_type) && inRange(e.tracked.start_time)
-    : e.announced ? matches(e.announced.name, e.announced.region, e.announced.tournament_type) && inRange(e.announced.start_time)
-    : !q || roundName(e.open!).toLowerCase().includes(q) ? inRange(e.open!.start_time) : false;
+    e.tracked ? matches(e.tracked.name, e.tracked.region, e.tracked.tournament_type)
+    : e.announced ? matches(e.announced.name, e.announced.region, e.announced.tournament_type)
+    : !q || roundName(e.open!).toLowerCase().includes(q);
 
   const flatNodes: React.ReactNode[] = filtering
     ? [
-        ...live.filter(t => matches(t.name, t.region, t.tournament_type) && inRange(t.start_time)).map(t => (
+        ...live.filter(t => matches(t.name, t.region, t.tournament_type)).map(t => (
           <CalendarRow key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />
         )),
         ...comingUp.filter(entryMatches).map(rowFor),
@@ -500,12 +472,10 @@ export function Tournaments({ openTournament }: Props) {
       ]
     : [];
 
-  const presetActive = (p: typeof PRESETS[number]) => { const [a, b] = p.range(); return from === a && to === b; };
   const chip = (active: boolean): React.CSSProperties => ({
     fontSize: 12, borderColor: active ? 'var(--primary)' : 'var(--border)',
     color: active ? 'var(--foreground)' : 'var(--muted-foreground)', background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
   });
-  const dateInput = 'px-2.5 py-1.5 rounded-lg border border-border text-foreground outline-none focus:border-primary/50';
 
   return (
     <div className="p-6 page-pad max-w-[900px] mx-auto space-y-4">
@@ -537,33 +507,6 @@ export function Tournaments({ openTournament }: Props) {
         <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12 }}>{VIEWS.find(v => v.id === view)!.hint}</p>
       </div>
 
-      {/* Date range */}
-      <div className="rounded-xl border border-border p-3 space-y-2" style={{ background: 'rgba(255,255,255,0.02)' }}>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground font-semibold" style={{ fontSize: 12 }}>Date range</span>
-          <label className="flex items-center gap-1.5 text-muted-foreground" style={{ fontSize: 12 }}>
-            From
-            <input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} aria-label="From date" className={dateInput} style={{ background: 'var(--card)', fontSize: 13 }} />
-          </label>
-          <label className="flex items-center gap-1.5 text-muted-foreground" style={{ fontSize: 12 }}>
-            To
-            <input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} aria-label="To date" className={dateInput} style={{ background: 'var(--card)', fontSize: 13 }} />
-          </label>
-          {rangeActive && (
-            <button onClick={() => { setFrom(''); setTo(''); }} className="px-2.5 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground" style={{ fontSize: 12 }}>
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {PRESETS.map(p => (
-            <button key={p.label} onClick={() => { const [a, b] = p.range(); setFrom(a); setTo(b); }} className="px-3 py-1 rounded-full border" style={chip(presetActive(p))}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {view !== 'open' && (
         <input
           type="search"
@@ -577,7 +520,7 @@ export function Tournaments({ openTournament }: Props) {
       )}
 
       {view === 'open' ? (
-        <OpenRoundsSection inRange={inRange} />
+        <OpenRoundsSection />
       ) : (<>
         {loading && calendar.length === 0 && (
           <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>Loading calendar…</p>
@@ -594,7 +537,7 @@ export function Tournaments({ openTournament }: Props) {
           flatNodes.length > 0
             ? <div className="space-y-2.5">{flatNodes}</div>
             : <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>
-                Nothing matches{q ? ` “${query.trim()}”` : ''}{rangeActive ? ' in that date range' : ''}.
+                Nothing matches “{query.trim()}”.
               </p>
         ) : (<>
           {live.map(t => <LiveEvent key={t.id} tournament={t} onOpen={() => openTournament(toTournament(t))} />)}

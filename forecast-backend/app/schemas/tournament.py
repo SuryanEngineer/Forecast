@@ -243,6 +243,9 @@ class GameResultsResponse(BaseModel):
     game: int
     session_id: str | None = None
     ended_at: str | None = None
+    # False while the game is still being played: no team has reached in-game placement 1 yet, so `teams` holds only
+    # the teams eliminated so far (the lowest placements, filling upward as more teams die).
+    complete: bool = True
     teams: list[GameTeamRowResponse]  # ranked by in-game placement
 
 

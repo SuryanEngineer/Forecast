@@ -21,6 +21,9 @@ interface FetchState<T> {
   data: T;
   loading: boolean;
   error: string | null;
+  /** Consecutive failed fetches since the last success (0 once data arrives). Lets a screen say "Loading…" through a
+   * transient failure and only show "Failed to fetch" after several tries. */
+  failures: number;
   refetch: () => void;
 }
 
@@ -34,6 +37,7 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
   const [data, setData] = useState<T>(cached !== undefined ? cached : initial);
   const [loading, setLoading] = useState(cached === undefined);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
   const [tick, setTick] = useState(0);
 
   const refetch = useCallback(() => setTick(t => t + 1), []);
@@ -66,10 +70,14 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
           responseCache.set(path, res);
           setData(res);
           setError(null);
+          setFailures(0);
         }
       })
       .catch(e => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to load');
+          setFailures(n => n + 1);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -90,7 +98,7 @@ function usePolledFetch<T>(path: string | null, initial: T, intervalMs?: number)
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, [intervalMs, refetch]);
 
-  return { data, loading, error, refetch };
+  return { data, loading, error, failures, refetch };
 }
 
 const EMPTY_MARKET_PAGE: PaginatedMarketSnapshotResponse = { items: [], total: 0, page: 1, page_size: 60, total_pages: 1 };

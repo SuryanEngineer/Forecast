@@ -50,6 +50,28 @@ function Badge({ item }: { item: NotificationItem }) {
   );
 }
 
+/** Where clicking a notification should take you: a tournament (dividends, start/end, game wins) or a player stock (trades,
+ * cancelled orders). null = nothing to open. */
+export type NotificationTarget = { type: 'tournament'; id: string } | { type: 'player'; id: string };
+
+export function notificationTarget(item: NotificationItem): NotificationTarget | null {
+  const d = item.data ?? {};
+  const tid = typeof d.tournament_id === 'string' ? d.tournament_id : null;
+  const pid = typeof d.player_id === 'string' ? d.player_id : null;
+  switch (item.kind) {
+    case 'dividend':
+    case 'tournament_start':
+    case 'tournament_end':
+    case 'game_win':
+      return tid ? { type: 'tournament', id: tid } : pid ? { type: 'player', id: pid } : null;
+    case 'trade':
+    case 'order_cancelled':
+      return pid ? { type: 'player', id: pid } : null;
+    default:
+      return tid ? { type: 'tournament', id: tid } : pid ? { type: 'player', id: pid } : null;
+  }
+}
+
 function tradeLine(item: NotificationItem): { head: string; sub: string } {
   const d = item.data ?? {};
   const q = Number(d.quantity ?? 0);
@@ -80,7 +102,7 @@ function ToastCard({ toast, onClose, onOpen }: { toast: Toast; onClose: () => vo
 }
 
 /** The pop-ups: top right, each slides in, waits, and slides back out. */
-export function ToastStack({ onOpenInbox }: { onOpenInbox: () => void }) {
+export function ToastStack({ onOpenInbox, onOpenItem }: { onOpenInbox: () => void; onOpenItem: (target: NotificationTarget) => void }) {
   const { toasts, dismissToast } = useNotifications();
   if (toasts.length === 0) return null;
   return (
@@ -89,7 +111,7 @@ export function ToastStack({ onOpenInbox }: { onOpenInbox: () => void }) {
       style={{ top: 'max(14px, env(safe-area-inset-top))', right: 'max(14px, env(safe-area-inset-right))', width: 'min(360px, calc(100vw - 28px))' }}
       aria-live="polite"
     >
-      {toasts.map(t => <ToastCard key={t.key} toast={t} onClose={() => dismissToast(t.key)} onOpen={() => { dismissToast(t.key); onOpenInbox(); }} />)}
+      {toasts.map(t => <ToastCard key={t.key} toast={t} onClose={() => dismissToast(t.key)} onOpen={() => { dismissToast(t.key); const target = notificationTarget(t.item); if (target) onOpenItem(target); else onOpenInbox(); }} />)}
     </div>
   );
 }
@@ -125,7 +147,7 @@ function dayLabel(iso: string | null): string {
 }
 
 /** The notifications page. Opening it reads everything; the ones that were unread stay highlighted until you leave. */
-export function NotificationsPage() {
+export function NotificationsPage({ onOpenItem }: { onOpenItem: (target: NotificationTarget) => void }) {
   const { items, openInbox } = useNotifications();
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -171,8 +193,17 @@ export function NotificationsPage() {
               {g.rows.map((it, i) => {
                 const isNew = fresh.has(it.id);
                 const trade = it.kind === 'trade' ? tradeLine(it) : null;
+                const target = notificationTarget(it);
                 return (
-                  <div key={it.id} className="flex items-start gap-3 px-4 py-3" style={{ borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: isNew ? 'rgba(0,200,255,0.06)' : undefined }}>
+                  <div
+                    key={it.id}
+                    className={`flex items-start gap-3 px-4 py-3 ${target ? 'cursor-pointer hover:bg-white/[0.04] transition-colors' : ''}`}
+                    style={{ borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: isNew ? 'rgba(0,200,255,0.06)' : undefined }}
+                    onClick={target ? () => onOpenItem(target) : undefined}
+                    onKeyDown={target ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenItem(target); } } : undefined}
+                    role={target ? 'button' : undefined}
+                    tabIndex={target ? 0 : undefined}
+                  >
                     <Badge item={it} />
                     <div className="min-w-0 flex-1">
                       <p className="text-foreground font-semibold" style={{ fontSize: 13.5 }}>{trade ? `${it.data?.side === 'buy' ? 'Bought' : 'Sold'} ${trade.head}` : it.title}</p>

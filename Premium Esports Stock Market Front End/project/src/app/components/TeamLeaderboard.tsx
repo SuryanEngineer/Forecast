@@ -438,28 +438,43 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
 }
 
 // "Game by game" tab: pick a game, see every team ranked by how they placed in THAT game, with their kills.
-function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpenPlayer: (id: string) => void }) {
+/** Game log. With `live`, it re-fetches every 8s: finished games are listed as usual, and the game being played right now
+ * shows only the teams already eliminated (lowest placements first filling upward), so it fills in as teams die. */
+export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournamentId: string; onOpenPlayer: (id: string) => void; live?: boolean }) {
   const [data, setData] = useState<TournamentGamesResponse | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [selected, setSelected] = useState(1);
+  const [failures, setFailures] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
   const compact = useCompact(); // a hook: must run on every render, before any early return below
 
+  const hasData = data !== null;
   useEffect(() => {
     let cancelled = false;
-    api
-      .get<TournamentGamesResponse>(`/tournaments/${tournamentId}/games`)
-      .then(r => { if (!cancelled) setData(r); })
-      .catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; };
-  }, [tournamentId]);
+    const load = () =>
+      api
+        .get<TournamentGamesResponse>(`/tournaments/${tournamentId}/games`)
+        .then(r => { if (!cancelled) { setData(r); setFailures(0); } })
+        .catch(() => { if (!cancelled) setFailures(n => n + 1); });
+    load();
+    // Until something has loaded, retry every 2.5s (it shows "Loading…" meanwhile, and "Failed to fetch" only after 4
+    // failures -- cleared the moment a retry succeeds). Once loaded, only a live tournament keeps refreshing (every 8s).
+    const every = !hasData ? 2500 : live ? 8000 : 0;
+    const id = every ? setInterval(() => { if (document.visibilityState === 'visible') load(); }, every) : undefined;
+    return () => { cancelled = true; if (id) clearInterval(id); };
+  }, [tournamentId, live, hasData]);
 
-  if (failed) return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Couldn&rsquo;t load game results.</p>;
+  if (!data && failures >= 4) return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Failed to fetch game results.</p>;
   if (!data) return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading games…</p>;
   if (data.games.length === 0) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Game-by-game results aren&rsquo;t available for this tournament.</p>;
+    return (
+      <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>
+        {live ? 'The first game is under way -- results appear here as teams are eliminated.' : 'Game-by-game results aren’t available for this tournament.'}
+      </p>
+    );
   }
 
-  const game = data.games.find(g => g.game === selected) ?? data.games[0];
+  // Live: open on the newest game (the one being played) unless the viewer picked another.
+  const game = data.games.find(g => g.game === selected) ?? (live ? data.games[data.games.length - 1] : data.games[0]);
+  const inProgress = game.complete === false;
   // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
   const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
@@ -480,14 +495,21 @@ function GamesTab({ tournamentId, onOpenPlayer }: { tournamentId: string; onOpen
               color: g.game === game.game ? '#06101a' : 'var(--foreground)',
             }}
           >
-            {g.game}
+            {g.game}{g.complete === false ? ' •' : ''}
           </button>
         ))}
       </div>
-      <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
-        Game {game.game} &middot; {game.teams.length} teams
-        {game.ended_at ? ` · ended ${new Date(game.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
-      </p>
+      {inProgress ? (
+        <p style={{ fontSize: 11.5, color: '#ff4757', fontWeight: 600 }}>
+          Game {game.game} in progress &middot; {game.teams.length} team{game.teams.length === 1 ? '' : 's'} eliminated so far
+          <span className="text-muted-foreground" style={{ fontWeight: 400 }}> — the leaderboard fills upward as more teams are knocked out.</span>
+        </p>
+      ) : (
+        <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
+          Game {game.game} &middot; {game.teams.length} teams
+          {game.ended_at ? ` · ended ${new Date(game.ended_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+        </p>
+      )}
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
         <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>

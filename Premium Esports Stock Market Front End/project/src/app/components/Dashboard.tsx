@@ -236,7 +236,7 @@ export function Dashboard({ navigate, openPlayer, goToMarketWithSearch }: Props)
           <div className="flex items-center justify-between mb-3">
             <p className="text-foreground font-bold" style={{ fontSize: 18 }}>⚡ Coming Up</p>
             <button onClick={() => navigate('tournaments')} className="flex items-center gap-1 text-primary" style={{ fontSize: 13 }}>
-              All events <ChevronRight className="w-4 h-4" />
+              All tournaments <ChevronRight className="w-4 h-4" />
             </button>
           </div>
           <div className="space-y-2.5">

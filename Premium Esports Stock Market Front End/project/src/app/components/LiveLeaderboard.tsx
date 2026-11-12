@@ -14,7 +14,7 @@ import { VerifiedBadge } from './HelpModal';
 // shows "updated Xs ago" from the actual last_synced_at timestamp rather
 // than implying a live ticking feed.
 export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentId: string; compact?: boolean }) {
-  const { data, loading, error } = useLiveLeaderboard(tournamentId);
+  const { data, failures } = useLiveLeaderboard(tournamentId);
   const [, forceTick] = useState(0);
 
   // Re-render once a second purely so the "updated Xs ago" label counts
@@ -24,15 +24,17 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
     return () => clearInterval(id);
   }, []);
 
-  if (loading && !data) {
+  // Once data exists it is always shown (a stale error never hides it). With no data yet: a loading skeleton while it
+  // keeps retrying (every poll), and "Failed to fetch" only after 3 failed tries -- it disappears when a retry succeeds.
+  if (!data) {
+    if (failures >= 3) {
+      return (
+        <div className="text-center py-4">
+          <p className="text-muted-foreground" style={{ fontSize: 12 }}>Failed to fetch the standings. Retrying…</p>
+        </div>
+      );
+    }
     return <LeaderboardSkeleton rows={compact ? 4 : 6} />;
-  }
-  if (error || !data) {
-    return (
-      <div className="text-center py-4">
-        <p className="text-muted-foreground" style={{ fontSize: 12 }}>Standings aren't available right now.</p>
-      </div>
-    );
   }
 
   // phase, not raw tournament_status -- status stays non-'finalized' for a
@@ -44,7 +46,8 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
   // backend's app/schemas/tournament.py compute_tournament_phase.
   const isFinal = data.phase === 'completed';
   const isLivePhase = data.phase === 'live';
-  const entries = compact ? data.entries.slice(0, 8) : data.entries;
+  const allTeams = data.teams ?? []; // (a backend not yet redeployed sends no `teams`)
+  const teams = compact ? allTeams.slice(0, 8) : allTeams;
 
   return (
     <div>
@@ -76,39 +79,44 @@ export function LiveLeaderboard({ tournamentId, compact = false }: { tournamentI
         <LastUpdated lastSyncedAt={data.last_synced_at} isOsirionTracked={data.is_osirion_tracked} isLive={isLivePhase} />
       </div>
 
-      {entries.length === 0 ? (
+      {teams.length === 0 ? (
         <div className="text-center py-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)' }}>
           <p className="text-muted-foreground" style={{ fontSize: 12 }}>No results posted yet.</p>
         </div>
       ) : (
         <div className="space-y-1">
-          {entries.map(entry => {
-            const badge = placementBadgeStyle(entry.placement);
+          {teams.map(team => {
+            const badge = placementBadgeStyle(team.placement);
             const subline = [
-              entry.eliminations != null ? `${entry.eliminations} elim${entry.eliminations === 1 ? '' : 's'}` : null,
-              entry.points !== null ? `${toNumber(entry.points).toFixed(0)} pts` : null,
+              team.eliminations != null ? `${team.eliminations} elim${team.eliminations === 1 ? '' : 's'}` : null,
+              team.points !== null ? `${toNumber(team.points).toFixed(0)} pts` : null,
             ].filter(Boolean).join(' · ');
             return (
               <div
-                key={entry.player_id}
+                key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}
                 className="flex items-center gap-2 px-2 py-1.5 rounded-lg"
-                style={{ background: placementRowTint(entry.placement) }}
+                style={{ background: placementRowTint(team.placement) }}
               >
                 <div
                   className="flex items-center justify-center shrink-0 rounded-lg font-mono font-bold"
                   style={{ width: 22, height: 22, fontSize: 11, ...badge }}
                 >
-                  {entry.placement === 1 ? <Trophy style={{ width: 12, height: 12 }} /> : entry.placement}
+                  {team.placement === 1 ? <Trophy style={{ width: 12, height: 12 }} /> : team.placement}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>{entry.gamertag}<VerifiedBadge show={entry.is_verified} /></p>
+                  {/* One row per team: every teammate's name together, one placement badge. */}
+                  <p className="truncate font-semibold" style={{ fontSize: 12.5, color: 'var(--foreground)' }}>
+                    {team.members.map((m, i) => (
+                      <span key={m.player_id}>{i > 0 ? ' · ' : ''}{m.gamertag}<VerifiedBadge show={m.is_verified} /></span>
+                    ))}
+                  </p>
                   {subline && !compact && (
                     <p className="truncate" style={{ fontSize: 10.5, color: 'var(--muted-foreground)' }}>{subline}</p>
                   )}
                 </div>
-                {compact && entry.points !== null && (
+                {compact && team.points !== null && (
                   <span className="font-mono shrink-0" style={{ fontSize: 11.5, color: 'var(--muted-foreground)' }}>
-                    {toNumber(entry.points).toFixed(0)} pts
+                    {toNumber(team.points).toFixed(0)} pts
                   </span>
                 )}
               </div>

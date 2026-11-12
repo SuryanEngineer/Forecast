@@ -130,7 +130,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         body: (
           <List
             items={[
-              'Open Events and find a tournament that has not started yet. Bigger events pay bigger dividends.',
+              'Open Tournaments and find one that has not started yet. Bigger tournaments pay bigger dividends.',
               'Open Market and look at the players. Select one to see their price, tournament history, and dividends earned.',
               'Buy a few shares of players you believe in, ahead of the event. Spread across several players rather than putting everything on one.',
               'Watch the event on its live standings page, collect your dividend when it finalizes, then decide to hold, sell, or reinvest.',
@@ -192,7 +192,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         end-of-day (UTC) net worth to the day before.</p>,
       },
       {
-        heading: 'Events',
+        heading: 'Tournaments',
         body: <p>The tournament calendar, live standings while an event is running, and results afterward: team standings, each
         team’s payout, and game-by-game breakdowns. Event times show in your local time.</p>,
       },
@@ -320,7 +320,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       },
       {
         heading: 'Past results are a guide, not a promise',
-        body: <p>Form changes, teams split, and qualifiers eliminate people. Check the Events calendar for who is entered before you buy.</p>,
+        body: <p>Form changes, teams split, and qualifiers eliminate people. Check the Tournaments tab for who is entered before you buy.</p>,
       },
     ],
   },
