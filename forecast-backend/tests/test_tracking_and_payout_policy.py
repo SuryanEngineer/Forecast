@@ -186,8 +186,8 @@ class TestCompletion(unittest.TestCase):
         self.assertTrue(v.over)
         self.assertEqual(v.over_at, self.T0 + timedelta(minutes=200))  # when game 10 ended, not the close time
         # one game short of the count never counts as over, even long after the close...
-        v = comp.decide_over(now=close + timedelta(minutes=90), window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(9)))
-        self.assertFalse(v.over)
+        v = comp.decide_over(now=close + timedelta(minutes=50), window_end=close, lobby="set", expected_games=10, progress=comp.analyze_games(self.entries(9)))
+        self.assertFalse(v.over)  # last result was 20 minutes ago
 
     def test_safety_valve(self):
         close = self.T0 + timedelta(minutes=150)
@@ -235,9 +235,15 @@ class TestCompletion(unittest.TestCase):
         # a count that is reached while a further game is still under way does not finish it either
         v = comp.decide_over(now=now, window_end=close, lobby="set", expected_games=3, progress=p)
         self.assertFalse(v.over, v.reason)
-        # ...but a game whose winner never arrives is released by the safety valve, hours after the close
-        v = comp.decide_over(now=close + timedelta(hours=4), window_end=close, lobby=None, expected_games=None, progress=p)
+        # ...but a game whose winner never arrives is released once an hour passes with nothing new (and the window is closed)
+        v = comp.decide_over(now=self.T0 + timedelta(minutes=118 + 59), window_end=close, lobby=None, expected_games=None, progress=p)
+        self.assertFalse(v.over, v.reason)
+        v = comp.decide_over(now=self.T0 + timedelta(minutes=118 + 61), window_end=close, lobby=None, expected_games=None, progress=p)
         self.assertTrue(v.over)
+        self.assertEqual(v.over_at, self.T0 + timedelta(minutes=118))
+        # never while the window is still open, however quiet
+        v = comp.decide_over(now=self.T0 + timedelta(minutes=59), window_end=close, lobby=None, expected_games=None, progress=comp.analyze_games([team(a[:1])]))
+        self.assertFalse(v.over)
 
     def test_open_round_uses_the_close_plus_grace(self):
         close = self.T0

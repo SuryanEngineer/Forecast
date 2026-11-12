@@ -9,8 +9,8 @@ happen while games are still being played. So:
     the LAST game has a winner -- and every game before it has one too. 'Game 10 of 10 has a winner', not a clock.
   * SET LOBBY with no published game count: over once the window has closed AND nobody has finished a game for a while.
   * OPEN round: lobbies close at the window end; games already started finish shortly after, so over = close + a short grace.
-  * A safety valve: long after the close with no game activity at all, the tournament is treated as over (a cancelled or
-    abandoned game must not leave it unpaid forever).
+  * A safety valve: once the window has closed, a game with no new result for an hour is treated as dead and the tournament
+    is over with the games that had a winner (a cancelled or abandoned game must not leave it unpaid forever).
 
 A game is identified by Osirion's `sessionId` (one id shared by every team in that game) and numbered by when it ended;
 its winner is a team whose in-game placement in that session is 1 (see engine/performance_eval.py for the stat keys).
@@ -123,8 +123,11 @@ def decide_over(
 
     # Safety valve shared by both set-lobby paths: long after the close, with nothing recorded for an hour, a game whose
     # winner never arrived (cancelled / abandoned) must not leave the tournament unpaid forever.
-    stuck = (
-        window_end is not None and now >= window_end + SAFETY_AFTER_CLOSE and (quiet_for is None or quiet_for >= SAFETY_QUIET)
+    # A game with no new result for an hour after the window closed is dead (cancelled, or its data never arrived): treat the
+    # tournament as finished with the games that did get a winner. With no results at all, wait the longer grace instead.
+    stuck = window_end is not None and now >= window_end and (
+        (quiet_for is not None and quiet_for >= SAFETY_QUIET)
+        or (quiet_for is None and now >= window_end + SAFETY_AFTER_CLOSE)
     )
 
     if expected_games and expected_games > 0:
@@ -132,7 +135,7 @@ def decide_over(
         if progress.games_done >= expected_games and progress.unfinished_games == 0:
             return Verdict(True, progress.last_winner_end or progress.last_game_end or window_end, f"game {expected_games} of {expected_games} has a winner")
         if stuck:
-            return Verdict(True, progress.last_game_end or window_end, f"only {progress.games_done} of {expected_games} games finished, but nothing has been played for an hour and the window closed 3h ago")
+            return Verdict(True, progress.last_game_end or window_end, f"only {progress.games_done} of {expected_games} games finished, but nothing new has been recorded for an hour since the window closed")
         if progress.games_done >= expected_games:
             return Verdict(False, None, "a game is still being played (no winner yet)")
         return Verdict(False, None, f"{progress.games_done} of {expected_games} games have a winner")
@@ -147,7 +150,7 @@ def decide_over(
         return Verdict(False, None, "closed, waiting for results")
     if progress.unfinished_games > 0:
         if stuck:
-            return Verdict(True, progress.last_game_end or window_end, "a game never got a winner and nothing has been played for an hour, 3h after the close")
+            return Verdict(True, progress.last_game_end or window_end, "the last game never got a winner and nothing new has been recorded for an hour since the window closed")
         return Verdict(False, None, "the last game has no winner yet")
     if quiet_for is not None and quiet_for >= QUIET:
         return Verdict(True, progress.last_winner_end or progress.last_game_end, "the last game has a winner and nothing has happened for 30 minutes after the close")
