@@ -1018,7 +1018,10 @@ def sync_tournament(
             except Exception:  # noqa: BLE001 -- never let the bookkeeping break a sync
                 db.rollback()
                 logger.exception("Could not assess completion of tournament %s", tournament.id)
-                finish_ok = window_ended  # fall back to the old rule rather than leave it unpaid forever
+                # Never fall back to "the window has ended": that is exactly how a tournament got paid out while its last game
+                # was still being played. Try again on the next pass (45s); the safety valve in engine/completion.py
+                # releases anything genuinely stuck.
+                finish_ok = False
 
     if finish_ok and lan_hold and result.unlinked:
         # Never pay dividends on an incomplete/misattributed LAN field. Resolve with

@@ -203,6 +203,42 @@ class TestCompletion(unittest.TestCase):
         self.assertFalse(comp.decide_over(now=close + timedelta(minutes=10), window_end=close, lobby="set", expected_games=0, progress=busy).over)
         self.assertTrue(comp.decide_over(now=close + timedelta(minutes=40), window_end=close, lobby="set", expected_games=0, progress=busy).over)
 
+    def test_game_in_progress_is_never_over(self):
+        """The Nov 12 Eval Cup: games every ~27.5 min, no published count. Game 4 was still being played when the window
+        closed; its FIRST elimination (35 min before the old 'quiet' check fired) must not make the event look finished."""
+        close = self.T0 + timedelta(minutes=60)                       # 20:00 -> 22:00 style window (T0 = 19:00 here)
+        def team(sessions):
+            return {"sessionHistory": sessions}
+        # team A won games 1-3; game 4: eliminations stream in from minute 96 to 118, nobody has placement 1 yet
+        a = [_sess("g1", self.at(27), 1), _sess("g2", self.at(55), 1), _sess("g3", self.at(82), 1)]
+        b = [_sess("g1", self.at(26), 2), _sess("g2", self.at(54), 2), _sess("g3", self.at(81), 2), _sess("g4", self.at(96), 90)]
+        c = [_sess("g4", self.at(118), 3)]                            # latest elimination so far, still 2 teams left
+        p = comp.analyze_games([team(a), team(b), team(c)])
+        self.assertEqual((p.games_seen, p.games_done, p.unfinished_games), (4, 3, 1))
+        self.assertEqual(p.last_game_end, self.T0 + timedelta(minutes=118))      # latest elimination, not game 4's first
+        # long after the close AND 30+ minutes after game 4's first elimination: still going
+        now = self.T0 + timedelta(minutes=96 + 40)
+        v = comp.decide_over(now=now, window_end=close, lobby=None, expected_games=None, progress=p)
+        self.assertFalse(v.over, v.reason)
+        v = comp.decide_over(now=now, window_end=close, lobby="set", expected_games=4, progress=p)
+        self.assertFalse(v.over, v.reason)
+        # game 4 gets its winner at minute 122: over only after the lobby then stays quiet for 30 minutes
+        c2 = [_sess("g4", self.at(118), 3)]
+        w = [_sess("g4", self.at(122), 1)]
+        p2 = comp.analyze_games([team(a), team(b), team(c2), team(w)])
+        self.assertEqual((p2.games_seen, p2.games_done, p2.unfinished_games), (4, 4, 0))
+        self.assertEqual(p2.last_winner_end, self.T0 + timedelta(minutes=122))
+        self.assertFalse(comp.decide_over(now=self.T0 + timedelta(minutes=140), window_end=close, lobby=None, expected_games=None, progress=p2).over)
+        v = comp.decide_over(now=self.T0 + timedelta(minutes=153), window_end=close, lobby=None, expected_games=None, progress=p2)
+        self.assertTrue(v.over)
+        self.assertEqual(v.over_at, self.T0 + timedelta(minutes=122))            # the winner's end, not the close
+        # a count that is reached while a further game is still under way does not finish it either
+        v = comp.decide_over(now=now, window_end=close, lobby="set", expected_games=3, progress=p)
+        self.assertFalse(v.over, v.reason)
+        # ...but a game whose winner never arrives is released by the safety valve, hours after the close
+        v = comp.decide_over(now=close + timedelta(hours=4), window_end=close, lobby=None, expected_games=None, progress=p)
+        self.assertTrue(v.over)
+
     def test_open_round_uses_the_close_plus_grace(self):
         close = self.T0
         p = comp.GameProgress()

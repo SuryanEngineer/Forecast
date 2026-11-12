@@ -42,26 +42,39 @@ def _parse(value) -> datetime | None:
 
 @dataclass
 class GameProgress:
-    games_seen: int = 0            # distinct games with at least one result
+    games_seen: int = 0            # distinct games with at least one result (a game in progress counts once a team is out)
     games_done: int = 0            # games 1..n ALL have a winner (n = this number)
-    last_game_end: datetime | None = None   # when the most recent game ended (any team)
-    last_winner_end: datetime | None = None  # when the latest game WITH a winner ended
+    # The latest time ANY team's result in ANY game was recorded: the most recent elimination or game end. While a game is
+    # being played this keeps moving as teams die, so "nothing has happened for a while" really means nothing is happening.
+    # (Do not confuse it with a game's FIRST elimination, which happens a minute after the game starts.)
+    last_game_end: datetime | None = None
+    last_winner_end: datetime | None = None  # when the latest game WITH a winner ended (the winner's own end time)
     winners_by_game: tuple = ()    # (game number, ended_at iso or None, has_winner)
+
+    @property
+    def unfinished_games(self) -> int:
+        """Games seen that have no winner yet (the one being played right now, or one whose winner was never recorded)."""
+        return max(0, self.games_seen - self.games_done)
 
 
 def analyze_games(entries: Iterable[dict]) -> GameProgress:
     """Progress from the leaderboard entries (each has `sessionHistory`: that team's games, with `endTime`, `sessionId` and
-    `trackedStats` carrying the in-game placement)."""
+    `trackedStats` carrying the in-game placement). A game is DONE only when some team's in-game placement is 1."""
     sessions: dict[str, dict] = {}
     for entry in entries:
         for i, session in enumerate((entry or {}).get("sessionHistory") or []):
             key = str(session.get("sessionId") or f"idx{i}")
-            slot = sessions.setdefault(key, {"ended": None, "winner": False})
+            slot = sessions.setdefault(key, {"ended": None, "last": None, "winner": False, "winner_end": None})
             ended = _parse(session.get("endTime"))
-            if ended is not None and (slot["ended"] is None or ended < slot["ended"]):
-                slot["ended"] = ended
+            if ended is not None:
+                if slot["ended"] is None or ended < slot["ended"]:
+                    slot["ended"] = ended          # earliest result = when the game's results start (ordering key)
+                if slot["last"] is None or ended > slot["last"]:
+                    slot["last"] = ended           # latest result in this game
             if _game_placement(session) == 1:
                 slot["winner"] = True
+                if ended is not None and (slot["winner_end"] is None or ended > slot["winner_end"]):
+                    slot["winner_end"] = ended
     if not sessions:
         return GameProgress()
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -72,12 +85,12 @@ def analyze_games(entries: Iterable[dict]) -> GameProgress:
             done += 1
         else:
             break
-    ends = [s["ended"] for _, s in ordered if s["ended"] is not None]
-    win_ends = [s["ended"] for _, s in ordered if s["winner"] and s["ended"] is not None]
+    lasts = [s["last"] for _, s in ordered if s["last"] is not None]
+    win_ends = [(s["winner_end"] or s["last"]) for _, s in ordered if s["winner"] and (s["winner_end"] or s["last"]) is not None]
     return GameProgress(
         games_seen=len(ordered),
         games_done=done,
-        last_game_end=max(ends) if ends else None,
+        last_game_end=max(lasts) if lasts else None,
         last_winner_end=max(win_ends) if win_ends else None,
         winners_by_game=tuple((n, s["ended"].isoformat() if s["ended"] else None, s["winner"]) for n, (_, s) in enumerate(ordered, start=1)),
     )
@@ -108,20 +121,34 @@ def decide_over(
             return Verdict(True, window_end, "lobbies closed and the last games have had time to finish")
         return Verdict(False, None, "lobbies are still open or closed too recently for the last games to finish")
 
+    # Safety valve shared by both set-lobby paths: long after the close, with nothing recorded for an hour, a game whose
+    # winner never arrived (cancelled / abandoned) must not leave the tournament unpaid forever.
+    stuck = (
+        window_end is not None and now >= window_end + SAFETY_AFTER_CLOSE and (quiet_for is None or quiet_for >= SAFETY_QUIET)
+    )
+
     if expected_games and expected_games > 0:
-        if progress.games_done >= expected_games:
+        # Over = every one of the published games has a winner AND no further game is under way without one.
+        if progress.games_done >= expected_games and progress.unfinished_games == 0:
             return Verdict(True, progress.last_winner_end or progress.last_game_end or window_end, f"game {expected_games} of {expected_games} has a winner")
-        if window_end is not None and now >= window_end + SAFETY_AFTER_CLOSE and (quiet_for is None or quiet_for >= SAFETY_QUIET):
+        if stuck:
             return Verdict(True, progress.last_game_end or window_end, f"only {progress.games_done} of {expected_games} games finished, but nothing has been played for an hour and the window closed 3h ago")
+        if progress.games_done >= expected_games:
+            return Verdict(False, None, "a game is still being played (no winner yet)")
         return Verdict(False, None, f"{progress.games_done} of {expected_games} games have a winner")
 
-    # No published game count: wait for the window to close, then for the games to stop.
+    # No published game count: wait for the window to close, then until the latest game has a winner and the lobby has gone
+    # quiet. A game being played right now (teams eliminated, no winner yet) NEVER counts as over, however long it runs.
     if window_end is None or now < window_end:
         return Verdict(False, None, "window still open")
     if progress.games_seen == 0:
         if now >= window_end + NO_GAMES_AFTER_CLOSE:
             return Verdict(True, window_end, "closed with no games recorded")
         return Verdict(False, None, "closed, waiting for results")
+    if progress.unfinished_games > 0:
+        if stuck:
+            return Verdict(True, progress.last_game_end or window_end, "a game never got a winner and nothing has been played for an hour, 3h after the close")
+        return Verdict(False, None, "the last game has no winner yet")
     if quiet_for is not None and quiet_for >= QUIET:
-        return Verdict(True, progress.last_game_end, "no game has finished for 30 minutes after the close")
-    return Verdict(False, None, "games still finishing after the close")
+        return Verdict(True, progress.last_winner_end or progress.last_game_end, "the last game has a winner and nothing has happened for 30 minutes after the close")
+    return Verdict(False, None, "the last game just finished; waiting in case another starts")
