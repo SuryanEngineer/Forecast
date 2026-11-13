@@ -48,7 +48,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.engine import payout_policy
+from app.engine import market_policy, payout_policy
 from app.engine.dividend_calculator import placement_payout_fraction
 from app.models.bot import BotProfile
 from app.models.dividend import DividendPayout, DividendPayoutStatus
@@ -117,7 +117,9 @@ BELIEF_EPOCH_SECONDS = 6 * 3600  # a bot's private beliefs drift (interpolated) 
 
 # Market makers
 MM_COVERAGE = 1            # every active player is quoted by at least this many makers
-MM_PLAYERS_PER_TICK = 6
+MM_PLAYERS_PER_TICK = 40   # how many of its players a maker LOOKS at per tick (cheap, in memory); BOT_MM_PLAYERS_PER_TICK caps the re-quotes
+MM_QUOTE_TOLERANCE = 0.005 # a standing maker quote this close (fraction of price) to where it would quote now is left alone
+REST_QUOTE_TOLERANCE = 0.01  # same for the directional bots' standing quotes
 MM_PLAYERS_PER_MAKER = 25  # how many players one maker can reasonably cover (drives the minimum maker count)
 MM_MIN_MAKERS = 8
 MM_MAX_SKEW = 0.01         # mid leans toward fair value by at most 3%
@@ -814,6 +816,8 @@ def _personality(user_id: uuid.UUID, strategy: str) -> dict:
         "attention": r.randint(8, 16),
         "max_open": r.randint(5, 12),
         "max_takes": r.randint(1, 2),
+        # How far past the fee this bot's standing quotes sit from its own value (0.05% - 0.35%), so quotes differ a little.
+        "quote_slack": r.uniform(0.0005, 0.0035),
         "cap": POSITION_CAP.get(strategy, POSITION_CAP["default"]) * (0.8 + 0.4 * r.random()),
     }
 
@@ -1113,19 +1117,18 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
         # last trade (it thinks the stock is cheap) or an ask below it (it thinks it is dear) is exactly what moves the
         # listed price (see book_price_service).
         reach = _band(px, v, floor=0.03)
-        bid = min(v * (1.0 - m), px * (1.0 + reach))
-        ask = max(v * (1.0 + m), px * (1.0 - reach))
-        # A bot that thinks the stock is dear (or cheap) still leaves a low (high) standing quote at the edge of the
-        # range instead of no quote, so the book always has both sides.
-        bid = max(bid, REST_FLOOR * px)
-        ask = min(ask, REST_CEIL * px)
+        # Standing quotes sit a hair (the fee plus a little) either side of the bot's OWN value, not at its wide "required
+        # edge" (`m`, which only decides when it takes someone else's price). A bot that thinks the stock is dear (or cheap)
+        # still leaves a low (high) standing quote at the edge of the range instead of no quote, so the book has both sides.
+        fee = float(params.get("transaction_fee_pct", 0.0025))
+        bid, ask = market_policy.resting_quote_prices(v, px, fee + pers["quote_slack"], reach, REST_FLOOR, REST_CEIL)
         pos = holdings.get(pid)
         can_ask = ask > 0 and pos is not None and pos.available_quantity > 0
         can_bid = bid > 0 and cash / portfolio > MIN_CASH_FRACTION and position_room(pid, px) > bid
 
         existing = by_player.get(pid, [])
-        has_bid = any(o.side == OrderSide.BUY and o.limit_price is not None and abs(float(o.limit_price) - bid) <= 0.03 * bid for o in existing) if bid else True
-        has_ask = any(o.side == OrderSide.SELL and o.limit_price is not None and abs(float(o.limit_price) - ask) <= 0.03 * ask for o in existing) if ask else True
+        has_bid = any(o.side == OrderSide.BUY and o.limit_price is not None and abs(float(o.limit_price) - bid) <= REST_QUOTE_TOLERANCE * bid for o in existing) if bid else True
+        has_ask = any(o.side == OrderSide.SELL and o.limit_price is not None and abs(float(o.limit_price) - ask) <= REST_QUOTE_TOLERANCE * ask for o in existing) if ask else True
         need_bid = can_bid and not has_bid
         need_ask = can_ask and not has_ask
         if not (need_bid or need_ask):
@@ -1238,10 +1241,12 @@ def _run_liquidity_provider(db: Session, bot_user, profile_row, snapshot: Market
                 except ServiceError:
                     pass
 
-    # Players with no quotes at all go first, then the rest in random order.
+    # Players with no quotes at all go first (the most-watched ones first), then the already-quoted ones in random order so
+    # every stale quote gets looked at in turn. Looking is cheap; only an actual re-quote spends the BOT_MM_PLAYERS_PER_TICK budget.
     rng.shuffle(assigned)
-    assigned.sort(key=lambda pid: 1 if by_player.get(pid) else 0)
-    targets = assigned[:MM_PLAYERS_PER_TICK]
+    unquoted = sorted((pid for pid in assigned if not by_player.get(pid)), key=lambda pid: -snapshot.popularity.get(pid, 1.0))
+    quoted = [pid for pid in assigned if by_player.get(pid)]
+    targets = (unquoted + quoted)[:MM_PLAYERS_PER_TICK]
 
     for pid in targets:
         if mm_budget["mm"] <= 0:
@@ -1253,7 +1258,9 @@ def _run_liquidity_provider(db: Session, bot_user, profile_row, snapshot: Market
         skew = _clamp(math.log(float(fair) / float(price)), -MM_MAX_SKEW, MM_MAX_SKEW) if fair > 0 else 0.0
         mid = price * Decimal(str(round(1 + skew, 6)))
         vol = abs(float(snapshot.pct_change.get(pid, 0)))
-        spread = params["mm_spread_offset"] * Decimal(str(round(1 + min(2.0, vol * 8), 4)))
+        # Half-spread = the fee plus a small edge (what a trader who values the share at `mid` and pays the whole fee would
+        # accept), widened at most 1.5x after a sharp move. Not the old wide mm_spread_offset.
+        spread = Decimal(str(round(market_policy.maker_half_spread(float(params["transaction_fee_pct"]), float(params["mm_edge"]), vol), 6)))
         bid = (mid * (Decimal("1") - spread)).quantize(Decimal("0.01"))
         ask = (mid * (Decimal("1") + spread)).quantize(Decimal("0.01"))
         if bid <= 0 or ask <= bid:
@@ -1263,7 +1270,7 @@ def _run_liquidity_provider(db: Session, bot_user, profile_row, snapshot: Market
         position = state.positions.get(pid)
         have = position.available_quantity if position is not None else 0
 
-        tol = price * spread
+        tol = price * max(spread, Decimal(str(MM_QUOTE_TOLERANCE)))
         bid_ok = any(o.side == OrderSide.BUY and o.limit_price is not None and abs(o.limit_price - bid) <= tol for o in existing)
         ask_ok = any(o.side == OrderSide.SELL and o.limit_price is not None and abs(o.limit_price - ask) <= tol for o in existing)
         if bid_ok and (ask_ok or have == 0):
@@ -1314,6 +1321,8 @@ def _load_params(db: Session) -> dict[str, Decimal]:
         "bots.max_liquidity_take_fraction",
         "bots.mm_quote_size_fraction",
         "bots.mm_spread_offset",
+        "bots.mm_edge",
+        "fees.transaction_fee_pct",
     ]
     return {key.split(".", 1)[1]: economic_params_service.get_param(db, key) for key in keys}
 

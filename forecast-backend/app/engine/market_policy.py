@@ -167,6 +167,30 @@ def house_quote_refs(
     return bid_ref, ask_ref
 
 
+# --- how bots quote ---------------------------------------------------------------------------------------------------
+#
+# A trader who values a share at V, and pays the whole fee when their order is the one that takes, is happy to buy at about
+# V x (1 - fee) and sell at about V x (1 + fee). So a bot's STANDING quotes sit a hair either side of its own value; the
+# wider "required edge" a bot demands is only for deciding to TAKE a price someone else is showing. Bots disagree about V, so
+# some quotes overlap (those trade) and the rest sit close together (a thin spread).
+
+
+def resting_quote_prices(
+    value: float, px: float, edge: float, reach: float, floor: float = 0.85, ceil: float = 1.25
+) -> tuple[float, float]:
+    """(bid, ask) a bot leaves standing on one stock: its value less / plus `edge` (the fee plus a hair), kept within `reach`
+    (a fraction) of the current price `px` and between floor x px and ceil x px."""
+    bid = min(value * (1.0 - edge), px * (1.0 + reach))
+    ask = max(value * (1.0 + edge), px * (1.0 - reach))
+    return max(bid, floor * px), min(ask, ceil * px)
+
+
+def maker_half_spread(fee: float, edge: float, move: float, vol_gain: float = 4.0, max_mult: float = 1.5) -> float:
+    """Half-spread a market maker quotes: the fee plus a small edge, widened a little (at most `max_mult` x) when the stock
+    has just moved `move` (a fraction)."""
+    return (fee + edge) * (1.0 + min(max_mult - 1.0, abs(move) * vol_gain))
+
+
 # --- reference price -------------------------------------------------------------------------------------------------
 
 

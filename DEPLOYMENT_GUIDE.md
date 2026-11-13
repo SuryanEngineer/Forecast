@@ -565,12 +565,15 @@ The order books live in memory, so exactly one backend instance may match orders
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BOT_TICK_INTERVAL_SECONDS` | 20 | seconds between bot ticks |
-| `BOT_ACTIONS_PER_TICK` | 2 | max orders the whole bot population places per tick |
-| `BOT_MM_PLAYERS_PER_TICK` | 2 | max market-maker re-quotes per tick |
+| `BOT_TICK_INTERVAL_SECONDS` | 10 | seconds between bot ticks |
+| `BOT_ACTIONS_PER_TICK` | 3 | max orders the whole bot population places per tick |
+| `BOT_MM_PLAYERS_PER_TICK` | 6 | max market-maker re-quotes per tick |
+| `BOT_FLOW_TRADES_PER_TICK` | 3 | tiny background trades per tick |
 | `BOT_STATE_REFRESH_SECONDS` | 900 | how often bot wallets/holdings are re-read (cached in between) |
 
-Every order costs the database a few KB of reads, so these are the dials for Supabase's free 5 GB/month egress. Watch **Supabase → Settings → Usage** for a day: if egress is trending above ~150 MB/day, double `BOT_TICK_INTERVAL_SECONDS` or halve `BOT_ACTIONS_PER_TICK`; if you are far below, raise them for a livelier feed.
+Every order costs the database a few KB of reads, so these are the dials for Supabase egress. On the Pro plan (250 GB/month, about 8 GB/day) the old pace used about 1.5 GB/day; the defaults above are roughly 3x the old order rate. Watch **Supabase → Settings → Usage** for a day: if total egress is trending above ~5 GB/day, halve `BOT_ACTIONS_PER_TICK` or double `BOT_TICK_INTERVAL_SECONDS`; if you are far below, raise them for tighter books.
+
+Bots quote close to their own valuation: a standing bid/ask sits the transaction fee plus a small edge either side of a bot's value (market makers: `bots.mm_edge`, default 0.15%), so spreads are a few tenths of a percent where bots have quotes up.
 
 **Disk guard.** A background job prunes bot-only history: bot-vs-bot trades, bot wallet ledger rows and finished bot orders older than `RETENTION_BOT_TRADE_DAYS` (3), bot share-ledger rows older than `RETENTION_SHARE_LEDGER_DAYS` (30), and thins price history older than `RETENTION_SNAPSHOT_DAYS` (14) to one point per player per hour. Nothing a human did is ever deleted. Turn it off with `RETENTION_ENABLED=false`.
 

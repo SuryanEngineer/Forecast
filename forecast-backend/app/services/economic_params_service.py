@@ -197,6 +197,11 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "For the liquidity_provider archetype: fraction of its cash (bid side) or holding (ask side, x4) "
         "quoted per player per tick.",
     ),
+    "bots.mm_edge": (
+        Decimal("0.0015"),
+        "Market makers quote their value minus/plus (transaction fee + this edge) on each side, so the spread they leave "
+        "is about twice (fee + edge). Replaces the old wide mm_spread_offset.",
+    ),
     "bots.mm_spread_offset": (
         Decimal("0.02"),
         "For the liquidity_provider archetype: half-spread around the current price for its bid/ask quotes.",

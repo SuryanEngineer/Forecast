@@ -200,14 +200,16 @@ class Settings(BaseSettings):
     # Only the web-server process holding the 'market' lease matches orders / runs bots / pays dividends (see
     # app/services/lease_service.py). Turn off only for single-process local debugging.
     MARKET_LEASE_ENABLED: bool = True
-    BOT_TICK_INTERVAL_SECONDS: int = 20
-    BOT_ACTIONS_PER_TICK: int = 2  # cap on orders the whole bot population places per tick (each costs DB egress)
+    # Pace (Supabase Pro: 250 GB/month egress; the old pace used ~1.5 GB/day). This is about 3x the old orders per minute:
+    # a tick every 10 s (was 20) placing up to 3 orders (was 2) and re-quoting up to 6 market-maker players (was 2).
+    BOT_TICK_INTERVAL_SECONDS: int = 10
+    BOT_ACTIONS_PER_TICK: int = 3  # cap on orders the whole bot population places per tick (each costs DB egress)
     # Small "flow" trades per tick (1-4 shares each, spread over the whole market, weighted toward the pricier stocks): the
     # steady background trading of a real market. Each one nudges the price by a fraction of a percent, so charts show
     # frequent little bumps instead of long flat stretches without adding volatility. More = livelier charts and more database
     # traffic (egress); 0 turns it off.
-    BOT_FLOW_TRADES_PER_TICK: int = 6
-    BOT_MM_PLAYERS_PER_TICK: int = 2  # cap on market-maker player re-quotes per tick
+    BOT_FLOW_TRADES_PER_TICK: int = 3  # per 10 s tick = the same 6 trades per 20 s as before
+    BOT_MM_PLAYERS_PER_TICK: int = 6  # cap on market-maker player re-quotes per tick
     BOT_STATE_REFRESH_SECONDS: int = 900  # how often bots' cash/holdings/open orders are re-read from the DB (cached between)
     # Disk guard (Supabase free plan = 500 MB): bot-only history older than this is pruned -- see retention_service.py
     RETENTION_ENABLED: bool = True
