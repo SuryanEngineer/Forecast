@@ -19,7 +19,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.dividend import DividendPayout
+from app.models.dividend import DividendPayout, DividendPayoutStatus
 from app.models.tournament import PlacementResult, ResultSource, Tournament, TournamentStatus, TournamentType
 from app.services import dividend_service
 
@@ -197,5 +197,21 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
 
     for payout in new_payouts:
         enqueue_dividend_payout(str(payout.id))
+
+    if not new_payouts:
+        # Nothing new to pay (a reopened tournament whose players were all paid already): processing a payout is what normally
+        # marks the tournament FINALIZED, so with none to process it would stay "results pending" forever. Close it here.
+        t = db.get(Tournament, tournament_id)
+        if t is not None:
+            db.refresh(t)
+        if t is not None and t.status != TournamentStatus.FINALIZED:
+            unfinished = (
+                db.query(DividendPayout)
+                .filter(DividendPayout.tournament_id == tournament_id, DividendPayout.status != DividendPayoutStatus.COMPLETED)
+                .count()
+            )
+            if unfinished == 0:
+                t.status = TournamentStatus.FINALIZED
+                db.commit()
 
     return new_payouts
