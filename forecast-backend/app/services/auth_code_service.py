@@ -81,7 +81,8 @@ def prune(db: Session) -> int:
     import time
 
     global _LAST_PRUNE
-    if time.monotonic() - _LAST_PRUNE < 1800:
+    # 0.0 means "never pruned". (monotonic() counts from boot, so on a freshly started machine it can be under 1800 s.)
+    if _LAST_PRUNE and time.monotonic() - _LAST_PRUNE < 1800:
         return 0
     _LAST_PRUNE = time.monotonic()
     cutoff = _now() - timedelta(days=7)
