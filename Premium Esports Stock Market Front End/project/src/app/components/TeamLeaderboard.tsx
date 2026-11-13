@@ -475,8 +475,9 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
   // Live: open on the newest game (the one being played) unless the viewer picked another.
   const game = data.games.find(g => g.game === selected) ?? (live ? data.games[data.games.length - 1] : data.games[0]);
   // "In progress" only while the tournament itself is live; in a finished one a game without a winner is just incomplete data.
-  const inProgress = live && game.complete === false;
-  const noWinner = !live && game.complete === false;
+  const unreported = game.reported === false;                  // never got a winner and never will (cancelled / never reported)
+  const inProgress = !unreported && game.complete === false;   // still being played: the server says it can still get a winner
+  const noWinner = false;
   // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
   const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
 
@@ -497,11 +498,19 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
               color: g.game === game.game ? '#06101a' : 'var(--foreground)',
             }}
           >
-            {g.game}{g.complete === false ? ' •' : ''}
+            {g.game}{g.reported === false ? ' ⚠' : g.complete === false ? ' •' : ''}
           </button>
         ))}
       </div>
-      {inProgress ? (
+      {unreported ? (
+        <div className="rounded-xl p-4" style={{ background: 'var(--muted)' }}>
+          <p className="text-foreground font-semibold" style={{ fontSize: 13 }}>Game {game.game}: results were never properly reported</p>
+          <p className="text-muted-foreground mt-1" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+            This game never produced a winner (it was cancelled or its results never came through), so it doesn&rsquo;t count toward the
+            tournament or any dividends. If results for it appear later, this tournament goes back to live and updates.
+          </p>
+        </div>
+      ) : inProgress ? (
         <p style={{ fontSize: 11.5, color: '#ff4757', fontWeight: 600 }}>
           Game {game.game} in progress &middot; {game.teams.length} team{game.teams.length === 1 ? '' : 's'} eliminated so far
           <span className="text-muted-foreground" style={{ fontWeight: 400 }}> — the leaderboard fills upward as more teams are knocked out.</span>
@@ -513,7 +522,7 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
         </p>
       )}
 
-      <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
+      {!unreported && <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
         <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
           <span>Place</span><span>Team</span><span className="text-right">Elims</span>{!compact && <><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span></>}<span className="text-right">Final</span>
         </div>
@@ -548,7 +557,7 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
             <span className="font-mono text-muted-foreground text-right" style={{ fontSize: 12 }}>#{t.final_placement}</span>
           </div>
         ))}
-      </div>
+      </div>}
     </div>
   );
 }

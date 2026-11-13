@@ -153,6 +153,11 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
 
     pool_ctx = dividend_service.PoolContext(db, tournament)  # parameters loaded once, not once per placement
     new_payouts: list[DividendPayout] = []
+    # A tournament REOPENED because results arrived after it was closed (see osirion_service.reopen_if_late_results) pays the
+    # people who were already paid only the DIFFERENCE their new total is worth. Any other tournament keeps the old rule:
+    # an existing payout is final.
+    reopened = bool((tournament.format_rules or {}).get("reopened"))
+    paid_at = dividend_service.tournament_finished_at(db, tournament) if reopened else None
     for result in results:
         existing_payout = (
             db.query(DividendPayout)
@@ -160,6 +165,8 @@ def finalize_tournament(db: Session, tournament_id: uuid.UUID) -> list[DividendP
             .one_or_none()
         )
         if existing_payout is not None:
+            if reopened:
+                dividend_service.top_up_payout(db, tournament, existing_payout, pool_ctx.pool_for(result, max_placement), paid_at)
             continue
         payout = dividend_service.create_payout_for_placement(db, tournament, result, max_placement, pool_ctx)
         new_payouts.append(payout)

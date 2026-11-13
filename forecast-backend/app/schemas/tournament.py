@@ -246,6 +246,9 @@ class GameResultsResponse(BaseModel):
     # False while the game is still being played: no team has reached in-game placement 1 yet, so `teams` holds only
     # the teams eliminated so far (the lowest placements, filling upward as more teams die).
     complete: bool = True
+    # False for a game that never got a winner AND never will: the tournament is over (or later games finished) without it,
+    # so it was cancelled or its results were never properly reported. Its partial `teams` are withheld.
+    reported: bool = True
     teams: list[GameTeamRowResponse]  # ranked by in-game placement
 
 

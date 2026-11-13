@@ -191,6 +191,45 @@ def process_payout(db: Session, payout_id: uuid.UUID) -> DividendPayout:
     return payout
 
 
+def top_up_payout(db: Session, tournament: Tournament, payout: DividendPayout, new_pool: Decimal, paid_at: datetime) -> Decimal:
+    """Raise an ALREADY-PAID payout to `new_pool` (a tournament that was reopened because more results arrived) by paying each
+    holder at the record date only the DIFFERENCE, as ordinary dated dividend credits. Never takes money back: a pool that
+    would shrink is left alone. Idempotent: once the payout carries `new_pool`, running it again pays nothing. Returns the total
+    extra paid. The caller commits."""
+    old_pool = Decimal(str(payout.total_pool_amount))
+    if payout.status != DividendPayoutStatus.COMPLETED or new_pool <= old_pool:
+        return Decimal("0")
+    record_date = tournament.start_time
+    held = position_service.holdings_at(db, payout.player_id, record_date) if record_date is not None else {}
+    holders = [(str(uid), Decimal(qty)) for uid, qty in held.items()]
+    fee_pct = economic_params_service.get_param(db, "dividend.platform_fee_pct")
+    per_share, amounts, fee = compute_dividend_distribution(
+        pool_amount=new_pool, shares_outstanding=Decimal(payout.shares_outstanding_snapshot), holders=holders, platform_fee_pct=fee_pct,
+    )
+    items = {str(li.user_id): li for li in db.query(DividendLineItem).filter(DividendLineItem.payout_id == payout.id).all()}
+    extra = Decimal("0")
+    for uid, amount in sorted(amounts):               # fixed wallet order: concurrent jobs queue instead of deadlocking
+        li = items.get(uid)
+        delta = Decimal(amount) - (Decimal(str(li.amount_paid)) if li is not None else Decimal("0"))
+        if delta <= 0:
+            continue
+        user_id = uuid.UUID(uid)
+        entry = wallet_service.credit_dividend(db, user_id, delta, payout.id, occurred_at=paid_at)
+        if li is not None:
+            li.amount_paid = Decimal(str(li.amount_paid)) + delta
+        else:
+            db.add(DividendLineItem(
+                id=uuid.uuid4(), payout_id=payout.id, user_id=user_id, quantity_held_snapshot=held.get(user_id, 0),
+                amount_paid=delta, ledger_entry_id=entry.id, created_at=paid_at,
+            ))
+        extra += delta
+    payout.total_pool_amount = new_pool
+    payout.per_share_amount = per_share
+    payout.platform_fee_amount = fee
+    db.flush()
+    return extra
+
+
 def _maybe_finalize_tournament(db: Session, tournament_id: uuid.UUID) -> None:
     remaining = (
         db.query(DividendPayout)

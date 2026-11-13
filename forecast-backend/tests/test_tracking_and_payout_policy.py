@@ -245,6 +245,35 @@ class TestCompletion(unittest.TestCase):
         v = comp.decide_over(now=self.T0 + timedelta(minutes=59), window_end=close, lobby=None, expected_games=None, progress=comp.analyze_games([team(a[:1])]))
         self.assertFalse(v.over)
 
+    def test_late_results_reopen_decision(self):
+        a = [_sess("g1", self.at(27), 1), _sess("g2", self.at(55), 1), _sess("g3", self.at(82), 1)]
+        b = [_sess("g4", self.at(96), 90)]
+        closed = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b}])      # game 4 never got a winner
+        stored = {"games_seen": closed.games_seen, "games_done": closed.games_done, "last_game_end": closed.last_game_end.isoformat(), "unfinished": closed.unfinished_games}
+        self.assertTrue(comp.left_unreported(stored))
+        self.assertFalse(comp.left_unreported({"games_seen": 4, "games_done": 4, "unfinished": 0}))
+        # the very same data again: nothing new, so it stays closed
+        self.assertFalse(comp.has_new_results(stored, closed))
+        # more teams eliminated in game 4 later on: reopen
+        later = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b + [_sess("g4", self.at(110), 40)]}])
+        self.assertTrue(comp.has_new_results(stored, later))
+        # game 4 gets its winner: reopen
+        won = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b + [_sess("g4", self.at(96), 1)]}])
+        self.assertTrue(comp.has_new_results(stored, won))
+        # a brand-new game 5 appears: reopen
+        g5 = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b + [_sess("g5", self.at(130), 70)]}])
+        self.assertTrue(comp.has_new_results(stored, g5))
+
+    def test_unfinished_game_rule_end_to_end(self):
+        """closed -> (hour of nothing) over -> late result -> not over again (back to live)."""
+        close = self.T0 + timedelta(minutes=60)
+        a = [_sess("g1", self.at(27), 1), _sess("g2", self.at(55), 1)]
+        b = [_sess("g3", self.at(96), 90)]
+        p = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b}])
+        self.assertTrue(comp.decide_over(now=self.T0 + timedelta(minutes=96 + 61), window_end=close, lobby=None, expected_games=None, progress=p).over)
+        p2 = comp.analyze_games([{"sessionHistory": a}, {"sessionHistory": b + [_sess("g3", self.at(150), 50)]}])
+        self.assertFalse(comp.decide_over(now=self.T0 + timedelta(minutes=96 + 61), window_end=close, lobby=None, expected_games=None, progress=p2).over)
+
     def test_open_round_uses_the_close_plus_grace(self):
         close = self.T0
         p = comp.GameProgress()

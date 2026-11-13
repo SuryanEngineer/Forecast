@@ -44,7 +44,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
@@ -1007,6 +1007,9 @@ def sync_tournament(
                     "games_seen": progress.games_seen, "games_done": progress.games_done, "over": verdict.over,
                     "over_at": verdict.over_at.isoformat() if verdict.over_at else None, "reason": verdict.reason,
                     "last_game_end": progress.last_game_end.isoformat() if progress.last_game_end else None,
+                    # Games that never got a winner (cancelled / never reported). They are ignored for payouts; if more results
+                    # for them show up later, reopen_if_late_results puts the tournament back to live.
+                    "unfinished": progress.unfinished_games,
                 }
                 if rules.get("progress") != state:
                     rules["progress"] = state
@@ -1698,7 +1701,79 @@ def sync_all_tracked(db: Session) -> list[SyncResult]:
             db.rollback()
             logger.exception("sync_tournament itself raised for mapping %s", mapping.id)
             results.append(SyncResult(tournament_id=mapping.tournament_id, error=f"unexpected error: {exc}"))
+    try:
+        reopen_if_late_results(db)
+    except Exception:  # noqa: BLE001 -- bookkeeping must never break the sync pass
+        db.rollback()
+        logger.exception("late-results check failed")
     return results
+
+
+# A tournament closed with a game that never got a winner is re-checked for this long after it ended, in case Osirion reports
+# the missing results late. Checked at most this often per tournament (a closed lobby is one small page, but be polite).
+LATE_RESULTS_WATCH = timedelta(hours=24)
+LATE_RESULTS_EVERY = 300.0   # seconds
+_late_checked_at: dict = {}
+
+
+def reopen_if_late_results(db: Session) -> int:
+    """Put a CLOSED tournament back to live if results arrive for it after all.
+
+    A tournament is closed once nothing new has been recorded for an hour after its window ended, even if its last game never
+    got a winner (cancelled, or the data never arrived). Those closed-with-an-unfinished-game tournaments are re-checked for 24
+    hours: if the leaderboard now shows more games, more winners or newer results than were stored when it closed, it is reopened
+    (status back to results-pending, flagged `reopened`) so the normal sync re-pulls it, waits for the last game's winner under the
+    usual rules, and on finishing pays only the difference to whoever was already paid. Returns how many were reopened."""
+    import time
+
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(OsirionTournamentMapping, Tournament)
+        .join(Tournament, Tournament.id == OsirionTournamentMapping.tournament_id)
+        .filter(Tournament.status == TournamentStatus.FINALIZED, Tournament.is_historical_archive.is_(False))
+        .filter(Tournament.end_time.isnot(None), Tournament.end_time > now - LATE_RESULTS_WATCH - timedelta(hours=6))
+        .all()
+    )
+    reopened = 0
+    for mapping, tournament in rows:
+        rules = dict(tournament.format_rules or {})
+        stored = rules.get("progress") or {}
+        if not stored.get("over") or rules.get("lobby") == format_policy.LOBBY_OPEN:
+            continue
+        if not completion.left_unreported(stored):
+            continue   # every game it saw had a winner: nothing was left unreported
+        last_end = completion._parse(stored.get("last_game_end"))
+        anchor = last_end or tournament.end_time
+        if anchor is None or now - anchor > LATE_RESULTS_WATCH:
+            continue
+        key = str(tournament.id)
+        if time.monotonic() - _late_checked_at.get(key, 0.0) < LATE_RESULTS_EVERY:
+            continue
+        _late_checked_at[key] = time.monotonic()
+
+        entries: list[dict] = []
+        page, total_pages = 0, 1
+        while page < total_pages and page < 40:
+            lb = osirion_client.get_leaderboard_page(mapping.leaderboard_event_id, mapping.leaderboard_event_window_id, page=page)
+            total_pages = lb.get("totalPages") or 1
+            entries.extend(lb.get("entries", []))
+            page += 1
+        progress = completion.analyze_games(entries)
+        if not completion.has_new_results(stored, progress):
+            continue
+        rules["progress"] = {
+            "games_seen": progress.games_seen, "games_done": progress.games_done, "over": False,
+            "over_at": None, "reason": "more results were reported after it closed; waiting for the last game's winner",
+            "last_game_end": progress.last_game_end.isoformat() if progress.last_game_end else None,
+            "unfinished": progress.unfinished_games,
+        }
+        rules["reopened"] = True
+        tournament.format_rules = rules
+        tournament.status = TournamentStatus.RESULTS_PENDING
+        db.commit()
+        reopened += 1
+        logger.info("Tournament %s (%s) reopened: results arrived after it was closed", tournament.id, tournament.name)
+    return reopened
 
 
 # --- Announced-but-not-yet-tracked events (calendar completeness) ---------------------------------------------------

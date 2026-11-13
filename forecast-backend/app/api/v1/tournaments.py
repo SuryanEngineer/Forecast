@@ -477,8 +477,11 @@ def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)
     """Every game (match) of the tournament, each with ALL teams ranked by their placement in that game plus
     their eliminations / time alive / damage -- built from the per-game `sessionHistory` stored on each team's
     PlacementResult.raw_stats. Games are identified by Osirion's sessionId and numbered by end time."""
-    if db.get(Tournament, tournament_id) is None:
+    tournament = db.get(Tournament, tournament_id)
+    if tournament is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tournament not found")
+    # Over = nothing more is coming for the games it has (finalized, or the completion rule released it).
+    tournament_over = tournament.status == TournamentStatus.FINALIZED or bool(((tournament.format_rules or {}).get("progress") or {}).get("over"))
 
     rows = (
         db.query(PlacementResult, Player)
@@ -538,6 +541,13 @@ def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)
                 teams=team_rows,
             )
         )
+    # A game with no winner is only "in progress" while it can still get one. Once the tournament is over, or a LATER game has
+    # a winner, it is a game that was never properly reported: say so and withhold its partial results.
+    last_complete = max((g.game for g in games if g.complete), default=0)
+    for g in games:
+        if not g.complete and (tournament_over or g.game < last_complete):
+            g.reported = False
+            g.teams = []
     return TournamentGamesResponse(tournament_id=tournament_id, games=games)
 
 

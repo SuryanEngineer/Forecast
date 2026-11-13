@@ -96,6 +96,22 @@ def analyze_games(entries: Iterable[dict]) -> GameProgress:
     )
 
 
+def left_unreported(stored: dict | None) -> bool:
+    """Did the stored progress close the tournament with a game that never got a winner?"""
+    s = stored or {}
+    return bool(s.get("unfinished")) or (s.get("games_seen") or 0) > (s.get("games_done") or 0)
+
+
+def has_new_results(stored: dict | None, progress: GameProgress) -> bool:
+    """Compared with what was stored when the tournament was closed, has the leaderboard since gained a game, a winner, or any
+    newer result? (30 s of slack, so timestamp rounding never counts as news.)"""
+    s = stored or {}
+    last_end = _parse(s.get("last_game_end"))
+    newer = progress.last_game_end is not None and (last_end is None or progress.last_game_end > last_end + timedelta(seconds=30))
+    more = progress.games_seen > (s.get("games_seen") or 0) or progress.games_done > (s.get("games_done") or 0)
+    return newer or more
+
+
 @dataclass
 class Verdict:
     over: bool

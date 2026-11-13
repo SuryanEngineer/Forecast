@@ -380,6 +380,8 @@ export interface GameResultsResponse {
   ended_at: string | null;
   /** false while the game is being played: `teams` is then only the teams eliminated so far. */
   complete?: boolean;
+  /** false: the game never got a winner and never will (cancelled / never properly reported); `teams` is then empty. */
+  reported?: boolean;
   teams: GameTeamRowResponse[];
 }
 
