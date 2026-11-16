@@ -216,7 +216,7 @@ def reference_after_trade(
 CONSENSUS_MIN_TRADES = 4
 CONSENSUS_MIN_ACCOUNTS = 3
 CONSENSUS_WEIGHT_CAP = 200
-CONSENSUS_PULL = D("0.25")         # fraction of the gap closed per pass
+CONSENSUS_PULL = D("0.40")       # fraction of the gap closed per pass
 
 
 def trade_consensus(

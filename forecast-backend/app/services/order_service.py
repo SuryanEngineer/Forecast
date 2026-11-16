@@ -164,7 +164,7 @@ def _update_reference(db: Session, player: Player, ctx: _MarketContext, fill_pri
 
 
 _CONSENSUS_STATE: dict[str, float] = {"last": 0.0}
-CONSENSUS_INTERVAL_SECONDS = 300.0
+CONSENSUS_INTERVAL_SECONDS = 120.0
 CONSENSUS_WINDOW_HOURS = 6
 
 

@@ -51,21 +51,21 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "Highest price a stock's reference price / limit orders may take, as a multiple of its dividend-based fair price.",
     ),
     "market.reference_damping_fraction": (
-        Decimal("0.01"),
+        Decimal("0.004"),
         "A trade moves the reference price all the way to its price only when it is at least this fraction of the "
         "stock's shares; smaller trades move it proportionally less (so a 1-share trade barely moves anything).",
     ),
     "market.reference_damping_min": (
-        Decimal("100"),
+        Decimal("30"),
         "Floor, in shares, on the size at which a trade fully resets the reference price.",
     ),
     "market.calm_hourly_move": (
-        Decimal("0.02"),
+        Decimal("0.08"),
         "Outside tournament windows, a stock's reference price may move at most this fraction per hour (trades can still "
         "happen at any price inside the band; the reference just follows slowly). Keeps a quiet market calm.",
     ),
     "market.event_hourly_move": (
-        Decimal("0.12"),
+        Decimal("0.35"),
         "The same limit while a tournament is about to start, running, or has just finished (prices are allowed to "
         "move around events).",
     ),
@@ -260,8 +260,23 @@ def get_tournament_pool(db: Session, tournament_type: str, region: str | None = 
     return base * get_region_multiplier(db, region)
 
 
+# Old default -> new default for knobs retuned for a livelier market. An existing row is moved to the new value only if it
+# still holds the old default AND no admin ever edited it, so deliberate admin changes are never overwritten.
+RETUNED: dict[str, tuple[Decimal, Decimal]] = {
+    "market.calm_hourly_move": (Decimal("0.02"), Decimal("0.08")),
+    "market.event_hourly_move": (Decimal("0.12"), Decimal("0.35")),
+    "market.reference_damping_fraction": (Decimal("0.01"), Decimal("0.004")),
+    "market.reference_damping_min": (Decimal("100"), Decimal("30")),
+}
+
+
 def get_param(db: Session, key: str) -> Decimal:
     row = db.get(PlatformParameter, key)
+    if row is not None and key in RETUNED and row.updated_by_admin_id is None:
+        old, new = RETUNED[key]
+        if row.value == old:
+            row.value = new
+            db.flush()
     if row is None:
         if key not in DEFAULTS:
             raise KeyError(f"Unknown platform parameter '{key}'")

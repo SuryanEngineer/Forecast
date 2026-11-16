@@ -41,6 +41,7 @@ def bulk_best_quotes(db: Session, player_ids: list[uuid.UUID] | None = None) -> 
     out: dict[uuid.UUID, list[Decimal | None]] = {}
     if player_ids is not None and not player_ids:
         return {}
+    wanted = set(player_ids) if player_ids is not None and len(player_ids) > 150 else None  # skip huge IN lists
     for side, agg, idx in ((OrderSide.BUY, func.max, 0), (OrderSide.SELL, func.min, 1)):
         q = db.query(Order.player_id, agg(Order.limit_price)).filter(
             Order.status.in_(_OPEN),
@@ -50,9 +51,11 @@ def bulk_best_quotes(db: Session, player_ids: list[uuid.UUID] | None = None) -> 
             _remaining() > 0,
             _remaining() * Order.limit_price >= MIN_NOTIONAL,
         )
-        if player_ids is not None:
+        if player_ids is not None and len(player_ids) <= 150:
             q = q.filter(Order.player_id.in_(player_ids))
         for pid, price in q.group_by(Order.player_id).all():
+            if wanted is not None and pid not in wanted:
+                continue
             out.setdefault(pid, [None, None])[idx] = price
     return {pid: (v[0], v[1]) for pid, v in out.items()}
 

@@ -28,10 +28,10 @@ from sqlalchemy.orm import Session
 from app.models.tournament import PlacementResult, Tournament, TournamentStatus, TournamentType
 
 MISSED_PENALTY: dict[TournamentType, float] = {
-    TournamentType.FNCS_QUALIFIER: 0.02,
-    TournamentType.FNCS_FINALS: 0.04,
-    TournamentType.MAJOR: 0.03,
-    TournamentType.GLOBAL_CHAMPIONSHIP: 0.03,
+    TournamentType.FNCS_QUALIFIER: 0.06,
+    TournamentType.FNCS_FINALS: 0.12,
+    TournamentType.MAJOR: 0.09,
+    TournamentType.GLOBAL_CHAMPIONSHIP: 0.09,
 }
 MISSED_LOOKBACK_DAYS = 400
 MISSED_DECAY_DAYS = 20.0

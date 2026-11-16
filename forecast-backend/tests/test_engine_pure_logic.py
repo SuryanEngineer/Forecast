@@ -474,7 +474,7 @@ class TradeConsensusTests(unittest.TestCase):
         self.assertLess(self.mp.trade_consensus(trades), self.D("105"))
 
     def test_step_is_partial(self):
-        self.assertEqual(self.mp.step_toward(self.D("100"), self.D("120")), self.D("105.00"))
+        self.assertEqual(self.mp.step_toward(self.D("100"), self.D("120")), self.D("108.00"))
 
 
 class OrdersToCancelTests(unittest.TestCase):

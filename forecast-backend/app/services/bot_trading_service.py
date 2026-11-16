@@ -110,7 +110,7 @@ BAND_MIN, BAND_MAX = 0.02, 0.12  # how far through the current price one bot ord
                                  # (up to 12%), so a badly mispriced stock still converges but a fair one just jitters.
 REST_CEIL = 1.25                 # ... or further than this above it
 REST_FLOOR = 0.85                # resting quotes are never posted further than this below the price
-STALE_AFTER_SECONDS = 4 * 3600   # a player with no trade for this long is "stale" and gets spotlighted
+STALE_AFTER_SECONDS = 90 * 60    # a player with no trade for this long is "stale" and gets spotlighted
 SPOTLIGHT_PER_BOT = 3            # stale players added to each bot's watchlist (spreads trading across the whole market)
 RECENT_HALF_LIFE = 1800.0        # seconds; how long a player counts as "already busy" when picking what to trade
 BELIEF_EPOCH_SECONDS = 6 * 3600  # a bot's private beliefs drift (interpolated) over this period
@@ -415,19 +415,25 @@ class MarketSnapshot:
     base_price: Decimal = Decimal("70")
 
 
-def _find_movers(pct_change, signals, qviews) -> list:
-    """Players every watcher notices at once: the biggest recent price moves, plus anyone whose qualifier standing
-    just made them a clear winner or loser. Ordered by how loud the news is."""
+def _find_movers(pct_change, signals, qviews, price=None, model_value=None) -> list:
+    """Players every watcher notices at once, like a screener running over the whole market: the biggest recent price
+    moves, anyone whose qualifier standing just made them a clear winner or loser, and anyone whose price has drifted far
+    from what the bots' model says they are worth (a new result, a missed cut). Ordered by how loud the news is. Nothing
+    here sets a price: it only decides where bots LOOK; what they do about it follows their own (differing) valuations."""
     scored: list[tuple[float, uuid.UUID]] = []
     for pid, sig in signals.items():
         loud = abs(float(pct_change.get(pid, 0)))
         qv = qviews.get(pid)
         if qv is not None and qv.status in ("qualified", "eliminated"):
             loud += 0.03 + 0.04 * abs(qv.perf_ratio - 1.0)
-        if loud >= 0.03:
+        if price is not None and model_value is not None:
+            px, mv = float(price.get(pid, 0) or 0), float(model_value.get(pid, 0) or 0)
+            if px > 0 and mv > 0:
+                loud += abs(math.log(mv / px))
+        if loud >= 0.04:
             scored.append((loud, pid))
     scored.sort(reverse=True)
-    return [pid for _, pid in scored[:25]]
+    return [pid for _, pid in scored[:60]]
 
 
 _SLOW_CACHE: dict[str, tuple[float, object]] = {}
@@ -511,14 +517,18 @@ def _price_history(db: Session, player_ids: list[uuid.UUID], roster_key) -> tupl
     else:
         rows = (
             db.query(PriceSnapshot.player_id, PriceSnapshot.price, PriceSnapshot.recorded_at)
-            .filter(PriceSnapshot.recorded_at > h["cursor"], PriceSnapshot.player_id.in_(player_ids))
+            # No `player_id IN (...)` here: with ~1,300 players that list is a ~50 KB statement sent every tick, which
+            # dominated the host's outbound bandwidth. New snapshots are few, so filtering them in Python is free.
+            .filter(PriceSnapshot.recorded_at > h["cursor"])
             .order_by(PriceSnapshot.recorded_at.asc())
             .all()
         )
         for pid, price, at in rows:
             b = h["buckets"].get(pid)
-            if b is None:
-                b = h["buckets"][pid] = deque(maxlen=20)
+            if b is None:  # not on the active roster (a roster change triggers a full reload anyway)
+                if _aware(at) > h["cursor"]:
+                    h["cursor"] = _aware(at)
+                continue
             b.appendleft(price)
             h["last_ts"][pid] = at
             if _aware(at) > h["cursor"]:
@@ -640,7 +650,11 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         if qv is not None:
             # Earlier rounds: expected payout from the coming Finals vs what this player usually earns.
             # Strong qualifier -> bump; missed the cut / weak -> markdown. Scaled by how sure the estimate is.
-            q_out = _clamp(0.12 * (qv.perf_ratio - 1.0) * (1.0 - 0.5 * qv.uncertainty), -0.18, 0.12)
+            q_out = _clamp(0.25 * (qv.perf_ratio - 1.0) * (1.0 - 0.5 * qv.uncertainty), -0.35, 0.20)
+            if qv.status == "eliminated":
+                q_out = min(q_out, -0.25)  # missed the cut: every bot marks it down hard, not just the pessimistic ones
+            elif qv.status == "unlikely":
+                q_out = min(q_out, -0.10)
             qual_out[p.id] = q_out
             out += q_out
         yy = max(0.0, yield_raw.get(p.id, 0.0))
@@ -650,7 +664,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
             out -= min(0.10, yy * 0.7)
         if p.id in missed:
             out -= missed_event_service.decayed_penalty(missed[p.id], now_utc)
-        out = _clamp(out, -0.20, 0.25)
+        out = _clamp(out, -0.45, 0.35)
         model_value[p.id] = fair_value[p.id] * Decimal(str(round(math.exp(out), 6)))
 
     # Popularity: market-cap rank (sub-linear), boosted by an imminent event and by big form swings / verified pros.
@@ -659,11 +673,11 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
     median_cap = cap_sorted[len(cap_sorted) // 2] if cap_sorted else 1.0
     popularity: dict[uuid.UUID, float] = {}
     for p in players:
-        w = (caps[p.id] / median_cap) ** 0.6 if median_cap > 0 and caps[p.id] > 0 else 0.2
+        w = (caps[p.id] / median_cap) ** 0.9 if median_cap > 0 and caps[p.id] > 0 else 0.2
         w *= 1.0 + 1.5 * max(0.0, events.get(p.id, 0.0)) + 0.5 * abs(form.get(p.id, 0.0))
         if p.is_verified:
             w *= 1.2
-        popularity[p.id] = _clamp(w, 0.1, 12.0)
+        popularity[p.id] = _clamp(w, 0.1, 25.0)
 
     return MarketSnapshot(
         player_ids=player_ids,
@@ -678,7 +692,7 @@ def _build_snapshot(db: Session) -> MarketSnapshot:
         qual_view=qviews,
         qual_out=qual_out,
         qual_uncertainty={pid: qv.uncertainty for pid, qv in qviews.items()},
-        movers=_find_movers(pct_change, signals, qviews),
+        movers=_find_movers(pct_change, signals, qviews, price, model_value),
         stale=_stale_players(player_ids, last_ts),
         base_price=base_price,
     )
@@ -689,7 +703,7 @@ def _stale_players(player_ids: list, last_ts: dict) -> list:
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_AFTER_SECONDS)
     never = [pid for pid in player_ids if pid not in last_ts]
     old = sorted((pid for pid in player_ids if pid in last_ts and (_aware(last_ts[pid]) or cutoff) < cutoff), key=lambda pid: _aware(last_ts[pid]))
-    return (never + old)[:400]
+    return (never + old)[:600]
 
 
 # --- Bot population ------------------------------------------------------------------------------------------------
@@ -803,7 +817,7 @@ def _personality(user_id: uuid.UUID, strategy: str) -> dict:
     r = random.Random(user_id.int & 0xFFFFFFFFFFFF)
     s = STYLE.get(strategy, STYLE["random"])
     return {
-        "sigma": 0.5 * s["sigma"] * (0.8 + 0.4 * r.random()),  # beliefs differ, but only mildly: calm market
+        "sigma": 0.8 * s["sigma"] * (0.8 + 0.4 * r.random()),  # beliefs differ, but only mildly: calm market
         "anchor": _clamp(s["anchor"] + r.uniform(-0.1, 0.1), 0.05, 0.8),
         "margin": 1.5 * s["margin"] * (0.8 + 0.45 * r.random()),  # demand a real edge before trading
         "tilt_mom": s["tilt_mom"],
@@ -1164,46 +1178,90 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
     return acted
 
 
-def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int) -> int:
-    """Steady background trading: `n` tiny instant trades (1-4 shares) by random bots on random stocks, weighted toward
-    the pricier ones. Each moves the price by a fraction of a percent (a few shares against the House's depth), and a
-    mild pull toward fair value keeps the sides balanced, so charts get frequent small bumps rather than long flat
-    stretches -- without adding volatility. Returns how many trades went through."""
+def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int, fee: float = 0.0025) -> int:
+    """Steady background trading across the WHOLE market: `n` instant trades per tick, each made by a bot acting on its OWN
+    valuation of one stock (see _bot_value) -- nothing here pushes a price anywhere.
+
+    Which stock: a mix of (a) the one that has gone longest without a trade (so every player, famous or not, keeps
+    trading), (b) whatever the market screener flags (big price moves, qualifier news, price far from the model), and
+    (c) popularity-weighted picks (the big names trade most).
+    Who and which way: a handful of bots (a few random ones plus some that already hold it) each value the stock; the one
+    who disagrees with the price the most, by more than the fee and its own required edge, trades -- buying if it thinks the
+    stock is cheap, selling if dear. Because bots hold different views, the price keeps getting tested from both sides, and
+    when the model value moves (a result, a missed cut) the bots' views move with it, so more of them lean the same way and
+    the price follows. A bigger disagreement means a bigger order. Returns how many trades went through."""
     if n <= 0 or not agents or not snapshot.player_ids:
         return 0
     pool = list(snapshot.player_ids)
-    weights = [max(float(snapshot.price.get(p, 0)), 0.5) ** 0.6 for p in pool]
+    pop_w = [max(float(snapshot.popularity.get(p, 0.3)), 0.05) ** 0.8 for p in pool]
+    stale = list(snapshot.stale)
+    movers = list(snapshot.movers)
+    holders: dict = defaultdict(list)
+    for a in agents:
+        st = _BOT_STATE.get(a.user_id)
+        if st is not None:
+            for pid, pos in st.positions.items():
+                if pos.available_quantity > 0:
+                    holders[pid].append(a)
+    now_ts = time.time()
     done = 0
-    for _ in range(n * 4):
+    for _ in range(n * 6):
         if done >= n:
             break
-        bot = rng.choice(agents)
-        try:
-            state = _get_state(db, bot.user_id)
-            cash = float(state.wallet.available_balance)
-            sellable = [pid for pid, pos in state.positions.items() if pid in snapshot.price and pos.available_quantity > 0]
-            pid = rng.choices(pool, weights=weights, k=1)[0]
-            px = float(snapshot.price.get(pid, 0))
-            if px <= 0:
+        pick = rng.random()
+        if stale and pick < 0.35:
+            pid = stale[min(int(rng.random() ** 2 * len(stale)), len(stale) - 1)]  # longest-idle first
+        elif movers and pick < 0.60:
+            pid = rng.choice(movers)
+        else:
+            pid = rng.choices(pool, weights=pop_w, k=1)[0]
+        px = float(snapshot.price.get(pid, 0))
+        if px <= 0:
+            continue
+        crowd = rng.sample(agents, min(8, len(agents)))
+        owners = holders.get(pid) or []
+        if owners:
+            crowd += rng.sample(owners, min(4, len(owners)))
+        best = None  # (surplus, agent, side, gap)
+        for a in dict.fromkeys(crowd):
+            pers = _personality(a.user_id, a.strategy)
+            v = _bot_value(snapshot, pid, pers, a.user_id, now_ts)
+            if v is None:
                 continue
-            fair = snapshot.fair_value.get(pid)
-            tilt = -0.8 * math.log(px / float(fair)) if fair and float(fair) > 0 else 0.0
-            side = OrderSide.BUY if rng.random() < _clamp(0.5 + tilt, 0.25, 0.75) else OrderSide.SELL
-            if side == OrderSide.SELL:
-                if pid not in sellable:
-                    if not sellable:
-                        side = OrderSide.BUY
-                    else:
-                        pid = rng.choice(sellable)
-                        px = float(snapshot.price.get(pid, 0))
-            qty = 1 + int(rng.random() ** 2 * 4)  # 1-4 shares, mostly 1-2
-            if side == OrderSide.BUY:
-                if px <= 0 or cash < 5.0 * qty * px:
+            gap = math.log(v / px)
+            need = 2.0 * fee + 0.004 + 0.2 * pers["margin"]  # the fee both ways plus this bot's own required edge
+            if abs(gap) <= need:
+                continue
+            st = _get_state(db, a.user_id)
+            pos = st.positions.get(pid)
+            if gap > 0:
+                side = OrderSide.BUY
+                if float(st.wallet.available_balance) < 1.2 * px:
                     continue
             else:
-                qty = min(qty, state.positions[pid].available_quantity)
-                if qty <= 0:
+                side = OrderSide.SELL
+                if pos is None or pos.available_quantity <= 0:
                     continue
+            if best is None or abs(gap) - need > best[0]:
+                best = (abs(gap) - need, a, side, gap)
+        if best is None:
+            continue
+        _surplus, bot, side, gap = best
+        try:
+            state = _get_state(db, bot.user_id)
+            shares = snapshot.shares_outstanding.get(pid, 10_000)
+            # A bigger disagreement is a bigger order (about 1 share per 1.5% of disagreement, jittered).
+            qty = 1 + int(min(abs(gap), 0.30) / 0.015 * (0.5 + rng.random()))
+            qty = min(qty, max(1, int(ORDER_FLOAT_CAP * shares)))
+            if side == OrderSide.BUY:
+                cash = float(state.wallet.available_balance)
+                have = state.positions.get(pid)
+                room = int(FLOAT_CAP * shares) - (have.quantity if have is not None else 0)
+                qty = min(qty, int(0.1 * cash // px), room)
+            else:
+                qty = min(qty, state.positions[pid].available_quantity)
+            if qty <= 0:
+                continue
             if _submit(db, bot.user_id, pid, side, qty, None):
                 db.commit()
                 _reload_state(db, bot.user_id)
@@ -1366,7 +1424,26 @@ def _memory_watch(db: Session) -> None:
         pass
 
 
+# Rolling facts about the bot loop, shown on /health so "are the bots actually trading, and how fast?" can be answered
+# without reading logs. Counters since the process started (a restart or a sleep resets them).
+STATS: dict = {"ticks": 0, "orders": 0, "flow_trades": 0, "errors": 0, "last_tick_s": 0.0, "slowest_tick_s": 0.0, "last_at": None}
+
+
 def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
+    started = time.monotonic()
+    result = _run_bot_tick(db, rng)
+    took = time.monotonic() - started
+    STATS["ticks"] += 1
+    STATS["orders"] += int(result.get("actions", 0)) - int(result.get("flow", 0))
+    STATS["flow_trades"] += int(result.get("flow", 0))
+    STATS["errors"] += int(result.get("errors", 0))
+    STATS["last_tick_s"] = round(took, 1)
+    STATS["slowest_tick_s"] = max(STATS["slowest_tick_s"], round(took, 1))
+    STATS["last_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return result
+
+
+def _run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
     """One full tick: top up the population, make sure every player has market-maker coverage, let a random subset of
     directional bots act, and let (most) market makers refresh quotes. Commits per bot so one failure can't roll back
     another's success. Safe to call repeatedly (background loop in app/main.py, POST /admin/bots/tick, or
@@ -1441,7 +1518,7 @@ def run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
 
     flow = 0
     try:
-        flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK))
+        flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK), float(params.get("transaction_fee_pct", 0.0025)))
     except Exception:  # noqa: BLE001 -- background flow must never break the tick
         db.rollback()
     _memory_watch(db)

@@ -135,26 +135,30 @@ def _bulk_volume_since(db: Session, player_ids: list[uuid.UUID], since: datetime
     see list_market_snapshots' docstring."""
     if not player_ids:
         return {}
-    rows = (
-        db.query(Trade.player_id, func.coalesce(func.sum(Trade.quantity), 0))
-        .filter(Trade.player_id.in_(player_ids), Trade.executed_at >= since)
-        .group_by(Trade.player_id)
-        .all()
-    )
-    return {player_id: int(total or 0) for player_id, total in rows}
+    q = db.query(Trade.player_id, func.coalesce(func.sum(Trade.quantity), 0)).filter(Trade.executed_at >= since)
+    wanted = None
+    if len(player_ids) > 150:  # a huge IN list is a ~50 KB statement; the grouped result is small either way
+        wanted = set(player_ids)
+    else:
+        q = q.filter(Trade.player_id.in_(player_ids))
+    rows = q.group_by(Trade.player_id).all()
+    return {pid: int(total or 0) for pid, total in rows if wanted is None or pid in wanted}
 
 
 def _bulk_dividends_total(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, Decimal]:
     """Each player's total completed dividend pool, in one grouped query."""
     if not player_ids:
         return {}
-    rows = (
-        db.query(DividendPayout.player_id, func.coalesce(func.sum(DividendPayout.total_pool_amount), 0))
-        .filter(DividendPayout.player_id.in_(player_ids), DividendPayout.status == DividendPayoutStatus.COMPLETED)
-        .group_by(DividendPayout.player_id)
-        .all()
+    q = db.query(DividendPayout.player_id, func.coalesce(func.sum(DividendPayout.total_pool_amount), 0)).filter(
+        DividendPayout.status == DividendPayoutStatus.COMPLETED
     )
-    return {pid: Decimal(str(total or 0)) for pid, total in rows}
+    wanted = None
+    if len(player_ids) > 150:
+        wanted = set(player_ids)
+    else:
+        q = q.filter(DividendPayout.player_id.in_(player_ids))
+    rows = q.group_by(DividendPayout.player_id).all()
+    return {pid: Decimal(str(total or 0)) for pid, total in rows if wanted is None or pid in wanted}
 
 
 # The market list is the heaviest read on the site (every player, quotes, order book, volumes) and every open tab asks for it
@@ -418,5 +422,13 @@ def get_price_history_range(db: Session, player_id: uuid.UUID, range_key: str = 
         kept[0] = out[0] if 0 not in kept else kept[0]
         out = [kept[k] for k in sorted(kept)]
 
-
+    # The chart ends at the price the rest of the site shows. Snapshots are written only when shares trade or a result
+    # re-rates a stock, while the listed price also follows the order book and the House quotes, so without this the
+    # last chart point and the portfolio / markets price could disagree.
+    try:
+        listed = valuation_service.Valuer(db, [player_id]).listed(player_id)
+        if listed is not None and listed > 0:
+            out.append({"price": listed, "volume": 0, "recorded_at": datetime.now(timezone.utc)})
+    except Exception:  # noqa: BLE001 -- never let the live-price lookup break a chart
+        pass
     return out

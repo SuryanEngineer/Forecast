@@ -353,4 +353,10 @@ def health() -> dict:
     out: dict = {"status": "ok", "env": settings.ENV, "uptime_s": int(time.time() - _STARTED_AT)}
     if p:
         out.update(rss_mb=round(p.get("VmRSS", 0) / 1024), peak_mb=round(p.get("VmHWM", 0) / 1024), threads=p.get("Threads"))
+    try:  # bot loop activity since this process started: ticks run, orders placed, flow trades, tick durations
+        from app.services import bot_trading_service
+
+        out["bots"] = dict(bot_trading_service.STATS)
+    except Exception:  # noqa: BLE001 -- /health must always answer
+        pass
     return out
