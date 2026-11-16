@@ -25,6 +25,14 @@ from app.services import bot_trading_service, lease_service, maintenance_service
 logger = logging.getLogger("forecast.bots")
 osirion_logger = logging.getLogger("forecast.osirion")
 
+# After a cold start (the free host wakes the app when someone opens the site) the first requests compete with these
+# background loops for a small shared CPU. Starting the loops a little later lets those first pages load first; once they
+# run, they run exactly as before. (The market lease is still claimed before anything else, see `lifespan`.)
+STARTUP_DELAY_BOTS = 20
+STARTUP_DELAY_OSIRION = 12
+STARTUP_DELAY_MAINTENANCE = 30
+STARTUP_DELAY_EXPIRY = 30
+
 
 def _run_one_bot_tick(rng: random.Random) -> None:
     """Runs on a worker thread (see asyncio.to_thread below) with its own
@@ -50,7 +58,7 @@ async def _bot_tick_loop() -> None:
     the way `uvicorn --reload` restarts the whole process on a code
     change."""
     rng = random.Random()
-    await asyncio.sleep(2)
+    await asyncio.sleep(STARTUP_DELAY_BOTS)  # let the first page loads after a wake-up be served before bots start working
     while True:
         try:
             await asyncio.to_thread(_run_one_bot_tick, rng)
@@ -117,7 +125,7 @@ async def _osirion_sync_loop() -> None:
     """Runs for the lifetime of the process (see `lifespan` below), same
     pattern as `_bot_tick_loop`. See app/services/osirion_service.py for
     what an actual sync pass does."""
-    await asyncio.sleep(5)
+    await asyncio.sleep(STARTUP_DELAY_OSIRION)
     while True:
         try:
             await asyncio.to_thread(_run_one_osirion_sync)
@@ -144,7 +152,7 @@ def _run_one_maintenance_pass() -> None:
 async def _maintenance_loop() -> None:
     """Pays pending dividends, accrues treasury interest, snapshots portfolios, rolls seasons (see
     app/services/maintenance_service.py). Works with no Redis / worker process."""
-    await asyncio.sleep(8)
+    await asyncio.sleep(STARTUP_DELAY_MAINTENANCE)
     while True:
         try:
             await asyncio.to_thread(_run_one_maintenance_pass)
@@ -181,7 +189,7 @@ def _expire_orders_once() -> int:
 
 async def _order_expiry_loop() -> None:
     """Cancels limit orders whose optional time limit has passed (and frees their cash / shares). Runs on the lease holder."""
-    await asyncio.sleep(10)
+    await asyncio.sleep(STARTUP_DELAY_EXPIRY)
     while True:
         try:
             n = await asyncio.to_thread(_expire_orders_once)

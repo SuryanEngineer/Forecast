@@ -573,6 +573,13 @@ The order books live in memory, so exactly one backend instance may match orders
 
 Every order costs the database a few KB of reads, so these are the dials for Supabase egress. On the Pro plan (250 GB/month, about 8 GB/day) the old pace used about 1.5 GB/day; the defaults above are roughly 3x the old order rate. Watch **Supabase → Settings → Usage** for a day: if total egress is trending above ~5 GB/day, halve `BOT_ACTIONS_PER_TICK` or double `BOT_TICK_INTERVAL_SECONDS`; if you are far below, raise them for tighter books.
 
+**Keeping the free backend awake (no sleep, no 1-minute wake-up).** Render's free web services spin down after 15 minutes with no *incoming* request (Render docs: "Free instances → Spinning down on idle"). Work the app does by itself (bot ticks, tournament sync) does not count, so a bot inside the app cannot keep it awake; something outside has to call it. Set up a free pinger that requests `https://forecast-backend-vfje.onrender.com/health` every 5 minutes:
+
+1. UptimeRobot (uptimerobot.com, free): Add New Monitor → type HTTP(s) → URL above → interval 5 minutes. It also emails you if the backend is ever down.
+2. Or cron-job.org (free): create a job for the same URL, schedule every 5 minutes.
+
+`/health` never touches the database, so pinging costs no Supabase egress. Two limits to know: (a) Render gives each workspace 750 free instance hours a month and one always-on service uses 720-744, so keep ONLY the backend as a free web service in that workspace (a second one running all month would use up the hours and Render suspends them all); check Billing → Monthly Included Usage after a few days. (b) Render may still restart a free service at any time and every deploy restarts it, so a rare slow first load can still happen. The $7/month Starter plan removes both limits.
+
 Bots quote close to their own valuation: a standing bid/ask sits the transaction fee plus a small edge either side of a bot's value (market makers: `bots.mm_edge`, default 0.15%), so spreads are a few tenths of a percent where bots have quotes up.
 
 **Disk guard.** A background job prunes bot-only history: bot-vs-bot trades, bot wallet ledger rows and finished bot orders older than `RETENTION_BOT_TRADE_DAYS` (3), bot share-ledger rows older than `RETENTION_SHARE_LEDGER_DAYS` (30), and thins price history older than `RETENTION_SNAPSHOT_DAYS` (14) to one point per player per hour. Nothing a human did is ever deleted. Turn it off with `RETENTION_ENABLED=false`.

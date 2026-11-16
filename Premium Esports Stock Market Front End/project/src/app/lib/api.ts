@@ -85,8 +85,26 @@ export function setToken(token: string | null): void {
 export function warmUpBackend(): void {
   try {
     const root = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
-    void fetch(`${root}/health`, { method: 'GET', mode: 'no-cors', cache: 'no-store' }).catch(() => {});
+    // /health answers instantly on an awake server, so if it has not answered after a few seconds the server is waking
+    // from sleep: tell the page (see ServerWakingBanner) so people see why things are slow instead of a blank screen.
+    const timer = window.setTimeout(() => setWaking(true), 4000);
+    const done = () => { window.clearTimeout(timer); setWaking(false); };
+    void fetch(`${root}/health`, { method: 'GET', mode: 'no-cors', cache: 'no-store' }).then(done, done);
   } catch { /* best effort */ }
+}
+
+let waking = false;
+const wakingListeners = new Set<(waking: boolean) => void>();
+function setWaking(value: boolean): void {
+  if (waking === value) return;
+  waking = value;
+  wakingListeners.forEach(listener => listener(value));
+}
+/** Calls `listener` now and whenever the "server is waking up" state changes. Returns an unsubscribe function. */
+export function subscribeWaking(listener: (waking: boolean) => void): () => void {
+  wakingListeners.add(listener);
+  listener(waking);
+  return () => { wakingListeners.delete(listener); };
 }
 
 export class ApiError extends Error {

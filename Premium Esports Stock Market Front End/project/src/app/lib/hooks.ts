@@ -182,6 +182,31 @@ export function useTournamentCalendar(includeCompleted = false) {
     includeCompleted ? '/tournaments/calendar?include_completed=true' : '/tournaments/calendar', [], 45_000);
 }
 
+/**
+ * The calendar, live events first. The small "not finished yet" list (everything live or upcoming, no finished events) is
+ * requested first and shown the moment it arrives; only then is the full list (with finished events) requested, and it
+ * is merged in when it lands. On a slow or waking server this puts live events on screen before the rest. `ready` is true
+ * once the first list is in (or failed), so other requests (announced events, open rounds) can wait their turn.
+ */
+export function useTournamentCalendarFast() {
+  const active = usePolledFetch<CalendarTournamentResponse[]>('/tournaments/calendar', [], 45_000);
+  const ready = !active.loading;
+  const full = usePolledFetch<CalendarTournamentResponse[]>(ready ? '/tournaments/calendar?include_completed=true' : null, [], 45_000);
+  const [fullAsked, setFullAsked] = useState(false);
+  useEffect(() => { if (ready) setFullAsked(true); }, [ready]);
+
+  const data = useMemo(() => {
+    if (full.data.length === 0) return active.data;
+    // The full list has everything; the small one is fresher for what is still running, so it wins where both have a row.
+    const byId = new Map(full.data.map(t => [t.id, t] as const));
+    for (const t of active.data) byId.set(t.id, t);
+    return [...byId.values()];
+  }, [active.data, full.data]);
+
+  const completedLoading = !fullAsked || full.loading;
+  return { data, loading: data.length === 0 && (active.loading || completedLoading), ready, completedLoading };
+}
+
 export interface DayChange { net_worth: number; net_worth_then: number; change: number; change_pct: number; hours: number }
 
 /** Real 24h change in the user's net worth (trades / deposits netted out, dividends counted) -- computed server-side. */
@@ -200,8 +225,9 @@ export function useNetWorthSeries(hours: number, points = 300, enabled = true) {
   );
 }
 
-export function useAnnouncedTournaments() {
-  return usePolledFetch<AnnouncedTournament[]>('/tournaments/announced', [], 5 * 60_000);
+export function useAnnouncedTournaments(enabled = true) {
+  // `enabled` false = wait (the calendar's live list goes first; the backend asks Osirion for this one, which is slower).
+  return usePolledFetch<AnnouncedTournament[]>(enabled ? '/tournaments/announced' : null, [], 5 * 60_000);
 }
 
 export function useLeaderboard() {

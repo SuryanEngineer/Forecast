@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Calendar } from 'lucide-react';
 import { lobbyLabel, titledName, tournamentDisplayName, type LobbyLabel } from '../lib/tournamentName';
-import { useAnnouncedTournaments, useTournamentCalendar } from '../lib/hooks';
+import { useAnnouncedTournaments, useTournamentCalendarFast } from '../lib/hooks';
 import {
   toNumber,
   type AnnouncedTournament,
@@ -341,8 +341,8 @@ const calendarToTournament = (t: CalendarTournamentResponse): TournamentResponse
 /** The top of the Tournaments page, reusable elsewhere (the landing page): live tournaments with their leaderboard in red, or,
  * when nothing is live, the next one with its countdown. Same cards, same rules as the Tournaments page. */
 export function NextEventSection({ openTournament }: { openTournament: (tournament: TournamentResponse) => void }) {
-  const { data: calendar } = useTournamentCalendar(true);
-  const { data: announced } = useAnnouncedTournaments();
+  const { data: calendar, ready } = useTournamentCalendarFast();   // live and upcoming first, finished events after
+  const { data: announced } = useAnnouncedTournaments(ready);      // slower (asks Osirion): waits for the live list
   const live = calendar.filter(t => t.phase === 'live' || t.phase === 'finalizing').sort((a, b) => startMs(a.start_time) - startMs(b.start_time));
   const lastCompleted = calendar.filter(t => t.phase === 'completed').sort((a, b) => startMs(b.start_time) - startMs(a.start_time))[0];
   const lastCard = lastCompleted && (
@@ -390,13 +390,14 @@ export function Tournaments({ openTournament }: Props) {
   // Views: everything (default, every visit), only tournaments that pay dividends, or only the no-payout open rounds.
   // Live events first (red), then the next event (big card), then everything still to come in date order, then completed
   // events (newest first). A search turns it into one flat, filtered list.
-  const { data: calendar, loading } = useTournamentCalendar(true);
-  const { data: announced } = useAnnouncedTournaments();
+  // Order of loading: the live/upcoming list first (shown at once), then finished events, announced events and open rounds.
+  const { data: calendar, loading, ready, completedLoading } = useTournamentCalendarFast();
+  const { data: announced } = useAnnouncedTournaments(ready);
 
   const [view, setView] = useState<View>('all');
   const chooseView = (v: View) => setView(v);
 
-  const { rounds: openRounds, error: openError } = useOpenRounds(view === 'all');
+  const { rounds: openRounds, error: openError } = useOpenRounds(view === 'all' && ready);
   const [openedRound, setOpenedRound] = useState<OpenRound | null>(null);
 
   const toTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
@@ -448,7 +449,7 @@ export function Tournaments({ openTournament }: Props) {
         ? <OpenRoundRow key={u.key} round={u.open} onOpen={() => setOpenedRound(u.open!)} />
         : <AnnouncedRow key={u.key} event={u.announced!} />;
 
-  const empty = !loading && calendar.length === 0 && announced.length === 0 && view !== 'open';
+  const empty = !loading && !completedLoading && calendar.length === 0 && announced.length === 0 && view !== 'open';
 
   // Search (name, region or type) turns the page into one flat list: live, then what is still to come by date, then
   // finished events newest first. Open rounds are included in the All view.
@@ -571,6 +572,10 @@ export function Tournaments({ openTournament }: Props) {
               {(showAllUpcoming ? comingUp : comingSoon).map(rowFor)}
               <MoreToggle count={comingLater.length} open={showAllUpcoming} onToggle={() => setShowAllUpcoming(v => !v)} noun="upcoming" />
             </div>
+          )}
+
+          {completedLoading && completedAll.length === 0 && calendar.length > 0 && (
+            <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading finished tournaments…</p>
           )}
 
           {completedAll.length > 0 && (

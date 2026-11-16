@@ -22,6 +22,7 @@ import { IntroTour, introSeenKey } from './components/IntroTour';
 import { HelpCenter } from './components/HelpModal';
 import { StatsPage } from './components/StatsPage';
 import { BellButton, NotificationsPage, ToastStack, type NotificationTarget } from './components/NotificationCenter';
+import { ServerWakingBanner } from './components/ServerWakingBanner';
 import { api } from './lib/api';
 import { NotificationsProvider } from './lib/notifications';
 import { SettingsPage } from './components/SettingsPage';
@@ -236,6 +237,7 @@ export default function App() {
   return (
     <AuthProvider>
       <Root />
+      <ServerWakingBanner />
     </AuthProvider>
   );
 }
