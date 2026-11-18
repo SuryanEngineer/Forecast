@@ -10,6 +10,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 
+import os
+import sys
+
+# Safety net: a test run must NEVER touch a real database. Several tests create throwaway rows (tournaments, players,
+# seasons), and which database they hit depends on import order, so refuse outright rather than risk writing fake data
+# into production. Tests set DATABASE_URL to a temporary SQLite file before importing the app (see tests/test_qualifier.py).
+if not settings.DATABASE_URL.startswith("sqlite") and (
+    "unittest" in os.path.abspath(sys.argv[0]).lower() or "pytest" in os.path.abspath(sys.argv[0]).lower() or "pytest" in sys.modules
+):
+    raise RuntimeError(
+        "Refusing to run tests against a real database. Start the test file with the DATABASE_URL / FORECAST_ENV_FILE "
+        "override used in tests/test_qualifier.py (a temporary SQLite file) before importing anything from `app`."
+    )
+
 if settings.DATABASE_URL.startswith("sqlite"):
     # Demo mode: a local SQLite file. check_same_thread=False is required
     # because this engine gets hit from more than one thread -- FastAPI

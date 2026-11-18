@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -63,7 +64,7 @@ from app.models.tournament import (
     TournamentStatus,
     TournamentType,
 )
-from app.engine import completion, format_policy, performance_eval, tracking_policy
+from app.engine import completion, format_policy, game_standings, performance_eval, tracking_policy
 from app.services import notification_service, player_service, tournament_classification_service, tournament_service
 from app.services.player_identity import skeleton
 
@@ -1706,7 +1707,79 @@ def sync_all_tracked(db: Session) -> list[SyncResult]:
     except Exception:  # noqa: BLE001 -- bookkeeping must never break the sync pass
         db.rollback()
         logger.exception("late-results check failed")
+    try:
+        ensure_score_rules(db)
+    except Exception:  # noqa: BLE001 -- the per-game points columns are a nice-to-have; never break the sync pass
+        db.rollback()
+        logger.exception("score-rules lookup failed")
     return results
+
+
+# The event's published scoring rules (placement / elimination points), kept on the tournament as format_rules["score_rules"]
+# so the per-game points and leaderboard positions can be worked out (engine/game_standings.py). Looked up once per
+# tournament (an empty list = "none published", also final); a failed lookup is retried every RULES_EVERY seconds.
+RULES_EVERY = 1800.0
+_rules_checked_at: dict = {}
+
+
+def find_score_rules(osirion_tournaments: list[dict], mapping: OsirionTournamentMapping) -> list[dict] | None:
+    """The stored-form scoring rules for the leaderboard this mapping points at, or None when it can't be found."""
+    for tournament in osirion_tournaments:
+        if tournament.get("eventId") != mapping.osirion_event_id:
+            continue
+        for window in tournament.get("eventWindows", []):
+            if window.get("eventWindowId") != mapping.osirion_event_window_id:
+                continue
+            for location in window.get("scoreLocations", []):
+                if (location.get("leaderboardEventId") == mapping.leaderboard_event_id
+                        and location.get("leaderboardEventWindowId") == mapping.leaderboard_event_window_id):
+                    return game_standings.rules_from_score_location(location)
+    return None
+
+
+def ensure_score_rules(db: Session) -> int:
+    """Store the scoring rules on every tracked set-lobby tournament that is live or just finished and has none yet.
+    One Osirion call covers all of them. Returns how many tournaments were updated."""
+    import time
+
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(OsirionTournamentMapping, Tournament)
+        .join(Tournament, Tournament.id == OsirionTournamentMapping.tournament_id)
+        .filter(Tournament.is_historical_archive.is_(False))
+        .filter(or_(Tournament.status != TournamentStatus.FINALIZED, Tournament.updated_at > now - timedelta(days=3)))
+        .all()
+    )
+    needing = [
+        (m, t) for m, t in rows
+        if "score_rules" not in (t.format_rules or {})
+        and (t.format_rules or {}).get("lobby") != format_policy.LOBBY_OPEN
+        and time.monotonic() - _rules_checked_at.get(str(t.id), -RULES_EVERY) >= RULES_EVERY
+    ]
+    if not needing:
+        return 0
+    for _m, t in needing:
+        _rules_checked_at[str(t.id)] = time.monotonic()
+    updated = 0
+    remaining = list(needing)
+    # Current events first (small); the large "historic" listing only if something is still unresolved (a just-finished one).
+    for historic in (False, True):
+        if not remaining:
+            break
+        osirion_tournaments = osirion_client.list_tournaments(include_historic_data=historic)
+        still = []
+        for mapping, tournament in remaining:
+            rules = find_score_rules(osirion_tournaments, mapping)
+            if rules is None:
+                still.append((mapping, tournament))
+                continue
+            tournament.format_rules = {**(tournament.format_rules or {}), "score_rules": rules}
+            updated += 1
+        remaining = still
+        del osirion_tournaments
+    if updated:
+        db.commit()
+    return updated
 
 
 # A tournament closed with a game that never got a winner is re-checked for this long after it ended, in case Osirion reports

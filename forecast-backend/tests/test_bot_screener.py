@@ -1,9 +1,19 @@
 """The bots' market screener: it flags players whose price is far from the model value, without setting any price."""
+import os
+import sys
+import tempfile
 import unittest
 import uuid
 from decimal import Decimal
 
-from app.services import bot_trading_service as bts
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TMP = tempfile.mkdtemp(prefix="forecast_screener_")
+os.environ.update({  # a throwaway database, set BEFORE the app is imported (never the real one)
+    "FORECAST_ENV_FILE": os.path.join(_TMP, "none.env"), "DATABASE_URL": f"sqlite:///{os.path.join(_TMP, 't.db')}",
+    "REDIS_ENABLED": "false", "BOT_TRADING_ENABLED": "false", "OSIRION_SYNC_ENABLED": "false",
+})
+
+from app.services import bot_trading_service as bts  # noqa: E402
 
 
 class ScreenerTests(unittest.TestCase):

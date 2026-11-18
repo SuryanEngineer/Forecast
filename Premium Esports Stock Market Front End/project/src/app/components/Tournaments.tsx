@@ -180,8 +180,9 @@ function LobbyPill({ label }: { label: LobbyLabel }) {
 }
 
 /** "Show N more" / "Show less" under a list that is collapsed by default. */
-function MoreToggle({ count, open, onToggle, noun }: { count: number; open: boolean; onToggle: () => void; noun: string }) {
-  if (count <= 0) return null;
+function MoreToggle({ count, open, onToggle, noun, loadingMore = false }: { count: number; open: boolean; onToggle: () => void; noun: string; loadingMore?: boolean }) {
+  // While the rest of the list is still being fetched the button is already there (the count is not known yet).
+  if (count <= 0 && !loadingMore) return null;
   return (
     <button
       onClick={onToggle}
@@ -189,7 +190,7 @@ function MoreToggle({ count, open, onToggle, noun }: { count: number; open: bool
       style={{ fontSize: 12.5 }}
       aria-expanded={open}
     >
-      {open ? 'Show less' : `Show ${count} more ${noun}`}
+      {open ? 'Show less' : count > 0 ? `Show ${count} more ${noun}${loadingMore ? ' (still loading…)' : ''}` : `Show more ${noun}`}
     </button>
   );
 }
@@ -392,12 +393,13 @@ export function Tournaments({ openTournament }: Props) {
   // events (newest first). A search turns it into one flat, filtered list.
   // Order of loading: the live/upcoming list first (shown at once), then finished events, announced events and open rounds.
   const { data: calendar, loading, ready, completedLoading } = useTournamentCalendarFast();
-  const { data: announced } = useAnnouncedTournaments(ready);
+  const { data: announced, loading: announcedLoading } = useAnnouncedTournaments(ready);
 
   const [view, setView] = useState<View>('all');
   const chooseView = (v: View) => setView(v);
 
-  const { rounds: openRounds, error: openError } = useOpenRounds(view === 'all' && ready);
+  // Everything beyond the first screen starts loading as soon as the first screen is in, whether or not anyone asks for it.
+  const { rounds: openRounds, error: openError } = useOpenRounds(ready);
   const [openedRound, setOpenedRound] = useState<OpenRound | null>(null);
 
   const toTournament = (t: CalendarTournamentResponse): TournamentResponse => ({
@@ -424,6 +426,7 @@ export function Tournaments({ openTournament }: Props) {
   // A live event IS the current "next event", so the Next Event card only appears when nothing is live.
   const [next, laterDividend] = live.length > 0 ? [undefined, upcoming] : [upcoming[0], upcoming.slice(1)];
 
+  const openStillLoading = view === 'all' && openRounds === null && !openError;
   const openEntries: Entry[] = view === 'all'
     ? (openRounds ?? []).map(r => ({ key: `o-${r.leaderboard_event_id}/${r.leaderboard_event_window_id}`, start: startMs(r.start_time), open: r }))
     : [];
@@ -432,15 +435,18 @@ export function Tournaments({ openTournament }: Props) {
   const comingUp = [...laterDividend, ...openUpcoming].sort((a, b) => a.start - b.start);
   const completedAll: Entry[] = [...completed.map(t => ({ key: t.id, start: startMs(t.start_time), tracked: t })), ...openFinished].sort((a, b) => b.start - a.start);
 
-  // Collapsed by default so the page isn't a wall of rows: the next 7 days of upcoming events and the last 3 days of completed
-  // ones show first; the rest sits behind "Show more".
+  // Collapsed by default so the page isn't a wall of rows: the next 7 days of upcoming events and the 4 most recent completed
+  // ones show first; the rest sits behind "Show more". The rest keeps loading in the background either way; if someone opens
+  // "Show more" before it has all arrived, they see a loading line under what is there.
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [showAllCompleted, setShowAllCompleted] = useState(false);
   const nowMs = Date.now();
   const comingSoon = comingUp.filter(e => e.start <= nowMs + 7 * 86_400_000);
   const comingLater = comingUp.filter(e => e.start > nowMs + 7 * 86_400_000);
-  const completedRecent = completedAll.filter(e => e.start >= nowMs - 3 * 86_400_000);
-  const completedOlder = completedAll.filter(e => e.start < nowMs - 3 * 86_400_000);
+  const completedRecent = completedAll.slice(0, 4);
+  const completedOlder = completedAll.slice(4);
+  const upcomingLoadingMore = announcedLoading || openStillLoading;
+  const completedLoadingMore = completedLoading || openStillLoading;
 
   const rowFor = (u: Entry) =>
     u.tracked
@@ -529,9 +535,6 @@ export function Tournaments({ openTournament }: Props) {
         {empty && (
           <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>No tournaments announced yet — new ones are picked up automatically.</p>
         )}
-        {view === 'all' && openRounds === null && !openError && (
-          <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading open rounds…</p>
-        )}
         {view === 'all' && openError && <p className="text-center" style={{ fontSize: 12.5, color: 'var(--loss)' }}>{openError}</p>}
 
         {filtering ? (
@@ -570,7 +573,8 @@ export function Tournaments({ openTournament }: Props) {
                 <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>Nothing in the next 7 days.</p>
               )}
               {(showAllUpcoming ? comingUp : comingSoon).map(rowFor)}
-              <MoreToggle count={comingLater.length} open={showAllUpcoming} onToggle={() => setShowAllUpcoming(v => !v)} noun="upcoming" />
+              {showAllUpcoming && upcomingLoadingMore && <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading more upcoming tournaments…</p>}
+              <MoreToggle count={comingLater.length} open={showAllUpcoming} onToggle={() => setShowAllUpcoming(v => !v)} noun="upcoming" loadingMore={upcomingLoadingMore} />
             </div>
           )}
 
@@ -578,16 +582,14 @@ export function Tournaments({ openTournament }: Props) {
             <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading finished tournaments…</p>
           )}
 
-          {completedAll.length > 0 && (
+          {(completedAll.length > 0 || completedLoadingMore) && completedAll.length > 0 && (
             <div className="space-y-2.5">
               <p className="font-bold pt-1" style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>
-                Completed{completedOlder.length > 0 && !showAllCompleted ? ' · last 3 days' : ''}
+                Completed{(completedOlder.length > 0 || completedLoadingMore) && !showAllCompleted ? ' · latest 4' : ''}
               </p>
-              {completedRecent.length === 0 && !showAllCompleted && (
-                <p className="text-muted-foreground" style={{ fontSize: 12.5 }}>Nothing finished in the last 3 days.</p>
-              )}
               {(showAllCompleted ? completedAll : completedRecent).map(rowFor)}
-              <MoreToggle count={completedOlder.length} open={showAllCompleted} onToggle={() => setShowAllCompleted(v => !v)} noun="completed" />
+              {showAllCompleted && completedLoadingMore && <p className="text-muted-foreground text-center" style={{ fontSize: 12.5 }}>Loading more completed tournaments…</p>}
+              <MoreToggle count={completedOlder.length} open={showAllCompleted} onToggle={() => setShowAllCompleted(v => !v)} noun="completed" loadingMore={completedLoadingMore} />
             </div>
           )}
         </>)}

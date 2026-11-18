@@ -183,28 +183,29 @@ export function useTournamentCalendar(includeCompleted = false) {
 }
 
 /**
- * The calendar, live events first. The small "not finished yet" list (everything live or upcoming, no finished events) is
- * requested first and shown the moment it arrives; only then is the full list (with finished events) requested, and it
- * is merged in when it lands. On a slow or waking server this puts live events on screen before the rest. `ready` is true
- * once the first list is in (or failed), so other requests (announced events, open rounds) can wait their turn.
+ * The calendar, in stages. Stage 1 is one small request: everything live or upcoming plus only the 4 most recent finished
+ * events (what the page shows by default), painted the moment it arrives. As soon as it lands, stage 2 starts everything else
+ * at once (the full list with every finished event; the caller starts announced events and open rounds on `ready`), so by
+ * the time anyone clicks "Show more" it is usually already here. `ready` is true once stage 1 is in (or failed);
+ * `completedLoading` is true until the full list has arrived.
  */
 export function useTournamentCalendarFast() {
-  const active = usePolledFetch<CalendarTournamentResponse[]>('/tournaments/calendar', [], 45_000);
-  const ready = !active.loading;
+  const first = usePolledFetch<CalendarTournamentResponse[]>('/tournaments/calendar?completed_limit=4', [], 45_000);
+  const ready = !first.loading;
   const full = usePolledFetch<CalendarTournamentResponse[]>(ready ? '/tournaments/calendar?include_completed=true' : null, [], 45_000);
   const [fullAsked, setFullAsked] = useState(false);
   useEffect(() => { if (ready) setFullAsked(true); }, [ready]);
 
   const data = useMemo(() => {
-    if (full.data.length === 0) return active.data;
+    if (full.data.length === 0) return first.data;
     // The full list has everything; the small one is fresher for what is still running, so it wins where both have a row.
     const byId = new Map(full.data.map(t => [t.id, t] as const));
-    for (const t of active.data) byId.set(t.id, t);
+    for (const t of first.data) byId.set(t.id, t);
     return [...byId.values()];
-  }, [active.data, full.data]);
+  }, [first.data, full.data]);
 
   const completedLoading = !fullAsked || full.loading;
-  return { data, loading: data.length === 0 && (active.loading || completedLoading), ready, completedLoading };
+  return { data, loading: data.length === 0 && (first.loading || completedLoading), ready, completedLoading };
 }
 
 export interface DayChange { net_worth: number; net_worth_then: number; change: number; change_pct: number; hours: number }

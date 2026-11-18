@@ -370,7 +370,14 @@ export interface GameTeamRowResponse {
   time_alive: number | null;
   damage_dealt: number | null;
   damage_received: number | null;
+  /** The team's overall placement; while the tournament is live this is its CURRENT position. */
   final_placement: number;
+  /** Finals lobbies only (null otherwise, and while that game is still being played). */
+  game_points?: number | null;
+  /** Running points total after this game. */
+  points_after?: number | null;
+  /** Leaderboard position once this game was complete (ranked by games 1..N). */
+  position_after?: number | null;
   members: TeamMemberResponse[];
 }
 
@@ -388,6 +395,8 @@ export interface GameResultsResponse {
 export interface TournamentGamesResponse {
   tournament_id: string;
   games: GameResultsResponse[];
+  /** Per-game points / positions could be worked out (finals lobbies with usable scoring). */
+  progress_available?: boolean;
 }
 
 export interface GameStatResponse {
@@ -397,6 +406,10 @@ export interface GameStatResponse {
   placement: number | null;
   eliminations: number | null;
   points: Money | null;
+  /** Finals lobbies only: points this game earned, the running total after it, and the leaderboard position after it. */
+  game_points?: number | null;
+  points_after?: number | null;
+  position_after?: number | null;
   stats: Record<string, unknown>;
 }
 
@@ -411,6 +424,7 @@ export interface TeamGamesResponse {
   total_eliminations: number | null;
   total_points: Money | null;
   best_placement: number | null;
+  progress_available?: boolean;
 }
 
 export interface PaginatedPlacementResultResponse {

@@ -15,7 +15,7 @@ import { usdPerShare } from '../lib/format';
 
 // 100 per page so a full 100-player solo event fits on one page (the API allows up to 200).
 const PAGE_SIZE = 100;
-const COLS = '44px 1fr 1fr 1fr 1fr 1fr';
+const pts = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
 function money(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -45,6 +45,7 @@ function Chip({ label, value }: { label: string; value: string }) {
 function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId: string }) {
   const [data, setData] = useState<TeamGamesResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const compact = useCompact();
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +70,13 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
     );
   }
 
+  // Finals lobbies also get the running points total and the leaderboard position after each game.
+  const progress = data.progress_available === true && data.games.some(g => g.points_after != null);
+  const COLS = progress
+    ? (compact ? '34px 1fr 1fr 1fr 1fr' : '40px 1fr 1fr 1.2fr 1.2fr 1fr 1fr 1fr')
+    : '44px 1fr 1fr 1fr 1fr 1fr';
+  const showExtras = !progress || !compact;   // Alive / Dealt / Taken: dropped on phones when the progress columns need the room
+
   return (
     <div className="space-y-2.5 pt-1">
       <div className="grid grid-cols-5 gap-1.5">
@@ -81,7 +89,9 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
         <div className="grid items-center px-3 py-1.5 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Game</span><span>Placed</span><span>Elims</span><span>Alive</span><span>Dealt</span><span>Taken</span>
+          <span>Game</span><span>Placed</span><span>Elims</span>
+          {progress && <><span title="Points after this game">Points</span><span title="Leaderboard position after this game">Standing</span></>}
+          {showExtras && <><span>Alive</span><span>Dealt</span><span>Taken</span></>}
         </div>
         {data.games.map(g => {
           const alive = statNum(g.stats, 'TIME_ALIVE_STAT');
@@ -101,9 +111,22 @@ function TeamGames({ tournamentId, playerId }: { tournamentId: string; playerId:
                 {g.placement !== null ? `${g.placement}${g.placement === 1 ? ' 🏆' : ''}` : '–'}
               </span>
               <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{g.eliminations ?? '–'}</span>
-              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{alive !== null ? mmss(alive) : '–'}</span>
-              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{dealt !== null ? dealt.toLocaleString() : '–'}</span>
-              <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{taken !== null ? taken.toLocaleString() : '–'}</span>
+              {progress && (
+                <>
+                  <span className="font-mono text-foreground" style={{ fontSize: 13 }} title={g.game_points != null ? `+${pts(g.game_points)} this game` : undefined}>
+                    {g.points_after != null ? pts(g.points_after) : '–'}
+                    {g.game_points != null && <span className="text-muted-foreground" style={{ fontSize: 10.5 }}> +{pts(g.game_points)}</span>}
+                  </span>
+                  <span className="font-mono font-bold" style={{ fontSize: 13, color: 'var(--primary)' }}>{g.position_after != null ? `#${g.position_after}` : '–'}</span>
+                </>
+              )}
+              {showExtras && (
+                <>
+                  <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{alive !== null ? mmss(alive) : '–'}</span>
+                  <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{dealt !== null ? dealt.toLocaleString() : '–'}</span>
+                  <span className="font-mono text-foreground" style={{ fontSize: 13 }}>{taken !== null ? taken.toLocaleString() : '–'}</span>
+                </>
+              )}
             </div>
           );
         })}
@@ -478,8 +501,14 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
   const unreported = game.reported === false;                  // never got a winner and never will (cancelled / never reported)
   const inProgress = !unreported && game.complete === false;   // still being played: the server says it can still get a winner
   const noWinner = false;
-  // Phones: keep Place / Team / Elims / Final; the extra columns don't fit without sideways scrolling.
-  const COLS = compact ? '44px minmax(0,1fr) 48px 48px' : '48px minmax(0,1fr) 56px 64px 104px 104px 56px';
+  // Finals lobbies: the team's running points total and leaderboard position after each game, just left of the final column.
+  const progress = data.progress_available === true && data.games.some(g => g.teams.some(t => t.points_after != null));
+  // While the tournament is live the last column is where the team stands RIGHT NOW, not a final result.
+  const lastLabel = live ? (compact ? 'Now' : 'Current Position') : 'Final';
+  // Phones: keep Place / Team / Elims (+ Points / Standing) / Final; the damage columns don't fit without sideways scrolling.
+  const COLS = compact
+    ? (progress ? '34px minmax(0,1fr) 34px 44px 44px 44px' : '44px minmax(0,1fr) 48px 48px')
+    : `48px minmax(0,1fr) 56px 64px 104px 104px ${progress ? '60px 64px ' : ''}${live ? '112px' : '56px'}`;
 
   return (
     <div className="space-y-3">
@@ -524,7 +553,7 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
 
       {!unreported && <div className="rounded-xl overflow-hidden" style={{ background: 'var(--muted)' }}>
         <div className="grid items-center gap-2 px-3 py-2 text-muted-foreground uppercase" style={{ gridTemplateColumns: COLS, fontSize: 10, letterSpacing: '0.06em', fontWeight: 600 }}>
-          <span>Place</span><span>Team</span><span className="text-right">Elims</span>{!compact && <><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span></>}<span className="text-right">Final</span>
+          <span>Place</span><span>Team</span><span className="text-right">Elims</span>{!compact && <><span className="text-right">Alive</span><span className="text-right">Damage Dealt</span><span className="text-right">Damage Taken</span></>}{progress && <><span className="text-right" title="Points after this game">Points</span><span className="text-right" title="Leaderboard position after this game">Standing</span></>}<span className="text-right">{lastLabel}</span>
         </div>
         {game.teams.map((t, i) => (
           <div
@@ -552,6 +581,14 @@ export function GamesTab({ tournamentId, onOpenPlayer, live = false }: { tournam
                 <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.time_alive !== null ? mmss(t.time_alive) : '–'}</span>
                 <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_dealt !== null ? t.damage_dealt.toLocaleString() : '–'}</span>
                 <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }}>{t.damage_received !== null ? t.damage_received.toLocaleString() : '–'}</span>
+              </>
+            )}
+            {progress && (
+              <>
+                <span className="font-mono text-foreground text-right" style={{ fontSize: 12.5 }} title={t.game_points != null ? `+${pts(t.game_points)} this game` : undefined}>
+                  {t.points_after != null ? pts(t.points_after) : '–'}
+                </span>
+                <span className="font-mono font-bold text-right" style={{ fontSize: 12.5, color: 'var(--primary)' }}>{t.position_after != null ? `#${t.position_after}` : '–'}</span>
               </>
             )}
             <span className="font-mono text-muted-foreground text-right" style={{ fontSize: 12 }}>#{t.final_placement}</span>

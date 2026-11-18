@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, defer
 
 from app.api.deps import get_optional_user
 from app.core.ttl_cache import cached_call
+from app.engine import game_standings
 from app.db.session import get_db
 from app.models.dividend import DividendLineItem, DividendPayout
 from app.models.osirion import OsirionTournamentMapping
@@ -63,6 +64,7 @@ def list_tournaments(db: Session = Depends(get_db)) -> list[TournamentResponse]:
 @router.get("/calendar", response_model=list[CalendarTournamentResponse])
 def get_tournament_calendar(
     include_completed: bool = Query(False, description="Also include finished (finalized) tournaments -- the full calendar, past and upcoming."),
+    completed_limit: int | None = Query(None, ge=1, le=50, description="Also include just the N most recent finished tournaments (a small first paint); ignored when include_completed is set."),
     db: Session = Depends(get_db),
 ) -> list[CalendarTournamentResponse]:
     """Every tournament that hasn't finished yet (SCHEDULED or
@@ -74,14 +76,23 @@ def get_tournament_calendar(
     would try to parse "calendar" as a tournament_id UUID and 422 first.
 
     Cached for 10 seconds: every open browser polls this, and the answer is the same for all of them."""
-    return cached_call(("calendar", include_completed), 10, lambda: _build_calendar(db, include_completed))
+    limit = None if include_completed else completed_limit
+    return cached_call(("calendar", include_completed, limit), 10, lambda: _build_calendar(db, include_completed, limit))
 
 
-def _build_calendar(db: Session, include_completed: bool) -> list[CalendarTournamentResponse]:
+def _build_calendar(db: Session, include_completed: bool, completed_limit: int | None = None) -> list[CalendarTournamentResponse]:
     query = db.query(Tournament).filter(Tournament.is_historical_archive.is_(False))  # hidden rows never show
     if not include_completed:
         query = query.filter(Tournament.status != TournamentStatus.FINALIZED)
     tournaments = query.limit(500).all()
+    if completed_limit and not include_completed:
+        tournaments += (
+            db.query(Tournament)
+            .filter(Tournament.is_historical_archive.is_(False), Tournament.status == TournamentStatus.FINALIZED)
+            .order_by(Tournament.start_time.desc().nullslast())
+            .limit(completed_limit)
+            .all()
+        )
     # Sorted in Python rather than via SQL nulls-handling -- cheap at this
     # size (capped at 200 rows) and guarantees a stable, dialect-independent
     # chronological order with every null start_time pushed to the end,
@@ -472,6 +483,114 @@ def _first_present(d: dict, keys: tuple):
     return None
 
 
+
+def _team_key(result: PlacementResult) -> str:
+    """Same grouping key as _group_teams: teammates share it."""
+    return f"{result.placement}:{result.team_id}" if result.team_id else str(result.id)
+
+
+def _collect_sessions(teams: list, raw_by_id: dict) -> list:
+    """The tournament's games in order: [(session_key, {"ended": earliest end time, "rows": [(team, session), ...]})].
+    Games are identified by Osirion's sessionId and numbered by end time."""
+    sessions: dict = {}
+    for team in teams:
+        raw = raw_by_id.get(team[0][0].id) or {}
+        for i, session in enumerate(raw.get("sessionHistory") or []):
+            key = str(session.get("sessionId") or f"idx{i}")
+            entry = sessions.setdefault(key, {"ended": None, "rows": []})
+            ended = session.get("endTime")
+            if ended and (entry["ended"] is None or str(ended) < entry["ended"]):
+                entry["ended"] = str(ended)
+            entry["rows"].append((team, session))
+    return sorted(sessions.items(), key=lambda kv: (kv[1]["ended"] is None, kv[1]["ended"] or "", kv[0]))
+
+
+# Only finals-sized lobbies get per-game points / positions (open rounds have thousands of teams).
+_PROGRESS_MAX_TEAMS = 300
+_NATIVE_POINT_KEYS = ("pointsEarned", "score", "points")
+
+
+def _native_points(session: dict):
+    for key in _NATIVE_POINT_KEYS:
+        if session.get(key) is not None:
+            try:
+                return float(session[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _game_progress(db: Session, tournament: Tournament) -> dict:
+    """Per-game points and leaderboard positions for a finals-sized tournament (see engine/game_standings.py), cached briefly.
+    {"available": False} when it can't be worked out reliably; otherwise {"available": True, "game_no": {sessionKey: n},
+    "teams": {team_key: {n: (points_in_game, running_total, position)}}}."""
+    return cached_call(("game-progress", tournament.id), 20, lambda: _build_game_progress(db, tournament))
+
+
+def _build_game_progress(db: Session, tournament: Tournament) -> dict:
+    off = {"available": False}
+    cfg = tournament.format_rules or {}
+    if cfg.get("lobby") == "open":
+        return off
+    rows = (
+        db.query(PlacementResult)
+        .options(defer(PlacementResult.raw_stats))
+        .filter(PlacementResult.tournament_id == tournament.id)
+        .order_by(PlacementResult.placement.asc(), PlacementResult.team_id.asc())
+        .all()
+    )
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(_team_key(r), []).append(r)
+    if not groups or len(groups) > _PROGRESS_MAX_TEAMS:
+        return off
+    first_ids = [g[0].id for g in groups.values()]
+    raw_by_id = {rid: raw for rid, raw in db.query(PlacementResult.id, PlacementResult.raw_stats).filter(PlacementResult.id.in_(first_ids)).all()}
+    teams = [[(r, None) for r in g] for g in groups.values()]
+    ordered = _collect_sessions(teams, raw_by_id)
+    if not ordered:
+        return off
+    game_no = {key: n for n, (key, _e) in enumerate(ordered, start=1)}
+
+    # Each team's games by number: (in-game placement, eliminations, points the session itself reported).
+    team_games: dict = {}
+    complete: dict = {}
+    for tkey, group in groups.items():
+        raw = raw_by_id.get(group[0].id) or {}
+        mine: dict = {}
+        for i, session in enumerate(raw.get("sessionHistory") or []):
+            n = game_no.get(str(session.get("sessionId") or f"idx{i}"))
+            if n is None:
+                continue
+            stats = session.get("trackedStats") or {}
+            place = _first_int(stats, _PLACEMENT_KEYS)
+            mine[n] = (place, _first_int(stats, _ELIM_KEYS), _native_points(session))
+            if place == 1:
+                complete[n] = True
+        team_games[tkey] = mine
+
+    totals = {tkey: (float(g[0].points) if g[0].points is not None else None) for tkey, g in groups.items()}
+    judged = [{"total": totals[k], "games": {n: (p, e) for n, (p, e, _np) in v.items()}} for k, v in team_games.items()]
+
+    per_game: dict = {}
+    native_all = all(np is not None for v in team_games.values() for (_p, _e, np) in v.values()) and any(team_games.values())
+    if native_all:
+        for k, v in team_games.items():
+            per_game[k] = {n: np for n, (_p, _e, np) in v.items()}
+        sums_ok = sum(1 for k in per_game if totals[k] is not None and abs(sum(per_game[k].values()) - totals[k]) <= 0.01)
+        if sums_ok < 0.9 * max(1, sum(1 for t in totals.values() if t is not None)):
+            per_game = {}
+    if not per_game:
+        rules = cfg.get("score_rules") or []
+        mode = game_standings.choose_mode(rules, judged)
+        if mode is None:
+            return off
+        for k, v in team_games.items():
+            per_game[k] = {n: game_standings.game_points(rules, p, e, mode) for n, (p, e, _np) in v.items()}
+    finals = {tkey: g[0].placement for tkey, g in groups.items()}
+    return {"available": True, "game_no": game_no, "teams": game_standings.build_progress(per_game, finals, complete, len(ordered))}
+
+
 @router.get("/{tournament_id}/games", response_model=TournamentGamesResponse)
 def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)) -> TournamentGamesResponse:
     """Every game (match) of the tournament, each with ALL teams ranked by their placement in that game plus
@@ -498,26 +617,19 @@ def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)
     if first_ids:
         raw_by_id = {rid: raw for rid, raw in db.query(PlacementResult.id, PlacementResult.raw_stats).filter(PlacementResult.id.in_(first_ids)).all()}
 
-    # session key -> {"ended": earliest endTime seen, "rows": [(team, session), ...]}
-    sessions: dict = {}
-    for team in teams:
-        raw = raw_by_id.get(team[0][0].id) or {}
-        for i, session in enumerate(raw.get("sessionHistory") or []):
-            key = str(session.get("sessionId") or f"idx{i}")
-            entry = sessions.setdefault(key, {"ended": None, "rows": []})
-            ended = session.get("endTime")
-            if ended and (entry["ended"] is None or str(ended) < entry["ended"]):
-                entry["ended"] = str(ended)
-            entry["rows"].append((team, session))
-
-    ordered = sorted(sessions.items(), key=lambda kv: (kv[1]["ended"] is None, kv[1]["ended"] or "", kv[0]))
+    ordered = _collect_sessions(teams, raw_by_id)
+    progress = _game_progress(db, tournament)
     games: list[GameResultsResponse] = []
     for number, (key, entry) in enumerate(ordered, start=1):
         team_rows: list[GameTeamRowResponse] = []
         for team, session in entry["rows"]:
             stats = session.get("trackedStats") or {}
+            step = (progress.get("teams", {}).get(_team_key(team[0][0]), {}).get(number)) if progress.get("available") else None
             team_rows.append(
                 GameTeamRowResponse(
+                    game_points=step[0] if step else None,
+                    points_after=step[1] if step else None,
+                    position_after=step[2] if step else None,
                     game_placement=_first_int(stats, _PLACEMENT_KEYS),
                     eliminations=_first_int(stats, _ELIM_KEYS),
                     time_alive=_first_int(stats, ("TIME_ALIVE_STAT",)),
@@ -548,7 +660,7 @@ def get_tournament_games(tournament_id: uuid.UUID, db: Session = Depends(get_db)
         if not g.complete and (tournament_over or g.game < last_complete):
             g.reported = False
             g.teams = []
-    return TournamentGamesResponse(tournament_id=tournament_id, games=games)
+    return TournamentGamesResponse(tournament_id=tournament_id, games=games, progress_available=bool(progress.get("available")))
 
 
 @router.get("/{tournament_id}/players/{player_id}/games", response_model=TeamGamesResponse)
@@ -584,10 +696,19 @@ def get_team_games(
         ):
             mates.append((other, p))
 
+    tournament = db.get(Tournament, tournament_id)
+    progress = _game_progress(db, tournament) if tournament is not None else {"available": False}
+    steps = progress.get("teams", {}).get(_team_key(result), {}) if progress.get("available") else {}
+    game_numbers = progress.get("game_no", {}) if progress.get("available") else {}
+
     raw = result.raw_stats or {}
     games: list[GameStatResponse] = []
     for i, session in enumerate(raw.get("sessionHistory") or [], start=1):
         stats = session.get("trackedStats") or {}
+        # Number games the way the whole tournament does (by game, not by this team's own list), so a team that sat a game out
+        # still lines up with the Game Results tab.
+        number = game_numbers.get(str(session.get("sessionId") or f"idx{i - 1}"), i)
+        step = steps.get(number)
         pts = session.get("pointsEarned")
         if pts is None:
             pts = session.get("score")
@@ -598,7 +719,10 @@ def get_team_games(
         ended = _first_present(session, ("endTime", "endedAt", "sessionEndTime", "endDate", "date"))
         games.append(
             GameStatResponse(
-                game=i,
+                game=number,
+                game_points=step[0] if step else None,
+                points_after=step[1] if step else None,
+                position_after=step[2] if step else None,
                 session_id=str(_first_present(session, ("sessionId", "matchId", "id")) or "") or None,
                 ended_at=str(ended) if ended is not None else None,
                 placement=_first_int(stats, _PLACEMENT_KEYS),
@@ -608,6 +732,7 @@ def get_team_games(
             )
         )
 
+    games.sort(key=lambda g: g.game)
     placements = [g.placement for g in games if g.placement is not None]
     elims = [g.eliminations for g in games if g.eliminations is not None]
     pts_list = [g.points for g in games if g.points is not None]
@@ -626,6 +751,7 @@ def get_team_games(
         total_eliminations=sum(elims) if elims else None,
         total_points=sum(pts_list, Decimal("0")) if pts_list else None,
         best_placement=min(placements) if placements else None,
+        progress_available=bool(progress.get("available")),
     )
 
 

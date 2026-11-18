@@ -235,7 +235,12 @@ class GameTeamRowResponse(BaseModel):
     time_alive: int | None = None
     damage_dealt: int | None = None
     damage_received: int | None = None
-    final_placement: int  # the team's overall tournament placement
+    final_placement: int  # the team's overall tournament placement (the CURRENT position while the tournament is live)
+    # Finals lobbies only (None otherwise, and for a game still being played): what this game earned, the running total after
+    # it, and the team's leaderboard position once this game was complete (ranked by games 1..N, by game number, not by time).
+    game_points: float | None = None
+    points_after: float | None = None
+    position_after: int | None = None
     members: list[TeamMemberResponse]
 
 
@@ -255,6 +260,7 @@ class GameResultsResponse(BaseModel):
 class TournamentGamesResponse(BaseModel):
     tournament_id: uuid.UUID
     games: list[GameResultsResponse]
+    progress_available: bool = False  # per-game points / positions could be worked out (finals lobbies with usable scoring)
 
 
 class GameStatResponse(BaseModel):
@@ -266,6 +272,10 @@ class GameStatResponse(BaseModel):
     placement: int | None = None
     eliminations: int | None = None
     points: Decimal | None = None
+    # Finals lobbies only: points this game earned, the team's running total after it, and its leaderboard position after it.
+    game_points: float | None = None
+    points_after: float | None = None
+    position_after: int | None = None
     # Every raw stat Osirion reported for that game (keys vary by mode/season), so nothing is hidden.
     stats: dict = {}
 
@@ -281,6 +291,7 @@ class TeamGamesResponse(BaseModel):
     total_eliminations: int | None = None
     total_points: Decimal | None = None
     best_placement: int | None = None
+    progress_available: bool = False
 
 
 class CalendarTournamentResponse(BaseModel):
