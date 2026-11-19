@@ -75,6 +75,13 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "this). It sets the price LEVEL of the whole market: chosen at launch so total market value is a multiple of the "
         "cash players hold (scripts/simulate_price_history.py --market-multiple), not a ceiling on prices.",
     ),
+    "market.anchor_value": (
+        Decimal("0"),
+        "0 = off (fair price = dividends per share / market.target_yield, so the price LEVEL follows the size of the dividend "
+        "pools). Above 0 = the total fair value of the whole market in dollars: the yield is then solved automatically so every "
+        "stock's fair price adds up to this, and a stock's fair price is just its SHARE of all expected dividends. Bigger or "
+        "smaller pools then change what holding a stock pays, never the price level; only relative dividends move prices.",
+    ),
     "dividend.platform_fee_pct": (
         Decimal("0.0"),
         "Fraction of each dividend pool kept by the platform before distribution to shareholders. "
@@ -97,11 +104,10 @@ DEFAULTS: dict[str, tuple[Decimal, str]] = {
         "Shares posted per bot ladder level, per side.",
     ),
     "fees.transaction_fee_pct": (
-        Decimal("0.0025"),
-        "Flat percentage fee charged to the TAKER (aggressor) side of every trade fill -- maker side pays "
-        "nothing. Matches the validated economy simulation's 0.25% transaction tax. Collected fees are "
-        "routed to the House account as a permanent sink on the user side of the ledger (see "
-        "app/services/order_service.py).",
+        Decimal("0.001"),
+        "Flat percentage fee (0.1% by default) charged to the TAKER (aggressor) side of every trade fill -- maker side pays "
+        "nothing. Collected fees are credited to the House account (they leave players' wallets but stay in the "
+        "economy; see app/services/order_service.py). Was 0.25% until it was lowered to 0.1%.",
     ),
     "auction.entry_fee": (
         Decimal("10000"),
@@ -267,6 +273,7 @@ RETUNED: dict[str, tuple[Decimal, Decimal]] = {
     "market.event_hourly_move": (Decimal("0.12"), Decimal("0.35")),
     "market.reference_damping_fraction": (Decimal("0.01"), Decimal("0.004")),
     "market.reference_damping_min": (Decimal("100"), Decimal("30")),
+    "fees.transaction_fee_pct": (Decimal("0.0025"), Decimal("0.001")),
 }
 
 

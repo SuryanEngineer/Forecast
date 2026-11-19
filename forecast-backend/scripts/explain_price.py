@@ -38,9 +38,9 @@ def main() -> None:
         return
     db = SessionLocal()
     try:
-        y = fair_price_service.refresh_target_yield(db)
         now = datetime.now(timezone.utc)
         inc, _shares = fair_price_service.income_per_share(db)
+        y = fair_price_service.effective_yield(db, inc, _shares)   # fixed target yield, or solved from the market anchor
         curve = economic_params_service.get_placement_curve(db)
         cutoff = now - timedelta(days=bots.INCOME_WINDOW_DAYS)
         print(f"target yield {y * 100:.2f}%   (fair price = shrunk yearly dividends per share / yield, floor ${bots.FAIR_MIN:g}, cap ${bots.FAIR_MAX:g})\n")

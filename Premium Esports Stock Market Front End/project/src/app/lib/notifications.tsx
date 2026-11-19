@@ -11,7 +11,7 @@ import { useAuth } from './auth';
 
 export interface NotificationItem {
   id: string;
-  kind: 'trade' | 'order_cancelled' | 'dividend' | 'tournament_start' | 'tournament_end' | 'game_win' | string;
+  kind: 'trade' | 'order_cancelled' | 'dividend' | 'tournament_start' | 'tournament_end' | 'game_win' | 'announcement' | string;
   title: string;
   body: string;
   data: Record<string, any>;

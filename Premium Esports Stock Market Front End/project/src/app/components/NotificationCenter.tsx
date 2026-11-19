@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCircle2, DollarSign, Play, Trophy, X, XCircle } from 'lucide-react';
+import { Bell, CheckCircle2, DollarSign, Megaphone, Play, Trophy, X, XCircle } from 'lucide-react';
 import { useNotifications, type NotificationItem, type Toast } from '../lib/notifications';
 import { usd } from '../lib/format';
 
@@ -15,6 +15,7 @@ function lookFor(item: NotificationItem): Look {
     case 'tournament_end': return { color: 'var(--accent)', bg: 'rgba(155,111,255,0.14)' };
     case 'game_win': return { color: AMBER, bg: 'rgba(251,191,36,0.14)' };
     case 'order_cancelled': return { color: 'var(--loss)', bg: 'rgba(255,61,92,0.12)' };
+    case 'announcement': return { color: 'var(--primary)', bg: 'rgba(0,200,255,0.14)' };
     default: return { color: 'var(--muted-foreground)', bg: 'rgba(255,255,255,0.06)' };
   }
 }
@@ -28,6 +29,7 @@ function KindIcon({ kind, color }: { kind: string; color: string }) {
     case 'tournament_end': return <CheckCircle2 className={cls} style={style} />;
     case 'game_win': return <Trophy className={cls} style={style} />;
     case 'order_cancelled': return <XCircle className={cls} style={style} />;
+    case 'announcement': return <Megaphone className={cls} style={style} />;
     default: return <Bell className={cls} style={style} />;
   }
 }

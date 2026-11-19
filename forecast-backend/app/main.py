@@ -356,7 +356,7 @@ def health() -> dict:
     try:  # bot loop activity since this process started: ticks run, orders placed, flow trades, tick durations
         from app.services import bot_trading_service
 
-        out["bots"] = dict(bot_trading_service.STATS)
+        out["bots"] = {**bot_trading_service.STATS, "flow": dict(bot_trading_service.FLOW_DIAG)}
     except Exception:  # noqa: BLE001 -- /health must always answer
         pass
     return out

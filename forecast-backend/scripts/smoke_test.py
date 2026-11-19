@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 sys.path.insert(0, ".")
 
@@ -122,11 +122,13 @@ def main() -> None:
         alice_wallet = wallet_service.get_or_create_wallet(db, alice.id)
         # Hold includes fee headroom (price * qty * (1 + transaction_fee_pct))
         # since we don't yet know if Alice will end up taker or maker --
-        # see app/services/order_service.py. Default fee is 0.25%, so
-        # 9.50 * 10 * 1.0025 = 95.2375.
+        # see app/services/order_service.py. With the default 0.1% fee,
+        # 9.50 * 10 * 1.001 = 95.095 (computed from the live parameter below).
+        fee_pct = economic_params_service.get_param(db, "fees.transaction_fee_pct")
+        expected_hold = Decimal("9.50") * 10 * (Decimal("1") + fee_pct)
         check(
             "Alice's cash is held (not spent) for the resting order, including fee headroom",
-            alice_wallet.held_balance == Decimal("95.2375") and alice_wallet.cash_balance == Decimal("1000.0000"),
+            alice_wallet.held_balance == expected_hold and alice_wallet.cash_balance == Decimal("1000.0000"),
             f"held={alice_wallet.held_balance} cash={alice_wallet.cash_balance}",
         )
 
@@ -165,12 +167,13 @@ def main() -> None:
         # --- Transaction fee flow ---
         # Bob's limit sell was the TAKER in that fill (it's the order that
         # arrived and crossed Alice's resting bid), so Bob -- not Alice --
-        # owes the 0.25% transaction fee, credited to the House account.
-        # fee = floor_to_cent(95.00 * 0.0025) = floor(0.2375) = 0.23
+        # owes the transaction fee (0.1% by default), credited to the House account.
+        # fee = floor_to_cent(95.00 * fee_pct) = floor(0.095) = 0.09 at 0.1%
+        expected_fee = (Decimal("95.00") * fee_pct).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         house_wallet = wallet_service.get_or_create_wallet(db, house_user.id)
         check(
-            "House account received exactly the 0.23 transaction fee from Bob's taker fill",
-            house_wallet.cash_balance - house_cash_before_fee_trade == Decimal("0.23"),
+            f"House account received exactly the {expected_fee} transaction fee from Bob's taker fill",
+            house_wallet.cash_balance - house_cash_before_fee_trade == expected_fee,
             f"house cash before={house_cash_before_fee_trade} after={house_wallet.cash_balance}",
         )
 

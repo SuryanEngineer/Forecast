@@ -169,7 +169,7 @@ def main() -> None:
         house_div = sum(per_share_year.get(pid, 0.0) * q for pid, q in held["house"].items())
         player_div = sum(per_share_year.get(pid, 0.0) * q for g in ("human", "bot") for pid, q in held[g].items())
         print(f"   who actually receives it at today's ownership: House ~{money(house_div)}/yr, players ~{money(player_div)}/yr")
-        print(f"   (House cash {money(cash['house'])} pays for buying shares back from sellers; its dividends and the 0.25% trading fees refill it)")
+        print(f"   (House cash {money(cash['house'])} pays for buying shares back from sellers; its dividends and the trading fees refill it)")
         ys = []
         pairs = []
         for pid, dps in per_share_year.items():

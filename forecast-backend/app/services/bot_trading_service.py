@@ -133,6 +133,7 @@ HISTORY_MAX_RESULTS_PER_PLAYER = 20
 TARGET_YIELD = 0.10          # a fairly priced stock pays about 10% a year in dividends (cash in the treasury pays ~1%)
 FAIR_MIN = 1.00              # nobody holds a stock that pays nothing, but it is never literally free
 FAIR_MAX = 5000.0
+DEFAULT_FEE = 0.001          # fallback only: the live rate is the platform parameter fees.transaction_fee_pct (0.1%)
 INCOME_WINDOW_DAYS = 365     # dividends are projected from the last 12 months of results
 MIN_OBSERVED_DAYS = 90       # ...scaled up to a full year when we have seen fewer days than that
 FLOAT_CAP = 0.20             # no bot holds more than 20% of one stock's shares
@@ -325,14 +326,15 @@ def income_at(events: list[tuple[datetime, float]], at: datetime, first_seen: da
     return total * INCOME_WINDOW_DAYS / observed
 
 
-def _fair_from_income(income_per_share: float | None) -> Decimal:
+def _fair_from_income(income_per_share: float | None, target_yield: float | None = None) -> Decimal:
     """Fair price = expected dividends per share over the next year / TARGET_YIELD. A stock that pays $10 a share a year
     is worth $100 at a 10% yield; one that pays nothing is worth FAIR_MIN. Price therefore follows earnings one-for-one
     (a star who earns 100x a journeyman is worth ~100x), which keeps the yield on every stock in the same ballpark and
     leaves no stock that is a bargain just because the formula squashed it."""
     if income_per_share is None or income_per_share <= 0:
         return Decimal(str(FAIR_MIN))
-    return Decimal(str(round(_clamp(income_per_share / TARGET_YIELD, FAIR_MIN, FAIR_MAX), 4)))
+    y = target_yield if target_yield and target_yield > 0 else TARGET_YIELD
+    return Decimal(str(round(_clamp(income_per_share / y, FAIR_MIN, FAIR_MAX), 4)))
 
 
 def _realized_dividends_per_share(db: Session, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[float]]:
@@ -1134,7 +1136,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
         # Standing quotes sit a hair (the fee plus a little) either side of the bot's OWN value, not at its wide "required
         # edge" (`m`, which only decides when it takes someone else's price). A bot that thinks the stock is dear (or cheap)
         # still leaves a low (high) standing quote at the edge of the range instead of no quote, so the book has both sides.
-        fee = float(params.get("transaction_fee_pct", 0.0025))
+        fee = float(params.get("transaction_fee_pct", DEFAULT_FEE))
         bid, ask = market_policy.resting_quote_prices(v, px, fee + pers["quote_slack"], reach, REST_FLOOR, REST_CEIL)
         pos = holdings.get(pid)
         can_ask = ask > 0 and pos is not None and pos.available_quantity > 0
@@ -1178,7 +1180,11 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
     return acted
 
 
-def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int, fee: float = 0.0025) -> int:
+# Why the background flow did or did not trade, since the process started (shown under "bots" -> "flow" on /health).
+FLOW_DIAG: dict = {"picks": 0, "no_value": 0, "no_edge": 0, "blocked": 0, "no_qty": 0, "rejected": 0, "last_reject": None, "crashes": 0, "last_crash": None}
+
+
+def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int, fee: float = DEFAULT_FEE) -> int:
     """Steady background trading across the WHOLE market: `n` instant trades per tick, each made by a bot acting on its OWN
     valuation of one stock (see _bot_value) -- nothing here pushes a price anywhere.
 
@@ -1218,6 +1224,7 @@ def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: ra
         px = float(snapshot.price.get(pid, 0))
         if px <= 0:
             continue
+        FLOW_DIAG["picks"] += 1
         crowd = rng.sample(agents, min(8, len(agents)))
         owners = holders.get(pid) or []
         if owners:
@@ -1227,20 +1234,24 @@ def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: ra
             pers = _personality(a.user_id, a.strategy)
             v = _bot_value(snapshot, pid, pers, a.user_id, now_ts)
             if v is None:
+                FLOW_DIAG["no_value"] += 1
                 continue
             gap = math.log(v / px)
             need = 2.0 * fee + 0.004 + 0.2 * pers["margin"]  # the fee both ways plus this bot's own required edge
             if abs(gap) <= need:
+                FLOW_DIAG["no_edge"] += 1
                 continue
             st = _get_state(db, a.user_id)
             pos = st.positions.get(pid)
             if gap > 0:
                 side = OrderSide.BUY
                 if float(st.wallet.available_balance) < 1.2 * px:
+                    FLOW_DIAG["blocked"] += 1
                     continue
             else:
                 side = OrderSide.SELL
                 if pos is None or pos.available_quantity <= 0:
+                    FLOW_DIAG["blocked"] += 1
                     continue
             if best is None or abs(gap) - need > best[0]:
                 best = (abs(gap) - need, a, side, gap)
@@ -1261,15 +1272,18 @@ def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: ra
             else:
                 qty = min(qty, state.positions[pid].available_quantity)
             if qty <= 0:
+                FLOW_DIAG["no_qty"] += 1
                 continue
             if _submit(db, bot.user_id, pid, side, qty, None):
                 db.commit()
                 _reload_state(db, bot.user_id)
                 _note_order(pid, time.time())
                 done += 1
-        except (ServiceError, ValueError):
+        except (ServiceError, ValueError) as exc:
             db.rollback()
             _BOT_STATE.pop(bot.user_id, None)
+            FLOW_DIAG["rejected"] += 1
+            FLOW_DIAG["last_reject"] = f"{type(exc).__name__}: {exc}"[:160]
     return done
 
 
@@ -1518,8 +1532,10 @@ def _run_bot_tick(db: Session, rng: random.Random | None = None) -> dict:
 
     flow = 0
     try:
-        flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK), float(params.get("transaction_fee_pct", 0.0025)))
-    except Exception:  # noqa: BLE001 -- background flow must never break the tick
+        flow = _run_micro_flow(db, agents, snapshot, rng, int(settings.BOT_FLOW_TRADES_PER_TICK), float(params.get("transaction_fee_pct", DEFAULT_FEE)))
+    except Exception as exc:  # noqa: BLE001 -- background flow must never break the tick
         db.rollback()
+        FLOW_DIAG["crashes"] += 1
+        FLOW_DIAG["last_crash"] = f"{type(exc).__name__}: {exc}"[:200]
     _memory_watch(db)
     return {"population": len(bots), "active": len(active), "actions": actions + flow, "flow": flow, "errors": errors}

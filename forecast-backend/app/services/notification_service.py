@@ -112,6 +112,25 @@ def notify(
         return False
 
 
+# ---------------------------------------------------------------- announcements
+
+
+def announce_to_all(db: Session, title: str, body: str, ref_key: str, data: dict | None = None) -> int:
+    """One 'announcement' notification for every real, active user (not bots, not the House, not @test.local smoke-test
+    accounts). `ref_key` makes it idempotent: running it again never notifies anyone twice. Caller commits. Returns how many
+    users were notified."""
+    ids = [
+        uid for (uid,) in db.query(User.id)
+        .filter(User.is_active.is_(True), User.email != HOUSE_ACCOUNT_EMAIL, ~User.email.ilike("%@test.local"))
+        .all()
+    ]
+    sent = 0
+    for uid in real_user_ids(db, ids):
+        if notify(db, uid, "announcement", title, body, data=data, ref_key=ref_key):
+            sent += 1
+    return sent
+
+
 # ---------------------------------------------------------------- trades / orders
 
 

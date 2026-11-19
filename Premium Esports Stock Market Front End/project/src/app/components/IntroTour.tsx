@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BenchmarkText, useBenchmarkPct } from './Benchmark';
+import { TRANSACTION_FEE, TRANSACTION_FEE_LABEL } from '../lib/fees';
 
 interface Props {
   onClose: () => void;
@@ -90,7 +91,7 @@ function FlowSnip() {
 // --- 2. Reading a price, and what trade size costs ---------------------------------------------------------------
 function SpreadDemo() {
   const LISTED = 50;
-  const FEE = 0.0025;
+  const FEE = TRANSACTION_FEE;
   const sizes = [1, 10, 100, 500];
   const [qty, setQty] = useState(10);
   // Illustrative: the House's price worsens with order size (see the Guide), on top of a tiny base gap.
@@ -155,7 +156,7 @@ function TradeTypeDemo() {
                 <span className="px-2 py-0.5 rounded-full font-bold" style={{ fontSize: 10, background: 'rgba(16,217,160,0.15)', color: GAIN }}>Filled instantly</span>
               </div>
               <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                You take the best price available right now, even if you must pay the Buy price. Instant, certain, and you pay a 0.25% fee.
+                You take the best price available right now, even if you must pay the Buy price. Instant, certain, and you pay a {TRANSACTION_FEE_LABEL} fee.
               </p>
             </Card>
           )}

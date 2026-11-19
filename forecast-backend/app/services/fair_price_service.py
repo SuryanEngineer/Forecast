@@ -3,6 +3,9 @@ The dividend-based FAIR price of every active stock, in one place (order band, b
 
     fair = projected yearly dividends per share / TARGET_YIELD         (see bot_trading_service._fair_from_income)
 
+With the market anchor on (platform parameter market.anchor_value > 0) TARGET_YIELD is solved so that all fair prices add up to
+the anchor: a stock is worth its SHARE of all expected dividends, so the size of the pools never moves the price level.
+
 Projected income is the last 12 months of results, but ONE huge result must not price a stock for a whole year. So the
 stock's own income is SHRUNK toward the roster's typical income, more strongly the fewer results it is based on:
 
@@ -39,9 +42,43 @@ def shrunk_income(own: float, n: int, prior: float, k: float = SHRINK_K) -> floa
     return w * own + (1.0 - w) * prior
 
 
+def anchor_value(db: Session) -> float:
+    """Total fair market value in dollars (platform parameter market.anchor_value); 0 = off (fixed target yield)."""
+    try:
+        v = float(economic_params_service.get_param(db, "market.anchor_value"))
+    except Exception:  # noqa: BLE001 -- never let a missing/odd parameter break pricing
+        return 0.0
+    return v if v > 0 else 0.0
+
+
+def effective_yield(db: Session, inc: dict, shares: dict, live: bool = True) -> float:
+    """The yield fair prices are computed with.
+
+    Anchor off: the stored market.target_yield (fair price level follows the dividend pools).
+    Anchor on: the yield that makes every stock's fair price add up to the anchor, solved from today's projected incomes. A
+    stock's fair price is then its SHARE of all expected dividends times the anchor, so multiplying every pool by k multiplies
+    every income and the yield by k and leaves every price exactly where it was; only RELATIVE dividends move prices.
+    `live` also stores it as the in-process yield the rest of the pricing code reads."""
+    anchor = anchor_value(db)
+    if anchor <= 0:
+        return refresh_target_yield(db)
+    pids = list(inc)
+    if not pids:
+        return bots.TARGET_YIELD
+    from app.engine import market_policy
+
+    y = market_policy.solve_target_yield([inc[p] for p in pids], [shares[p] for p in pids], anchor, bots.FAIR_MIN, bots.FAIR_MAX)
+    if live and y > 0:
+        bots.TARGET_YIELD = y
+    return y if y > 0 else bots.TARGET_YIELD
+
+
 def refresh_target_yield(db: Session) -> float:
     """Loads the stored target yield (platform parameter market.target_yield) into the live pricing formula. Called before
-    any fair price is computed, so changing the parameter (scripts/simulate_price_history.py --market-multiple) is all it takes."""
+    any fair price is computed, so changing the parameter (scripts/simulate_price_history.py --market-multiple) is all it takes.
+    With the market anchor on the yield is solved from the incomes instead (effective_yield), so this leaves it alone."""
+    if anchor_value(db) > 0:
+        return bots.TARGET_YIELD
     try:
         y = float(economic_params_service.get_param(db, "market.target_yield"))
     except Exception:  # noqa: BLE001 -- never let a missing/odd parameter break pricing
@@ -75,9 +112,9 @@ def income_per_share(db: Session, exclude_tournament_ids: list[uuid.UUID] | None
 
 def compute_fair(db: Session, exclude_tournament_ids: list[uuid.UUID] | None = None, at: datetime | None = None) -> dict[uuid.UUID, Decimal]:
     """Fair price for every ACTIVE player right now (or `at`), optionally ignoring some tournaments."""
-    refresh_target_yield(db)
-    inc, _shares = income_per_share(db, exclude_tournament_ids, at)
-    return {pid: bots._fair_from_income(v) for pid, v in inc.items()}
+    inc, shares = income_per_share(db, exclude_tournament_ids, at)
+    y = effective_yield(db, inc, shares, live=exclude_tournament_ids is None and at is None)
+    return {pid: bots._fair_from_income(v, y) for pid, v in inc.items()}
 
 
 def solve_target_yield(db: Session, market_value: float) -> float:

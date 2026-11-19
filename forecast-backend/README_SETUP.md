@@ -25,7 +25,7 @@ type. Total cost: **$0** while you're prototyping.
   ($300k Cash Cup / $1.5M FNCS / $3M Global Championship) that match the
   validated economy simulation's locked-in numbers, instead of a
   real-world Fortnite prize pool
-- A 0.25% transaction fee charged to the taker side of every trade fill
+- A 0.1% transaction fee charged to the taker side of every trade fill
   (maker pays nothing), matching the simulation's locked-in tax rate
 - Every new user automatically starts with $1,000,000 in fantasy cash at
   registration, matching the simulation's per-participant starting
@@ -312,7 +312,7 @@ A quick end-to-end path to try by hand:
    "bid_amount": ...}` for each player they want; as admin,
    `POST /api/v1/admin/auctions/{round_id}/finalize` to allocate shares
    and settle cash for every player that received a bid.
-4. `POST /api/v1/orders/quick` -- quick-buy some shares. A 0.25%
+4. `POST /api/v1/orders/quick` -- quick-buy some shares. A 0.1%
    transaction fee is charged to whichever side is the taker (see
    `fees.transaction_fee_pct`) -- the maker side pays nothing.
 5. As admin: `POST /api/v1/admin/tournaments`, then
@@ -387,7 +387,7 @@ where and how:
   (`dividend.platform_fee_pct`), the House bot market-maker's ladder
   shape (`bot_liquidity.num_levels`, `.step_pct`, `.spread_pct`,
   `.qty_per_level`), the per-trade transaction fee
-  (`fees.transaction_fee_pct`, default 0.25%, taker pays), the flat
+  (`fees.transaction_fee_pct`, default 0.1%, taker pays), the flat
   auction entry fee (`auction.entry_fee`, default $10,000 -- see
   `POST /api/v1/admin/auctions` below), the fixed synthetic dividend pools for Cash Cup / FNCS / Global
   Championship tournaments (`dividend.cash_cup_pool`,

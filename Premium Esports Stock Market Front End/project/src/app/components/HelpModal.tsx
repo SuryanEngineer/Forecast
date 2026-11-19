@@ -15,6 +15,7 @@
 // verbatim from the demo. If those backend defaults ever change, this
 // copy should be updated alongside them.
 import { BenchmarkText, TargetYield, BandLow, BandHigh } from './Benchmark';
+import { TRANSACTION_FEE_LABEL } from '../lib/fees';
 import { useEffect, useState, type ReactNode } from 'react';
 import { BadgeCheck, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -310,7 +311,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
       },
       {
         heading: 'Do not churn',
-        body: <p>Every instant trade pays the gap and a 0.25% fee. Limit orders skip the gap and, if they rest, the fee. Buying and
+        body: <p>Every instant trade pays the gap and a {TRANSACTION_FEE_LABEL} fee. Limit orders skip the gap and, if they rest, the fee. Buying and
         immediately selling always loses a little.</p>,
       },
       {
@@ -333,7 +334,7 @@ export const HELP_TOPICS: Record<HelpTopicId, HelpTopic> = {
         heading: 'The full list',
         body: (
           <div className="space-y-1.5">
-            <Fact label="Transaction fee (taker only)" value="0.25%" />
+            <Fact label="Transaction fee (taker only)" value={TRANSACTION_FEE_LABEL} />
             <Fact label="Fee if your limit order rests and is filled" value="None" />
             <Fact label="Minimum share price" value="$0.50" />
             <Fact label="Platform cut of dividends" value="None right now" />
