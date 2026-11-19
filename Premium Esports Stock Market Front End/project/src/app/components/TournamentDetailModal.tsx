@@ -1,14 +1,13 @@
 import { MobileClose } from './MobileClose';
 import { useEffect, useMemo, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Trophy, X } from 'lucide-react';
+import { Calendar, Trophy, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../lib/api';
-import { useLiveLeaderboard, useMarketsByIds } from '../lib/hooks';
+import { useMarketsByIds } from '../lib/hooks';
 import { toNumber, type TournamentResponse } from '../lib/types';
 import { titledName } from '../lib/tournamentName';
-import { placementBadgeStyle } from '../lib/placement';
 import { VerifiedBadge } from './HelpModal';
-import { GamesTab, TeamLeaderboard } from './TeamLeaderboard';
+import { TeamLeaderboard } from './TeamLeaderboard';
 import { usd } from '../lib/format';
 
 interface Props {
@@ -22,139 +21,6 @@ interface Props {
 // This modal IS the "dedicated page" for one tournament's full leaderboard
 // (see Tournaments.tsx's compact previews, which link here) -- so it can
 // afford a much bigger page size than an inline card would.
-const DETAIL_PAGE_SIZE = 100;
-
-function PageControls({
-  page,
-  totalPages,
-  total,
-  onPage,
-}: {
-  page: number;
-  totalPages: number;
-  total: number;
-  onPage: (p: number) => void;
-}) {
-  if (totalPages <= 1) return null;
-  return (
-    <div className="flex items-center justify-between pt-1">
-      <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-        {total.toLocaleString()} total &middot; page {page} of {totalPages}
-      </p>
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={() => onPage(page - 1)}
-          disabled={page <= 1}
-          className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
-          style={{ background: 'var(--muted)' }}
-        >
-          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-        </button>
-        <button
-          onClick={() => onPage(page + 1)}
-          disabled={page >= totalPages}
-          className="p-1.5 rounded-lg transition-colors hover:bg-white/[0.06] disabled:opacity-30"
-          style={{ background: 'var(--muted)' }}
-        >
-          <ChevronRight className="w-4 h-4 text-muted-foreground" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// The dedicated full-leaderboard view for a tournament still in progress --
-// this is what a compact preview card (Tournaments.tsx's "Happening Now")
-// links to. Separate from the finalized-results branch below since a live
-// LiveLeaderboardEntry has no team_id/prize_won/percentile yet (those only
-// exist once PlacementResult rows are written at finalization).
-function LiveStandingsSection({
-  tournamentId,
-  data,
-  loading,
-  failures,
-  page,
-  onPage,
-  onOpenPlayer,
-}: {
-  tournamentId: string;
-  data: ReturnType<typeof useLiveLeaderboard>['data'];
-  loading: boolean;
-  failures: number;
-  page: number;
-  onPage: (p: number) => void;
-  onOpenPlayer: (id: string) => void;
-}) {
-  const [tab, setTab] = useState<'standings' | 'games'>('standings');
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-1.5 p-1 rounded-xl w-full sm:w-fit" style={{ background: 'var(--muted)' }}>
-        {([['standings', 'Live standings'], ['games', 'Game log']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className="rounded-lg font-semibold transition-colors"
-            style={{
-              fontSize: 12.5,
-              padding: '8px 12px', flex: 1,
-              background: tab === id ? 'var(--card)' : 'transparent',
-              color: tab === id ? 'var(--foreground)' : 'var(--muted-foreground)',
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {tab === 'games' ? (
-        <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} live />
-      ) : !data ? (
-        // Nothing loaded yet: "Loading…" (it keeps retrying on its own), and only after several failed tries "Failed to fetch".
-        // The moment a retry succeeds `data` is set and this message is gone.
-        <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>
-          {failures >= 3 ? 'Failed to fetch the live standings. Retrying…' : 'Loading live standings…'}
-        </p>
-      ) : !data.teams || data.teams.length === 0 ? (
-        <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No standings are available yet. Check back once the tournament is underway.</p>
-      ) : (
-        <div className="space-y-2">
-          <p className="text-muted-foreground uppercase" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
-            Live standings ({data.total_entries.toLocaleString()} {data.teams.every(t => t.members.length === 1) ? 'players' : 'teams'})
-          </p>
-          <div className="space-y-1.5">
-            {data.teams.map(team => (
-              <div
-                key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}
-                className="w-full flex items-center gap-3 p-3 rounded-2xl"
-                style={{ background: 'var(--muted)' }}
-              >
-                <div
-                  className="w-9 h-8 rounded-xl flex items-center justify-center font-mono font-bold shrink-0"
-                  style={{ fontSize: 12, ...placementBadgeStyle(team.placement) }}
-                >
-                  #{team.placement}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                    {team.members.map(m => (
-                      <button key={m.player_id} onClick={() => onOpenPlayer(m.player_id)} className="text-foreground font-semibold truncate hover:opacity-80" style={{ fontSize: 13.5 }}>
-                        {m.gamertag}<VerifiedBadge show={m.is_verified} />
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-                    {team.eliminations !== null ? `${team.eliminations} elims` : ''}
-                    {team.points !== null ? `${team.eliminations !== null ? ' · ' : ''}${toNumber(team.points)} pts` : ''}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <PageControls page={page} totalPages={data.total_pages} total={data.total_entries} onPage={onPage} />
-        </div>
-      )}
-    </div>
-  );
-}
 
 interface TournamentEntrant {
   player_id: string;
@@ -258,7 +124,6 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
   // see the full leaderboard" dedicated view the compact preview cards link
   // to -- so it polls the same live-leaderboard endpoint they do, just at a
   // full page size with real pagination instead of a capped preview.
-  const [livePage, setLivePage] = useState(1);
   // phase, not raw status -- status stays 'results_pending' for a
   // tournament's whole life until it finalizes (see Tournaments.tsx's
   // CalendarRow comment), so it doesn't by itself mean "poll for live
@@ -267,11 +132,6 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
   // finalized tournament uses -- whatever's been recorded so far, without
   // polling something that's no longer moving.
   const isLive = tournament.phase === 'live';
-  const { data: liveData, loading: liveLoading, failures: liveFailures } = useLiveLeaderboard(
-    isLive ? tournament.id : null,
-    livePage,
-    DETAIL_PAGE_SIZE
-  );
 
   // Before any placement results exist, show who's already qualified (see
   // GET /tournaments/{id}/entrants -- populated from a sibling
@@ -389,18 +249,8 @@ export function TournamentDetailModal({ tournament, onClose, onOpenPlayer, focus
                 This one hasn't happened yet. Results and the final leaderboard appear here once it's underway.
               </p>
             </div>
-          ) : isLive ? (
-            <LiveStandingsSection
-              tournamentId={tournament.id}
-              data={liveData}
-              loading={liveLoading}
-              failures={liveFailures}
-              page={livePage}
-              onPage={setLivePage}
-              onOpenPlayer={onOpenPlayer}
-            />
           ) : (
-            <TeamLeaderboard tournamentId={tournament.id} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} />
+            <TeamLeaderboard tournamentId={tournament.id} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} live={isLive} />
           )}
         </div>
       </motion.div>

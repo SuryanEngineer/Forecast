@@ -141,12 +141,15 @@ function TeamCard({
   team,
   tournamentId,
   estimate,
+  projected = false,
   onOpenPlayer,
   focused = false,
 }: {
   team: TeamResultResponse;
   tournamentId: string;
   estimate: boolean;
+  /** Live tournament: your payout is not paid yet, so it is shown as shares at the start x the per-share amount NOW. */
+  projected?: boolean;
   onOpenPlayer: (id: string) => void;
   /** The team a profile link pointed at: scrolled into view, outlined, and its game-by-game results opened. */
   focused?: boolean;
@@ -157,7 +160,12 @@ function TeamCard({
     if (focused) cardRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [focused]);
   const pool = team.team_pool_amount !== null ? toNumber(team.team_pool_amount) : null;
-  const mine = team.my_payout !== null ? toNumber(team.my_payout) : null;
+  const projectedPay = (m: TeamResultResponse['members'][number]): number | null =>
+    m.my_payout !== null ? toNumber(m.my_payout)
+      : projected && (m.my_shares_at_start ?? 0) > 0 && m.per_share_amount !== null ? (m.my_shares_at_start ?? 0) * toNumber(m.per_share_amount) : null;
+  const mine = projected
+    ? team.members.reduce<number | null>((sum, m) => { const v = projectedPay(m); return v === null ? sum : (sum ?? 0) + v; }, null)
+    : team.my_payout !== null ? toNumber(team.my_payout) : null;
   const hasStake = mine !== null || (team.my_shares_at_start ?? 0) > 0;
   const label = team.members.length === 1 ? null : team.members.length === 2 ? 'Duo' : 'Squad';
 
@@ -167,7 +175,7 @@ function TeamCard({
     const m = team.members[0];
     const mPool = m.pool_amount !== null ? toNumber(m.pool_amount) : null;
     const perShare = m.per_share_amount !== null ? toNumber(m.per_share_amount) : null;
-    const myPay = m.my_payout !== null ? toNumber(m.my_payout) : null;
+    const myPay = projectedPay(m);
     const owned = (m.my_shares_at_start ?? 0) > 0;
     const stats = [
       team.eliminations !== null ? `${team.eliminations} elims` : null,
@@ -205,7 +213,7 @@ function TeamCard({
           <span
             className="font-mono font-bold text-right shrink-0"
             style={{ fontSize: 12.5, minWidth: 56, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}
-            title={estimate ? 'estimated total payout' : 'total payout'}
+            title={estimate || projected ? 'projected total payout' : 'total payout'}
           >
             {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
           </span>
@@ -215,9 +223,9 @@ function TeamCard({
           <span className="text-right shrink-0 sm:min-w-[92px]">
             {myPay !== null && myPay > 0 ? (
               <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono font-bold" style={{ fontSize: 12, background: 'rgba(251,191,36,0.16)', color: GOLD }}>
-                <Coins className="w-3 h-3" /> +{money(myPay)}
+                <Coins className="w-3 h-3" /> {projected ? '~' : '+'}{money(myPay)}
               </span>
-            ) : owned && !estimate ? (
+            ) : owned && !estimate && !projected ? (
               <span style={{ fontSize: 11, color: GOLD, fontWeight: 600 }}>pending</span>
             ) : null}
           </span>
@@ -278,7 +286,7 @@ function TeamCard({
             {team.members.map(m => {
               const mPool = m.pool_amount !== null ? toNumber(m.pool_amount) : null;
               const perShare = m.per_share_amount !== null ? toNumber(m.per_share_amount) : null;
-              const myPay = m.my_payout !== null ? toNumber(m.my_payout) : null;
+              const myPay = projectedPay(m);
               return (
                 <div key={m.player_id} className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1">
                   <button
@@ -299,7 +307,7 @@ function TeamCard({
                     <p className="font-mono font-bold" style={{ fontSize: 13, color: mPool && mPool > 0 ? 'var(--gain)' : 'var(--muted-foreground)' }}>
                       {mPool !== null && mPool > 0 ? money(mPool) : '$0'}
                     </p>
-                    <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>{estimate ? 'est. total payout' : 'total payout'}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 9.5 }}>{estimate ? 'est. total payout' : projected ? 'projected payout' : 'total payout'}</p>
                   </div>
                   <div className="text-left sm:text-right shrink-0 sm:min-w-[84px]">
                     <p className="font-mono font-semibold text-foreground" style={{ fontSize: 13 }}>
@@ -311,11 +319,11 @@ function TeamCard({
                     {myPay !== null && myPay > 0 ? (
                       <div className="rounded-lg px-2 py-1" style={{ background: 'rgba(251,191,36,0.16)', border: '1px solid rgba(251,191,36,0.5)' }}>
                         <p className="font-mono font-bold flex items-center justify-end gap-1" style={{ fontSize: 13, color: GOLD }}>
-                          <Coins className="w-3.5 h-3.5" /> +{money(myPay)}
+                          <Coins className="w-3.5 h-3.5" /> {projected ? '~' : '+'}{money(myPay)}
                         </p>
-                        <p style={{ fontSize: 9, color: GOLD }}>your payout</p>
+                        <p style={{ fontSize: 9, color: GOLD }}>{projected ? 'your projected payout' : 'your payout'}</p>
                       </div>
-                    ) : (m.my_shares_at_start ?? 0) > 0 && !estimate ? (
+                    ) : (m.my_shares_at_start ?? 0) > 0 && !estimate && !projected ? (
                       <div className="rounded-lg px-2 py-1" style={{ background: 'rgba(251,191,36,0.10)', border: '1px dashed rgba(251,191,36,0.45)' }}>
                         <p style={{ fontSize: 11, color: GOLD, fontWeight: 600 }}>payout pending</p>
                       </div>
@@ -332,7 +340,7 @@ function TeamCard({
             <p className="font-mono font-bold" style={{ fontSize: 15, color: 'var(--gain)' }}>{pool !== null ? money(pool) : '$0'}</p>
             <p className="text-muted-foreground" style={{ fontSize: 10 }}>team total</p>
             {mine !== null && mine > 0 && (
-              <p className="font-mono font-bold mt-1" style={{ fontSize: 12, color: GOLD }}>you +{money(mine)}</p>
+              <p className="font-mono font-bold mt-1" style={{ fontSize: 12, color: GOLD }}>you {projected ? '~' : '+'}{money(mine)}</p>
             )}
           </div>
         )}
@@ -374,7 +382,7 @@ function Pager({ page, totalPages, total, noun, onPage }: { page: number; totalP
   );
 }
 
-function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamentId: string; onOpenPlayer: (id: string) => void; focusPlayerId?: string }) {
+function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId, live = false }: { tournamentId: string; onOpenPlayer: (id: string) => void; focusPlayerId?: string; live?: boolean }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PaginatedTeamResultResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -384,36 +392,59 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    const focusParam = pendingFocus.current ? `&focus_player_id=${pendingFocus.current}` : '';
-    api
-      .get<PaginatedTeamResultResponse>(`/tournaments/${tournamentId}/teams?page=${page}&page_size=${PAGE_SIZE}${focusParam}`)
-      .then(r => {
-        if (cancelled) return;
-        setData(r);
-        if (pendingFocus.current) {
-          pendingFocus.current = undefined;
-          if (r.page !== page) setPage(r.page);
-        }
-      })
-      .catch(() => { if (!cancelled) setData(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tournamentId, page]);
+    const run = (silent: boolean) => {
+      if (!silent) setLoading(true);
+      const focusParam = pendingFocus.current ? `&focus_player_id=${pendingFocus.current}` : '';
+      api
+        .get<PaginatedTeamResultResponse>(`/tournaments/${tournamentId}/teams?page=${page}&page_size=${PAGE_SIZE}${focusParam}`)
+        .then(r => {
+          if (cancelled) return;
+          setData(r);
+          if (pendingFocus.current) {
+            pendingFocus.current = undefined;
+            if (r.page !== page) setPage(r.page);
+          }
+        })
+        // A failed background refresh of a live table keeps showing the last good numbers.
+        .catch(() => { if (!cancelled && !silent) setData(null); })
+        .finally(() => { if (!cancelled && !silent) setLoading(false); });
+    };
+    run(false);
+    // Live: the projected payouts follow the standings, so re-read them while the tournament is being played.
+    const timer = live ? setInterval(() => run(true), 10_000) : null;
+    return () => { cancelled = true; if (timer) clearInterval(timer); };
+  }, [tournamentId, page, live]);
 
   if (loading && !data) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>Loading results…</p>;
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>{live ? 'Loading live standings…' : 'Loading results…'}</p>;
   }
   if (!data || data.items.length === 0) {
-    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>No results recorded for this tournament yet.</p>;
+    return <p className="text-muted-foreground text-center py-8" style={{ fontSize: 13 }}>{live ? 'No standings are available yet. Check back once the tournament is underway.' : 'No results recorded for this tournament yet.'}</p>;
   }
 
   const myTotal = data.my_total_payout !== null ? toNumber(data.my_total_payout) : 0;
   const estimate = data.dividends_paid === false;
+  // The server's per-team `my_payout` only exists once dividends are paid; while live (or finalizing) the same figure is
+  // PROJECTED here from your shares at the start x the per-share amount of each player's current placement.
+  const myProjected = !estimate && !live ? 0 : data.items.reduce((sum, t) => sum + t.members.reduce((s, m) => s + (m.my_shares_at_start ?? 0) * (m.per_share_amount !== null ? toNumber(m.per_share_amount) : 0), 0), 0);
 
   return (
     <div className="space-y-2">
-      {myTotal > 0 && (
+      {live && (
+        <p className="rounded-xl p-3" style={{ fontSize: 11.5, lineHeight: 1.5, background: 'rgba(0,200,255,0.08)', border: '1px solid rgba(0,200,255,0.25)', color: 'var(--foreground)' }}>
+          <strong>Projected dividends.</strong> These are what each placement would pay <em>right now</em>; they move as the standings
+          move and are only paid when the tournament ends{data.record_date ? `, on the shares you held at the start (${new Date(data.record_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}.
+        </p>
+      )}
+      {live && myProjected > 0 && (
+        <div className="rounded-xl p-3 flex items-center gap-2" style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.5)' }}>
+          <Coins className="w-4 h-4" style={{ color: GOLD }} />
+          <p style={{ fontSize: 12.5, color: GOLD, fontWeight: 600 }}>
+            You would earn about {money(myProjected)} if it ended now{data.total_pages > 1 ? ' (on this page)' : ''}.
+          </p>
+        </div>
+      )}
+      {myTotal > 0 && !live && (
         <div className="rounded-xl p-3 flex items-center gap-2" style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.5)' }}>
           <Coins className="w-4 h-4" style={{ color: GOLD }} />
           <p style={{ fontSize: 12.5, color: GOLD, fontWeight: 600 }}>
@@ -421,7 +452,7 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
           </p>
         </div>
       )}
-      {estimate ? (
+      {live ? null : estimate ? (
         <p className="text-muted-foreground rounded-xl p-3" style={{ fontSize: 11.5, lineHeight: 1.5, background: 'rgba(255,255,255,0.04)' }}>
           No dividends were paid for this event (it was recorded after the fact), so the payouts below are what each
           placement <em>would</em> pay at today&rsquo;s settings.
@@ -439,7 +470,7 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
           <span style={{ width: 40 }}>Place</span>
           <span className="flex-1">Player</span>
           <span className="hidden md:block text-right" style={{ minWidth: 96 }}>Stats</span>
-          <span className="text-right" style={{ minWidth: 74 }}>{estimate ? 'Est. payout' : 'Payout'}</span>
+          <span className="text-right" style={{ minWidth: 74 }}>{estimate || live ? 'Proj. payout' : 'Payout'}</span>
           <span className="text-right" style={{ minWidth: 74 }}>Per share</span>
           <span className="text-right" style={{ minWidth: 92 }}>You</span>
           <span style={{ width: 24 }} />
@@ -450,7 +481,8 @@ function StandingsTab({ tournamentId, onOpenPlayer, focusPlayerId }: { tournamen
           key={`${team.placement}-${team.team_id ?? team.members[0].player_id}`}
           team={team}
           tournamentId={tournamentId}
-          estimate={estimate}
+          estimate={estimate && !live}
+          projected={live}
           onOpenPlayer={onOpenPlayer}
           focused={!!focusPlayerId && team.members.some(m => m.player_id === focusPlayerId)}
         />
@@ -605,17 +637,20 @@ export function TeamLeaderboard({
   tournamentId,
   onOpenPlayer,
   focusPlayerId,
+  live = false,
 }: {
   tournamentId: string;
   onOpenPlayer: (id: string) => void;
   /** Opens on the page holding this player's team and highlights it (used by the player profile's history list). */
   focusPlayerId?: string;
+  /** Tournament in progress: standings refresh every 10 s and dividends are shown as projected (not yet paid). */
+  live?: boolean;
 }) {
   const [tab, setTab] = useState<'standings' | 'games'>('standings');
   return (
     <div className="space-y-3">
       <div className="flex gap-1.5 p-1 rounded-xl w-full sm:w-fit" style={{ background: 'var(--muted)' }}>
-        {([['standings', 'Standings & payouts'], ['games', 'Game Results']] as const).map(([id, label]) => (
+        {([['standings', live ? 'Live standings & projected payouts' : 'Standings & payouts'], ['games', live ? 'Game log' : 'Game Results']] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -632,9 +667,9 @@ export function TeamLeaderboard({
         ))}
       </div>
       {tab === 'standings' ? (
-        <StandingsTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} />
+        <StandingsTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} focusPlayerId={focusPlayerId} live={live} />
       ) : (
-        <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} />
+        <GamesTab tournamentId={tournamentId} onOpenPlayer={onOpenPlayer} live={live} />
       )}
     </div>
   );
