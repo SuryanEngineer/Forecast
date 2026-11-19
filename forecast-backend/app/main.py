@@ -18,7 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.v1 import account, admin, auctions, auth, dividends, leaderboard, markets, notifications, orders, players, stats, tournaments, treasury, wallet, ws
+from app.core import perf
 from app.core.config import settings
+from app.core.perf import PerfMiddleware
 from app.db.session import SessionLocal, engine
 from app.services import bot_trading_service, lease_service, maintenance_service, open_rounds_service, osirion_service, qualifier_service
 
@@ -67,6 +69,9 @@ async def _bot_tick_loop() -> None:
         await asyncio.sleep(settings.BOT_TICK_INTERVAL_SECONDS)
 
 
+_LAST_LIST_REFRESH = {"t": -1e9}
+
+
 def _run_one_osirion_sync() -> None:
     """Runs on a worker thread, its own plain SessionLocal() -- same
     pattern as `_run_one_bot_tick` above. Auto-tracks any newly-eligible
@@ -109,6 +114,21 @@ def _run_one_osirion_sync() -> None:
                 osirion_logger.info("Open-round index: pages=%d entries=%d rounds_done=%d", o["pages"], o["entries"], o["rounds_done"])
         except Exception:  # noqa: BLE001
             osirion_logger.exception("Open-round index pass raised")
+        # The calendar's announced events and the open-rounds list are refreshed HERE (first pass after a start, then about
+        # every 10 minutes) so page requests only ever read what is already stored and never wait on Osirion.
+        now_m = time.monotonic()
+        if now_m - _LAST_LIST_REFRESH["t"] > 600:
+            _LAST_LIST_REFRESH["t"] = now_m
+            try:
+                osirion_service.list_announced_events(db, force=True)
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                osirion_logger.exception("Announced-events refresh raised")
+            try:
+                open_rounds_service.refresh_open_rounds(db)
+            except Exception:  # noqa: BLE001
+                osirion_logger.exception("Open-rounds refresh raised")
         for result in results:
             if result.error:
                 osirion_logger.warning("Osirion sync error for tournament %s: %s", result.tournament_id, result.error)
@@ -302,6 +322,7 @@ app = FastAPI(
 
 # Compress anything over 1 KB (market pages, leaderboards and tournament results are large JSON and shrink ~5-10x).
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(PerfMiddleware)  # times every request (see /health -> perf)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],
@@ -358,5 +379,10 @@ def health() -> dict:
 
         out["bots"] = {**bot_trading_service.STATS, "flow": dict(bot_trading_service.FLOW_DIAG)}
     except Exception:  # noqa: BLE001 -- /health must always answer
+        pass
+    try:  # which endpoints take the most time, and the slowest recent requests
+        out["perf"] = perf.snapshot()
+        out["db_pool"] = engine.pool.status()
+    except Exception:  # noqa: BLE001
         pass
     return out

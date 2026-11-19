@@ -21,20 +21,47 @@ _lock = threading.Lock()
 _store: dict[Hashable, tuple[float, Any]] = {}
 
 
+_inflight: dict[Hashable, threading.Event] = {}
+_STALE_GRACE = 600.0  # an expired entry may still be served this long while one request recomputes it
+_WAIT_SECONDS = 25.0
+
+
 def cached_call(key: Hashable, seconds: float, compute: Callable[[], Any]) -> Any:
+    """Single-flight: when an entry is missing/expired, ONE request recomputes it. Others in the meantime get the previous
+    (stale) value straight away if there is one, otherwise wait for the leader's result instead of all hitting the database
+    at once (a page that fires many requests on a cold cache used to run each query N times and exhaust the connection pool)."""
     now = time.monotonic()
     with _lock:
         hit = _store.get(key)
-    if hit is not None and hit[0] > now:
-        return hit[1]
-    value = compute()
-    with _lock:
-        if len(_store) >= _MAX_ENTRIES:
-            stale = [k for k, (exp, _v) in _store.items() if exp <= now]
-            for k in stale or list(_store)[: _MAX_ENTRIES // 2]:
-                _store.pop(k, None)
-        _store[key] = (now + seconds, value)
-    return value
+        if hit is not None and hit[0] > now:
+            return hit[1]
+        waiter = _inflight.get(key)
+        leader = waiter is None
+        if leader:
+            _inflight[key] = threading.Event()
+    if not leader:
+        if hit is not None and now - hit[0] < _STALE_GRACE:
+            return hit[1]
+        waiter.wait(_WAIT_SECONDS)
+        with _lock:
+            again = _store.get(key)
+        if again is not None:
+            return again[1]
+        return compute()  # the leader failed or took too long: do it ourselves
+    try:
+        value = compute()
+        with _lock:
+            if len(_store) >= _MAX_ENTRIES:
+                stale = [k for k, (exp, _v) in _store.items() if exp <= now - _STALE_GRACE]
+                for k in stale or list(_store)[: _MAX_ENTRIES // 2]:
+                    _store.pop(k, None)
+            _store[key] = (time.monotonic() + seconds, value)
+        return value
+    finally:
+        with _lock:
+            ev = _inflight.pop(key, None)
+        if ev is not None:
+            ev.set()
 
 
 def clear() -> None:

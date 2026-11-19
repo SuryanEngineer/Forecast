@@ -111,14 +111,42 @@ def select_open_rounds(db: Session, windows: list) -> list:
     return out
 
 
-def list_open_rounds(db: Session, force: bool = False) -> list[dict]:
-    """The open rounds (newest first), cached for a few minutes. Osirion errors return an empty / cached list."""
+_OPEN_ROUNDS: dict = {"t": 0.0, "rows": None}
 
-    def compute() -> list[dict]:
+
+def refresh_open_rounds(db: Session) -> int:
+    """Re-reads the open rounds from Osirion into memory (called by the background sync; never by a page request). An Osirion
+    error keeps whatever was stored before. Returns how many rounds are stored."""
+    rows = _compute_open_rounds(db)
+    if rows is not None:
+        _OPEN_ROUNDS["rows"], _OPEN_ROUNDS["t"] = rows, time.monotonic()
+    return len(_OPEN_ROUNDS["rows"] or [])
+
+
+def list_open_rounds(db: Session, force: bool = False, cache_only: bool = False) -> list[dict]:
+    """The open rounds (newest first). Page requests use `cache_only=True`: they return what the background sync last stored
+    and never wait on Osirion. Without it (internal callers), a missing or very old list is computed once and shared."""
+    rows, age = _OPEN_ROUNDS["rows"], time.monotonic() - _OPEN_ROUNDS["t"]
+    if not force and rows is not None and (cache_only or age < LIST_CACHE_SECONDS * 3):
+        return rows
+    if cache_only:
+        return []
+
+    def build() -> list[dict]:
+        refresh_open_rounds(db)
+        return _OPEN_ROUNDS["rows"] or []
+
+    return build() if force else cached_call(("open_rounds",), LIST_CACHE_SECONDS, build)
+
+
+def _compute_open_rounds(db: Session) -> list[dict] | None:
+    """The open rounds from Osirion, or None when Osirion could not be reached (so the caller keeps what it had)."""
+
+    def compute() -> list[dict] | None:
         try:
             windows = osirion_service.list_available_windows(include_historic_data=True)
         except Exception:  # noqa: BLE001
-            return []
+            return None
         now = datetime.now(timezone.utc)
         cutoff = datetime(now.year, 1, 1, tzinfo=timezone.utc)  # every open round of the year (only the search INDEX is recent-only)
         rows = []
@@ -139,9 +167,7 @@ def list_open_rounds(db: Session, force: bool = False) -> list[dict]:
         rows.sort(key=lambda r: _aware(r["start_time"]) or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
         return rows[:600]
 
-    if force:
-        return compute()
-    return cached_call(("open_rounds",), LIST_CACHE_SECONDS, compute)
+    return compute()
 
 
 class RoundNotFound(Exception):

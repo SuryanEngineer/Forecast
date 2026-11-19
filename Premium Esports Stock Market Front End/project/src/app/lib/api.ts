@@ -17,12 +17,12 @@ export function getToken(): string | null {
 }
 
 // Last good response per GET path, so a page you have already seen paints instantly while it refreshes in the
-// background (see usePolledFetch). It is kept in this tab's sessionStorage too, so even a full browser reload paints
-// from it. It is tied to the signed-in account (a tag of the token) and wiped whenever the account changes, so one
-// account's data can never show up for another.
+// background (see usePolledFetch). It is kept in localStorage too (shared by every tab and kept between visits), so even
+// opening the site tomorrow paints from it straight away while fresh data loads. It is tied to the signed-in account (a
+// tag of the token) and wiped whenever the account changes, so one account's data can never show up for another.
 interface CacheEntry { data: unknown; at: number }
-const CACHE_KEY = 'forecast_response_cache_v1';
-const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+const CACHE_KEY = 'forecast_response_cache_v2';
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CACHE_ENTRY_MAX_CHARS = 400_000;
 const CACHE_TOTAL_MAX_CHARS = 3_000_000;
 const cacheMem = new Map<string, CacheEntry>();
@@ -35,10 +35,11 @@ function hydrateCache() {
   if (cacheHydrated) return;
   cacheHydrated = true;
   try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
+    try { localStorage.removeItem('forecast_response_cache_v1'); } catch { /* old session-scoped cache */ }
+    const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return;
     const blob = JSON.parse(raw) as { tag: string; entries: Record<string, CacheEntry> };
-    if (blob.tag !== tokenTag()) { sessionStorage.removeItem(CACHE_KEY); return; }
+    if (blob.tag !== tokenTag()) { localStorage.removeItem(CACHE_KEY); return; }
     const now = Date.now();
     for (const [k, e] of Object.entries(blob.entries)) if (now - e.at < CACHE_MAX_AGE_MS) cacheMem.set(k, e);
   } catch { /* unreadable cache: start empty */ }
@@ -57,7 +58,7 @@ function schedulePersist() {
         if (size > CACHE_ENTRY_MAX_CHARS || total + size > CACHE_TOTAL_MAX_CHARS) continue;
         entries[k] = e; total += size;
       }
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ tag: tokenTag(), entries }));
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ tag: tokenTag(), entries }));
     } catch { /* storage full or unavailable: the in-memory cache still works */ }
   }, 1000);
 }
@@ -70,7 +71,7 @@ export const responseCache = {
   clear(): void {
     cacheMem.clear();
     cacheHydrated = true;
-    try { sessionStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
   },
 };
 
@@ -115,6 +116,62 @@ export class ApiError extends Error {
   }
 }
 
+// ---- GET politeness: a small queue + retries ----------------------------------------------------------------------
+// The backend has ~11 database connections. A page that fires 10+ requests at once (plus the polling) used to queue them
+// all server-side and time out; now at most MAX_GETS run at a time and the rest wait here (first asked, first served).
+// A GET that fails because the server is waking up (network error, 502/503/504, or a hung request) is retried with a
+// growing pause, and the "server is waking" banner shows meanwhile. POSTs are never retried (they could double-execute).
+const MAX_GETS = 5;
+const GET_TIMEOUT_MS = 40_000;
+const RETRY_PAUSES_MS = [1500, 4000, 8000];
+let activeGets = 0;
+const getQueue: Array<() => void> = [];
+
+function acquireGetSlot(): Promise<void> {
+  if (activeGets < MAX_GETS) { activeGets++; return Promise.resolve(); }
+  return new Promise(resolve => getQueue.push(() => { activeGets++; resolve(); }));
+}
+function releaseGetSlot(): void {
+  activeGets--;
+  const next = getQueue.shift();
+  if (next) next();
+}
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+async function fetchOnce(url: string, options: RequestInit, timeoutMs: number | null): Promise<Response> {
+  if (timeoutMs === null) return fetch(url, options);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try { return await fetch(url, { ...options, signal: ctl.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+async function fetchWithRetry(url: string, options: RequestInit): Promise<Response> {
+  const isGet = (options.method ?? 'GET') === 'GET';
+  if (!isGet) return fetch(url, options);
+  await acquireGetSlot();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetchOnce(url, options, GET_TIMEOUT_MS);
+        if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < RETRY_PAUSES_MS.length) {
+          setWaking(true);
+          await sleep(RETRY_PAUSES_MS[attempt]);
+          continue;
+        }
+        if (res.status < 500) setWaking(false);
+        return res;
+      } catch (err) {
+        if (attempt >= RETRY_PAUSES_MS.length) throw err;
+        setWaking(true);
+        await sleep(RETRY_PAUSES_MS[attempt]);
+      }
+    }
+  } finally {
+    releaseGetSlot();
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -123,7 +180,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  const res = await fetchWithRetry(`${API_BASE_URL}${path}`, { ...options, headers });
 
   if (res.status === 204) return undefined as T;
 

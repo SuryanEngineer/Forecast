@@ -147,8 +147,7 @@ def _build_calendar(db: Session, include_completed: bool, completed_limit: int |
 def get_announced_tournaments(db: Session = Depends(get_db)) -> list[AnnouncedTournamentResponse]:
     """Future events Osirion has announced that qualify but aren't tracked yet, so the calendar is complete even before a
     window's payout table is published. Cached server-side for 15 minutes. Registered above /{tournament_id}."""
-    rows = osirion_service.list_announced_events(db)
-    db.commit()  # region-multiplier defaults may have been seeded while projecting pools
+    rows = osirion_service.list_announced_events(db, cache_only=True)  # never waits on Osirion; the background sync refreshes it
     return [AnnouncedTournamentResponse(**row) for row in rows]
 
 
@@ -156,7 +155,7 @@ def get_announced_tournaments(db: Session = Depends(get_db)) -> list[AnnouncedTo
 def get_open_rounds(db: Session = Depends(get_db)) -> list[dict]:
     """Open qualifier rounds (no payout, never tracked) of the families the platform tracks, newest first. Cached a few
     minutes. Registered above /{tournament_id}."""
-    return open_rounds_service.list_open_rounds(db)
+    return open_rounds_service.list_open_rounds(db, cache_only=True)  # never waits on Osirion; the background sync refreshes it
 
 
 @router.get("/open-rounds/entries")

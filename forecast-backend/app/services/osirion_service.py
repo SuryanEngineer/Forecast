@@ -1855,7 +1855,7 @@ _ANNOUNCED_CACHE: dict = {"t": 0.0, "rows": []}
 ANNOUNCED_CACHE_SECONDS = 15 * 60
 
 
-def list_announced_events(db: Session, force: bool = False) -> list[dict]:
+def list_announced_events(db: Session, force: bool = False, cache_only: bool = False) -> list[dict]:
     """Every FUTURE event Osirion has announced that qualifies for this platform but isn't tracked as a Tournament yet.
 
     The auto-tracker only creates a Tournament once a window shows a real cash payout table, and Osirion often publishes
@@ -1864,9 +1864,14 @@ def list_announced_events(db: Session, force: bool = False) -> list[dict]:
     immediately. Same window-level qualification rules as auto-tracking (see plan_windows: no Zero Build, FNCS Reload
     Finals and set-lobby qualifiers, classified into a tier, in the NAC/EU scope), minus the cash-payout requirement.
     One row per edition. Cached for 15 minutes so the public
-    calendar never hammers Osirion; any Osirion error returns whatever was cached."""
+    calendar never hammers Osirion; any Osirion error returns whatever was cached.
+
+    `cache_only=True` is what page requests use: it NEVER calls Osirion, it returns whatever the background sync last stored
+    (the sync loop refreshes it with force=True, see app/main.py), so no visitor waits on Osirion."""
     import time as _time
 
+    if cache_only:
+        return _ANNOUNCED_CACHE["rows"] or []
     now_m = _time.monotonic()
     if not force and _ANNOUNCED_CACHE["rows"] is not None and _ANNOUNCED_CACHE["t"] and now_m - _ANNOUNCED_CACHE["t"] < ANNOUNCED_CACHE_SECONDS:
         return _ANNOUNCED_CACHE["rows"]
