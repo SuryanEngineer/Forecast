@@ -1181,7 +1181,7 @@ def _run_bot_agent(db: Session, bot_user, profile_row, snapshot: MarketSnapshot,
 
 
 # Why the background flow did or did not trade, since the process started (shown under "bots" -> "flow" on /health).
-FLOW_DIAG: dict = {"picks": 0, "no_value": 0, "no_edge": 0, "blocked": 0, "no_qty": 0, "rejected": 0, "last_reject": None, "crashes": 0, "last_crash": None}
+FLOW_DIAG: dict = {"calls": 0, "skipped": 0, "setting_n": None, "agents": None, "players": None, "no_price": 0, "picks": 0, "no_value": 0, "no_edge": 0, "blocked": 0, "no_qty": 0, "rejected": 0, "last_reject": None, "crashes": 0, "last_crash": None}
 
 
 def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: random.Random, n: int, fee: float = DEFAULT_FEE) -> int:
@@ -1196,7 +1196,10 @@ def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: ra
     stock is cheap, selling if dear. Because bots hold different views, the price keeps getting tested from both sides, and
     when the model value moves (a result, a missed cut) the bots' views move with it, so more of them lean the same way and
     the price follows. A bigger disagreement means a bigger order. Returns how many trades went through."""
+    FLOW_DIAG["calls"] += 1
+    FLOW_DIAG["setting_n"], FLOW_DIAG["agents"], FLOW_DIAG["players"] = n, len(agents), len(snapshot.player_ids)
     if n <= 0 or not agents or not snapshot.player_ids:
+        FLOW_DIAG["skipped"] += 1
         return 0
     pool = list(snapshot.player_ids)
     pop_w = [max(float(snapshot.popularity.get(p, 0.3)), 0.05) ** 0.8 for p in pool]
@@ -1223,6 +1226,7 @@ def _run_micro_flow(db: Session, agents: list, snapshot: MarketSnapshot, rng: ra
             pid = rng.choices(pool, weights=pop_w, k=1)[0]
         px = float(snapshot.price.get(pid, 0))
         if px <= 0:
+            FLOW_DIAG["no_price"] += 1
             continue
         FLOW_DIAG["picks"] += 1
         crowd = rng.sample(agents, min(8, len(agents)))
